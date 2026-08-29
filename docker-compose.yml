@@ -1,0 +1,11 @@
+services:
+  homeassistant:
+    container_name: jarvis-homeassistant
+    image: ghcr.io/home-assistant/home-assistant:stable
+    volumes:
+      - ./homeassistant/config:/config
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=Asia/Novosibirsk

@@ -1,0 +1,22 @@
+# secrets - never commit
+.env
+
+# Claude Code local config - must never show up in this repo
+.claude/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# home assistant runtime state (not our mock config)
+homeassistant/config/.storage/
+homeassistant/config/.ha_run.lock
+homeassistant/config/.HA_VERSION
+homeassistant/config/home-assistant.log*
+homeassistant/config/home-assistant_v2.db*
+homeassistant/config/secrets.yaml
+homeassistant/config/deps/
+homeassistant/config/tts/
+homeassistant/config/blueprints/

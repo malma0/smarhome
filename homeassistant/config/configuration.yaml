@@ -1,0 +1,306 @@
+# Jarvis dev/mock Home Assistant instance.
+# Real hardware integrations (climate, lights, CO2 sensors) will replace the
+# input_number/input_boolean helpers below once physical devices exist.
+# Nothing here is a custom integration - only core HA helpers + template entities.
+
+default_config:
+
+http:
+  server_port: 8123
+
+# ---------------------------------------------------------------------------
+# Mock "hardware" state, one block of helpers per room.
+# ---------------------------------------------------------------------------
+input_number:
+  living_room_temperature:
+    name: "Living Room Temperature (measured)"
+    min: 5
+    max: 40
+    step: 0.1
+    initial: 21.5
+    unit_of_measurement: "°C"
+  living_room_target_temperature:
+    name: "Living Room Target Temperature"
+    min: 16
+    max: 28
+    step: 0.5
+    initial: 21
+    unit_of_measurement: "°C"
+  living_room_humidity:
+    name: "Living Room Humidity"
+    min: 10
+    max: 90
+    step: 1
+    initial: 45
+    unit_of_measurement: "%"
+  living_room_co2:
+    name: "Living Room CO2"
+    min: 350
+    max: 5000
+    step: 10
+    initial: 500
+    unit_of_measurement: "ppm"
+
+  bedroom_temperature:
+    name: "Bedroom Temperature (measured)"
+    min: 5
+    max: 40
+    step: 0.1
+    initial: 20.5
+    unit_of_measurement: "°C"
+  bedroom_target_temperature:
+    name: "Bedroom Target Temperature"
+    min: 16
+    max: 28
+    step: 0.5
+    initial: 20
+    unit_of_measurement: "°C"
+  bedroom_humidity:
+    name: "Bedroom Humidity"
+    min: 10
+    max: 90
+    step: 1
+    initial: 48
+    unit_of_measurement: "%"
+  bedroom_co2:
+    name: "Bedroom CO2"
+    min: 350
+    max: 5000
+    step: 10
+    initial: 550
+    unit_of_measurement: "ppm"
+
+  kids_room_temperature:
+    name: "Kids Room Temperature (measured)"
+    min: 5
+    max: 40
+    step: 0.1
+    initial: 22
+    unit_of_measurement: "°C"
+  kids_room_target_temperature:
+    name: "Kids Room Target Temperature"
+    min: 16
+    max: 28
+    step: 0.5
+    initial: 22
+    unit_of_measurement: "°C"
+  kids_room_humidity:
+    name: "Kids Room Humidity"
+    min: 10
+    max: 90
+    step: 1
+    initial: 47
+    unit_of_measurement: "%"
+  kids_room_co2:
+    name: "Kids Room CO2"
+    min: 350
+    max: 5000
+    step: 10
+    initial: 600
+    unit_of_measurement: "ppm"
+
+  office_temperature:
+    name: "Office Temperature (measured)"
+    min: 5
+    max: 40
+    step: 0.1
+    initial: 21
+    unit_of_measurement: "°C"
+  office_target_temperature:
+    name: "Office Target Temperature"
+    min: 16
+    max: 28
+    step: 0.5
+    initial: 21
+    unit_of_measurement: "°C"
+  office_humidity:
+    name: "Office Humidity"
+    min: 10
+    max: 90
+    step: 1
+    initial: 40
+    unit_of_measurement: "%"
+  office_co2:
+    name: "Office CO2"
+    min: 350
+    max: 5000
+    step: 10
+    initial: 700
+    unit_of_measurement: "ppm"
+
+input_boolean:
+  living_room_light:
+    name: "Living Room Light"
+  living_room_ac:
+    name: "Living Room AC"
+  living_room_ventilation_boost:
+    name: "Living Room Ventilation Boost"
+
+  bedroom_light:
+    name: "Bedroom Light"
+  bedroom_ac:
+    name: "Bedroom AC"
+  bedroom_ventilation_boost:
+    name: "Bedroom Ventilation Boost"
+
+  kids_room_light:
+    name: "Kids Room Light"
+  kids_room_ac:
+    name: "Kids Room AC"
+  kids_room_ventilation_boost:
+    name: "Kids Room Ventilation Boost"
+
+  office_light:
+    name: "Office Light"
+  office_ac:
+    name: "Office AC"
+  office_ventilation_boost:
+    name: "Office Ventilation Boost"
+
+# ---------------------------------------------------------------------------
+# Read-only sensor entities with proper device classes, mirroring the
+# input_number "measured" values above - this is what get_home_status reads.
+# ---------------------------------------------------------------------------
+template:
+  - sensor:
+      - name: "Living Room Temperature"
+        unique_id: living_room_temperature_sensor
+        state: "{{ states('input_number.living_room_temperature') }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+      - name: "Living Room Humidity"
+        unique_id: living_room_humidity_sensor
+        state: "{{ states('input_number.living_room_humidity') }}"
+        unit_of_measurement: "%"
+        device_class: humidity
+        state_class: measurement
+      - name: "Living Room CO2"
+        unique_id: living_room_co2_sensor
+        state: "{{ states('input_number.living_room_co2') }}"
+        unit_of_measurement: "ppm"
+        device_class: carbon_dioxide
+        state_class: measurement
+
+      - name: "Bedroom Temperature"
+        unique_id: bedroom_temperature_sensor
+        state: "{{ states('input_number.bedroom_temperature') }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+      - name: "Bedroom Humidity"
+        unique_id: bedroom_humidity_sensor
+        state: "{{ states('input_number.bedroom_humidity') }}"
+        unit_of_measurement: "%"
+        device_class: humidity
+        state_class: measurement
+      - name: "Bedroom CO2"
+        unique_id: bedroom_co2_sensor
+        state: "{{ states('input_number.bedroom_co2') }}"
+        unit_of_measurement: "ppm"
+        device_class: carbon_dioxide
+        state_class: measurement
+
+      - name: "Kids Room Temperature"
+        unique_id: kids_room_temperature_sensor
+        state: "{{ states('input_number.kids_room_temperature') }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+      - name: "Kids Room Humidity"
+        unique_id: kids_room_humidity_sensor
+        state: "{{ states('input_number.kids_room_humidity') }}"
+        unit_of_measurement: "%"
+        device_class: humidity
+        state_class: measurement
+      - name: "Kids Room CO2"
+        unique_id: kids_room_co2_sensor
+        state: "{{ states('input_number.kids_room_co2') }}"
+        unit_of_measurement: "ppm"
+        device_class: carbon_dioxide
+        state_class: measurement
+
+      - name: "Office Temperature"
+        unique_id: office_temperature_sensor
+        state: "{{ states('input_number.office_temperature') }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+      - name: "Office Humidity"
+        unique_id: office_humidity_sensor
+        state: "{{ states('input_number.office_humidity') }}"
+        unit_of_measurement: "%"
+        device_class: humidity
+        state_class: measurement
+      - name: "Office CO2"
+        unique_id: office_co2_sensor
+        state: "{{ states('input_number.office_co2') }}"
+        unit_of_measurement: "ppm"
+        device_class: carbon_dioxide
+        state_class: measurement
+
+# ---------------------------------------------------------------------------
+# boost_ventilation tool triggers these scripts: flip the boost flag on,
+# then automatically clear it after N minutes (default handled per-call
+# via the "minutes" script field passed from the backend).
+# ---------------------------------------------------------------------------
+script:
+  boost_ventilation_living_room:
+    alias: "Boost Ventilation - Living Room"
+    fields:
+      minutes:
+        default: 15
+    sequence:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.living_room_ventilation_boost
+      - delay:
+          minutes: "{{ minutes | default(15) | int }}"
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.living_room_ventilation_boost
+
+  boost_ventilation_bedroom:
+    alias: "Boost Ventilation - Bedroom"
+    fields:
+      minutes:
+        default: 15
+    sequence:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.bedroom_ventilation_boost
+      - delay:
+          minutes: "{{ minutes | default(15) | int }}"
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.bedroom_ventilation_boost
+
+  boost_ventilation_kids_room:
+    alias: "Boost Ventilation - Kids Room"
+    fields:
+      minutes:
+        default: 15
+    sequence:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.kids_room_ventilation_boost
+      - delay:
+          minutes: "{{ minutes | default(15) | int }}"
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.kids_room_ventilation_boost
+
+  boost_ventilation_office:
+    alias: "Boost Ventilation - Office"
+    fields:
+      minutes:
+        default: 15
+    sequence:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.office_ventilation_boost
+      - delay:
+          minutes: "{{ minutes | default(15) | int }}"
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.office_ventilation_boost
