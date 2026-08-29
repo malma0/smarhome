@@ -2,7 +2,7 @@ from anthropic import AsyncAnthropic
 
 from app.config import settings
 from app.prompts import build_system_prompt
-from app.tools import TOOL_DEFINITIONS, dispatch
+from app.tools import TOOL_DEFINITIONS, TurnContext, dispatch
 
 MAX_TOOL_ITERATIONS = 8
 
@@ -23,6 +23,7 @@ class JarvisAgent:
 
         system_prompt = await build_system_prompt()
         actions: list[dict] = []
+        ctx = TurnContext()
 
         for _ in range(MAX_TOOL_ITERATIONS):
             response = await self._client.messages.create(
@@ -43,7 +44,7 @@ class JarvisAgent:
             for block in response.content:
                 if block.type != "tool_use":
                     continue
-                result = await dispatch(block.name, block.input)
+                result = await dispatch(block.name, block.input, ctx)
                 actions.append({"tool": block.name, "input": block.input, "result": result})
                 tool_results.append(
                     {
