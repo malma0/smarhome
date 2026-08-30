@@ -10,6 +10,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Jarvis's own SQLite state (per-house data, not source)
+backend/*.db
+
 # home assistant runtime state (not our mock config)
 homeassistant/config/.storage/
 homeassistant/config/.ha_run.lock

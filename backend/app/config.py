@@ -8,19 +8,23 @@ load_dotenv(find_dotenv(usecwd=True))
 
 @dataclass(frozen=True)
 class Settings:
+    llm_provider: str
     anthropic_api_key: str
     anthropic_model: str
     home_assistant_url: str
     home_assistant_token: str
+    db_path: str
     port: int
 
 
 def load_settings() -> Settings:
     return Settings(
+        llm_provider=os.environ.get("LLM_PROVIDER", "claude"),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
         home_assistant_url=os.environ.get("HOME_ASSISTANT_URL", "http://localhost:8123").rstrip("/"),
         home_assistant_token=os.environ.get("HOME_ASSISTANT_TOKEN", ""),
+        db_path=os.environ.get("JARVIS_DB_PATH", "jarvis.db"),
         port=int(os.environ.get("JARVIS_PORT", "8000")),
     )
 
