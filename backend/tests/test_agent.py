@@ -1,59 +1,78 @@
-"""Tests for the tool-use loop itself, fully mocked: no real call to the
-Anthropic API and no real call to Home Assistant. We patch the pieces
-app.agent.JarvisAgent.chat talks to (its Anthropic client, dispatch, and
-build_system_prompt) with fakes that mimic just enough of their shape."""
+"""Tests for the tool-use loop itself, fully mocked: no real LLM API call and
+no real Home Assistant. The agent only ever talks to LLMProvider/ToolRegistry/
+MemoryStore interfaces, so a fake LLM and an in-memory-backed ToolRegistry are
+enough - proving the core is genuinely device-agnostic (no tool needs to be
+registered at all) and llm-agnostic (FakeLLM implements nothing Claude-specific)."""
 
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import app.agent as agent_module
-from app.agent import JarvisAgent
+import pytest
+
+from app.agent import MAX_TOOL_ITERATIONS, JarvisAgent
+from app.db import connect
+from app.llm.base import ContentBlock, LLMResponse
+from app.memory import MemoryStore
+from app.persona import get_style
+from app.tools.registry import Tool, ToolRegistry
 
 
-def text_block(text: str) -> SimpleNamespace:
-    return SimpleNamespace(type="text", text=text)
+class FakeLLM:
+    """Duck-types LLMProvider - a real provider would call out to a vendor
+    SDK inside generate(); this one just replays canned responses."""
+
+    def __init__(self, responses: list[LLMResponse]):
+        self.generate = AsyncMock(side_effect=responses)
 
 
-def tool_use_block(id_: str, name: str, tool_input: dict) -> SimpleNamespace:
-    return SimpleNamespace(type="tool_use", id=id_, name=name, input=tool_input)
+def text_response(text: str, stop_reason: str = "end_turn") -> LLMResponse:
+    return LLMResponse(content=[ContentBlock(type="text", text=text)], stop_reason=stop_reason)
 
 
-def fake_response(content: list, stop_reason: str) -> SimpleNamespace:
-    return SimpleNamespace(content=content, stop_reason=stop_reason)
-
-
-def make_agent(monkeypatch) -> JarvisAgent:
-    monkeypatch.setattr(agent_module, "build_system_prompt", AsyncMock(return_value="system prompt"))
-    return JarvisAgent()
-
-
-def test_plain_text_reply_without_tool_use(monkeypatch):
-    agent = make_agent(monkeypatch)
-    agent._client.messages.create = AsyncMock(
-        return_value=fake_response([text_block("Hello!")], stop_reason="end_turn")
+def tool_use_response(id_: str, name: str, tool_input: dict, stop_reason: str = "tool_use") -> LLMResponse:
+    return LLMResponse(
+        content=[ContentBlock(type="tool_use", id=id_, name=name, input=tool_input)],
+        stop_reason=stop_reason,
     )
 
-    result = asyncio.run(agent.chat("session-1", "hi jarvis"))
 
-    assert result == {"response": "Hello!", "actions": []}
-    agent._client.messages.create.assert_awaited_once()
+@pytest.fixture
+def memory(tmp_path):
+    return MemoryStore(connect(str(tmp_path / "test.db")))
 
 
-def test_tool_use_then_final_answer(monkeypatch):
-    agent = make_agent(monkeypatch)
-    fake_dispatch = AsyncMock(return_value={"ok": True, "room": "bedroom", "light_on": True})
-    monkeypatch.setattr(agent_module, "dispatch", fake_dispatch)
+def make_agent(llm, memory, tools: ToolRegistry | None = None) -> JarvisAgent:
+    return JarvisAgent(llm=llm, tools=tools or ToolRegistry(), memory=memory)
 
-    tool_call = tool_use_block("call_1", "set_room_lights", {"room": "bedroom", "on": True})
-    agent._client.messages.create = AsyncMock(
-        side_effect=[
-            fake_response([tool_call], stop_reason="tool_use"),
-            fake_response([text_block("Turned the bedroom lights on.")], stop_reason="end_turn"),
+
+def test_plain_text_reply_without_any_tool_registered(memory):
+    """Empty registry, general question - proves nothing home-related is needed."""
+    llm = FakeLLM([text_response("Paris.")])
+    agent = make_agent(llm, memory)
+
+    result = asyncio.run(agent.chat("session-1", "ivan", "what's the capital of France?"))
+
+    assert result == {"response": "Paris.", "actions": []}
+    llm.generate.assert_awaited_once()
+
+
+def test_tool_use_then_final_answer(memory):
+    async def handler(tool_input, ctx):
+        ctx.touched.add(tool_input["room"])
+        return {"ok": True, "room": tool_input["room"], "light_on": True}
+
+    tools = ToolRegistry()
+    tools.register(Tool(name="set_room_lights", description="", parameters={}, handler=handler))
+
+    llm = FakeLLM(
+        [
+            tool_use_response("call_1", "set_room_lights", {"room": "bedroom", "on": True}),
+            text_response("Turned the bedroom lights on."),
         ]
     )
+    agent = make_agent(llm, memory, tools)
 
-    result = asyncio.run(agent.chat("session-1", "turn on the bedroom lights"))
+    result = asyncio.run(agent.chat("session-1", "ivan", "turn on the bedroom lights"))
 
     assert result["response"] == "Turned the bedroom lights on."
     assert result["actions"] == [
@@ -63,23 +82,52 @@ def test_tool_use_then_final_answer(monkeypatch):
             "result": {"ok": True, "room": "bedroom", "light_on": True},
         }
     ]
-    fake_dispatch.assert_awaited_once()
-    assert agent._client.messages.create.await_count == 2
+    assert llm.generate.await_count == 2
 
 
-def test_stops_after_max_tool_iterations(monkeypatch):
-    agent = make_agent(monkeypatch)
-    monkeypatch.setattr(agent_module, "dispatch", AsyncMock(return_value={"ok": True}))
+def test_stops_after_max_tool_iterations(memory):
+    async def handler(tool_input, ctx):
+        return {"ok": True}
 
-    # The model never stops asking for tool calls - the loop must still
-    # terminate instead of looping forever.
-    tool_call = tool_use_block("call_x", "get_home_status", {})
-    agent._client.messages.create = AsyncMock(
-        return_value=fake_response([tool_call], stop_reason="tool_use")
-    )
+    tools = ToolRegistry()
+    tools.register(Tool(name="get_home_status", description="", parameters={}, handler=handler))
 
-    result = asyncio.run(agent.chat("session-1", "status please"))
+    llm = FakeLLM([tool_use_response("call_x", "get_home_status", {})] * MAX_TOOL_ITERATIONS)
+    agent = make_agent(llm, memory, tools)
+
+    result = asyncio.run(agent.chat("session-1", "ivan", "status please"))
 
     assert "tool-call limit" in result["response"]
-    assert agent._client.messages.create.await_count == agent_module.MAX_TOOL_ITERATIONS
-    assert len(result["actions"]) == agent_module.MAX_TOOL_ITERATIONS
+    assert llm.generate.await_count == MAX_TOOL_ITERATIONS
+    assert len(result["actions"]) == MAX_TOOL_ITERATIONS
+
+
+def test_persona_mode_shapes_the_system_prompt(memory):
+    memory.set_persona_mode("butler")
+    llm = FakeLLM([text_response("At your service.")])
+    agent = make_agent(llm, memory)
+
+    asyncio.run(agent.chat("session-1", "ivan", "hello"))
+
+    system_prompt = llm.generate.call_args.kwargs["system"]
+    assert "butler" in system_prompt.lower()
+
+
+def test_adaptive_persona_updates_style_after_the_turn(memory):
+    memory.set_persona_mode("adaptive")
+    llm = FakeLLM([text_response("Understood.")])
+    agent = make_agent(llm, memory)
+
+    asyncio.run(agent.chat("session-1", "ivan", "Не могли бы Вы подсказать?"))
+
+    assert get_style(memory, "ivan").formality > 0.5
+
+
+def test_non_adaptive_persona_does_not_touch_style(memory):
+    memory.set_persona_mode("warm")
+    llm = FakeLLM([text_response("Sure thing!")])
+    agent = make_agent(llm, memory)
+
+    asyncio.run(agent.chat("session-1", "ivan", "Не могли бы Вы подсказать?"))
+
+    assert get_style(memory, "ivan").formality == 0.5  # untouched default
