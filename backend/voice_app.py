@@ -6,9 +6,10 @@ an actual house. Both pieces here are free, no new accounts:
 - STT: records the mic, sends the clip to Groq's free Whisper endpoint
   (reuses GROQ_API_KEY - independent of whichever LLM_PROVIDER answers the
   chat itself).
-- TTS: pluggable via app.tts.base.TTSProvider - defaults to free neural
-  voices (app.tts.edge), falls back to offline SAPI (app.tts.sapi) if that
-  fails (no internet, the reverse-engineered service breaks, etc).
+- TTS: pluggable via app.tts.base.TTSProvider - defaults to a fully
+  open-source, offline voice (app.tts.piper), falls back to the OS's own
+  SAPI voices (app.tts.sapi) if the configured provider fails to build or
+  speak for any reason.
 
 Usage: python voice_app.py
 """
@@ -88,17 +89,20 @@ def build_tts_provider() -> TTSProvider:
     raise ValueError(f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: piper, edge, sapi")
 
 
-TTS_TIMEOUT_SECONDS = 15
-
-
 async def speak(primary: TTSProvider, fallback: TTSProvider, text: str) -> None:
+    """No timeout wraps the whole call on purpose: playback duration alone
+    can legitimately exceed any fixed number for a long reply, and cutting
+    it off mid-sentence just to start the fallback speaking the same text
+    on top of it is worse than the problem (this actually happened - a
+    15s ceiling here fired while a normal-length reply was still being
+    played, so both voices spoke at once). Any timeout on the risky,
+    genuinely-hangable part (a network TTS call) belongs inside that
+    provider's own speak(), around just the synthesis step - see
+    app/tts/edge.py."""
     started = time.monotonic()
     try:
-        await asyncio.wait_for(primary.speak(text), timeout=TTS_TIMEOUT_SECONDS)
+        await primary.speak(text)
         print(f"   (озвучено через {settings.tts_provider} за {time.monotonic() - started:.1f}с)")
-    except TimeoutError:
-        print(f"(озвучка через {settings.tts_provider} не ответила за {TTS_TIMEOUT_SECONDS}с - пробую офлайн-голос)")
-        await fallback.speak(text)
     except Exception as exc:  # noqa: BLE001 - synthesis failing shouldn't kill the loop
         print(f"(озвучка через {settings.tts_provider} не удалась: {exc} - пробую офлайн-голос)")
         await fallback.speak(text)

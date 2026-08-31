@@ -42,10 +42,19 @@ def play_mp3_bytes(audio_bytes: bytes) -> None:
         os.unlink(path)
 
 
+SYNTHESIS_TIMEOUT_SECONDS = 15
+
+
 class EdgeTTSProvider:
     def __init__(self, voice: str = "ru-RU-DmitryNeural"):
         self._voice = voice
 
     async def speak(self, text: str) -> None:
-        audio_bytes = await synthesize(text, self._voice)
+        # The timeout wraps only the network call - a slow/stuck websocket
+        # handshake is the one part of this that can genuinely hang forever.
+        # It must NOT wrap playback too: a long reply can easily take longer
+        # than any fixed number just to be spoken aloud, and that's not a bug.
+        audio_bytes = await asyncio.wait_for(
+            synthesize(text, self._voice), timeout=SYNTHESIS_TIMEOUT_SECONDS
+        )
         await asyncio.to_thread(play_mp3_bytes, audio_bytes)
