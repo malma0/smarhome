@@ -65,14 +65,16 @@ backend/
       registry.py                # ToolRegistry + TurnContext, пока без единого домена
     tts/
       base.py                     # TTSProvider protocol — тот же паттерн, что и LLMProvider
-      edge.py                      # EdgeTTSProvider — бесплатные нейро-голоса, дефолт
-      sapi.py                      # SapiTTSProvider — офлайн Windows-голоса, фолбэк
+      piper.py                     # PiperTTSProvider — открытая модель, офлайн, дефолт
+      edge.py                       # EdgeTTSProvider — бесплатные нейро-голоса Microsoft, не открытые
+      sapi.py                        # SapiTTSProvider — офлайн Windows-голоса, аварийный фолбэк
     agent.py                     # JarvisAgent — сам цикл tool use
     main.py                      # FastAPI: POST /chat, GET/PUT /settings, GET /voice
   static/voice.html             # браузерный STT/TTS демо, устарело — см. voice_app.py
   voice_app.py                   # десктопное голосовое приложение (фаза 1) — Whisper (Groq) + TTSProvider
+  voices/                        # скачанные модели Piper (.onnx), не в git — см. инструкцию ниже
   chat_cli.py                   # локальный текстовый REPL без HTTP
-  tests/                        # test_llm_claude/groq/ollama, test_tts_edge/sapi, test_registry,
+  tests/                        # test_llm_claude/groq/ollama, test_tts_piper/edge/sapi, test_registry,
                                  # test_memory, test_persona, test_agent, test_main, test_voice_app
   ha_client.py                  # (сохранён на будущее, не импортируется пока нигде)
 docs/TZ.md                      # полное техническое задание
@@ -126,7 +128,19 @@ Home Assistant не нужен — только Claude API ключ.
      -d '{"persona_mode": "butler"}'
    ```
 
-6. **Поговорить голосом — десктопное приложение (фаза 1, основной способ):**
+6. **Скачать голос для озвучки (один раз):**
+
+   ```bash
+   mkdir voices
+   curl -sL -o voices/ru_RU-irina-medium.onnx "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx"
+   curl -sL -o voices/ru_RU-irina-medium.onnx.json "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx.json"
+   ```
+
+   ~63 МБ, полностью открытая модель ([Piper](https://github.com/OHF-voice/piper1-gpl),
+   голос "irina", женский). `backend/voices/` не коммитится в git — каждый
+   скачивает себе сам.
+
+7. **Поговорить голосом — десктопное приложение (фаза 1, основной способ):**
 
    ```bash
    .venv\Scripts\python.exe voice_app.py
@@ -139,17 +153,27 @@ Home Assistant не нужен — только Claude API ключ.
    озвучит ответ. Никаких новых аккаунтов, всё бесплатно.
 
    **Голос озвучки — сменный** (`app/tts/`, тот же паттерн, что и у LLM):
-   - `TTS_PROVIDER=edge` (по умолчанию) — бесплатные нейросетевые голоса
-     Microsoft Edge (`edge-tts`, без ключа/аккаунта), заметно естественнее
-     системных. Голос по умолчанию — `ru-RU-DmitryNeural` (мужской), есть
-     также `ru-RU-SvetlanaNeural` (женский) — задаётся `EDGE_TTS_VOICE`.
-   - `TTS_PROVIDER=sapi` — офлайн-голоса Windows (pyttsx3), ниже качеством,
-     используется автоматически как фолбэк, если `edge` не сработал (нет
-     интернета и т.п.).
+   - `TTS_PROVIDER=piper` (по умолчанию) — полностью открытая (не Microsoft,
+     не какой-либо облачный вендор) нейросетевая модель, работает целиком
+     офлайн на компьютере. Голос по умолчанию — `ru_RU-irina-medium`
+     (женский); другие голоса (`denis`/`dmitri`/`ruslan`, все мужские) —
+     та же ссылка на Hugging Face, поменяйте имя файла и `PIPER_MODEL_PATH`/
+     `PIPER_CONFIG_PATH`. Один раз ~4-6с на загрузку модели при старте
+     программы, дальше синтез каждой фразы — меньше секунды.
+   - `TTS_PROVIDER=edge` — бесплатные нейро-голоса Microsoft Edge (`edge-tts`,
+     без ключа), тоже неплохое качество, но это облачный сервис Microsoft,
+     не открытый исходный код, и нужен интернет.
+   - `TTS_PROVIDER=sapi` — офлайн-голоса Windows (pyttsx3), самое низкое
+     качество ("роботический" голос) — используется автоматически как
+     аварийный фолбэк, если основной провайдер не смог даже запуститься
+     или ответить за 15 секунд (таймаут — на случай зависшего сетевого
+     вызова у `edge`).
 
-   Живая проверка (не моки): синтезированные фразы гонялись обратно через
-   настоящий Whisper (Groq) и распознавались практически без ошибок —
-   и STT, и TTS реально работают, не только собираются без ошибок.
+   Живая проверка (не моки): синтезированные фразы (и Piper, и Edge)
+   гонялись обратно через настоящий Whisper (Groq) и распознавались
+   практически без ошибок — и STT, и оба TTS реально работают, не только
+   собираются без ошибок. Само проигрывание через колонки я подтвердить не
+   могу (не слышу) — это на вашей стороне.
 
 7. **Поговорить голосом — браузерный демо (устарело, только для Chrome/Edge):**
    с запущенным `uvicorn` откройте `http://localhost:8000/voice`. Не

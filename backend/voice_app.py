@@ -15,6 +15,7 @@ Usage: python voice_app.py
 
 import asyncio
 import io
+import time
 import wave
 from typing import Any
 
@@ -72,6 +73,10 @@ def record_until_enter() -> bytes:
 
 
 def build_tts_provider() -> TTSProvider:
+    if settings.tts_provider == "piper":
+        from app.tts.piper import PiperTTSProvider
+
+        return PiperTTSProvider(settings.piper_model_path, config_path=settings.piper_config_path)
     if settings.tts_provider == "edge":
         from app.tts.edge import EdgeTTSProvider
 
@@ -80,12 +85,20 @@ def build_tts_provider() -> TTSProvider:
         from app.tts.sapi import SapiTTSProvider
 
         return SapiTTSProvider()
-    raise ValueError(f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: edge, sapi")
+    raise ValueError(f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: piper, edge, sapi")
+
+
+TTS_TIMEOUT_SECONDS = 15
 
 
 async def speak(primary: TTSProvider, fallback: TTSProvider, text: str) -> None:
+    started = time.monotonic()
     try:
-        await primary.speak(text)
+        await asyncio.wait_for(primary.speak(text), timeout=TTS_TIMEOUT_SECONDS)
+        print(f"   (озвучено через {settings.tts_provider} за {time.monotonic() - started:.1f}с)")
+    except TimeoutError:
+        print(f"(озвучка через {settings.tts_provider} не ответила за {TTS_TIMEOUT_SECONDS}с - пробую офлайн-голос)")
+        await fallback.speak(text)
     except Exception as exc:  # noqa: BLE001 - synthesis failing shouldn't kill the loop
         print(f"(озвучка через {settings.tts_provider} не удалась: {exc} - пробую офлайн-голос)")
         await fallback.speak(text)
@@ -97,10 +110,14 @@ async def main() -> None:
         return
 
     agent = build_default_agent()
-    tts_provider = build_tts_provider()
     from app.tts.sapi import SapiTTSProvider
 
     tts_fallback = SapiTTSProvider()
+    try:
+        tts_provider = build_tts_provider()
+    except Exception as exc:  # noqa: BLE001 - e.g. piper model files not downloaded yet
+        print(f"Не удалось запустить {settings.tts_provider}: {exc}\nИспользую офлайн-голос вместо него.")
+        tts_provider = tts_fallback
 
     session_id = "voice-session"
     try:

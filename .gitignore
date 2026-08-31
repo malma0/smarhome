@@ -13,6 +13,9 @@ __pycache__/
 # Jarvis's own SQLite state (per-house data, not source)
 backend/*.db
 
+# downloaded Piper voice models (tens of MB, fetched by README instructions)
+backend/voices/
+
 # home assistant runtime state (not our mock config)
 homeassistant/config/.storage/
 homeassistant/config/.ha_run.lock
