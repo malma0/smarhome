@@ -64,10 +64,11 @@ backend/
     tools/
       registry.py                # ToolRegistry + TurnContext, пока без единого домена
     agent.py                     # JarvisAgent — сам цикл tool use
-    main.py                      # FastAPI: POST /chat, GET/PUT /settings
+    main.py                      # FastAPI: POST /chat, GET/PUT /settings, GET /voice
+  static/voice.html             # браузерный STT/TTS демо (Web Speech API), не голосовой пайплайн
   chat_cli.py                   # локальный REPL без HTTP
-  tests/                        # test_llm_claude, test_registry, test_memory,
-                                 # test_persona, test_agent — все на моках/tmp_path
+  tests/                        # test_llm_claude/groq/ollama, test_registry, test_memory,
+                                 # test_persona, test_agent, test_main — все на моках/tmp_path
   ha_client.py                  # (сохранён на будущее, не импортируется пока нигде)
 docs/TZ.md                      # полное техническое задание
 ```
@@ -119,6 +120,13 @@ Home Assistant не нужен — только Claude API ключ.
      -H "Content-Type: application/json" \
      -d '{"persona_mode": "butler"}'
    ```
+
+6. **Поговорить голосом (браузерный демо):** с запущенным `uvicorn` откройте
+   в Chrome `http://localhost:8000/voice`, разрешите доступ к микрофону,
+   нажмите "Говорить". Использует встроенное в браузер распознавание речи и
+   озвучку — ничего дополнительно ставить не нужно. Это не настоящий
+   голосовой пайплайн дома (см. фазу 7 в [docs/TZ.md](docs/TZ.md)), а самый
+   быстрый способ буквально поговорить с уже готовым мозгом Jarvis.
 
 ## Альтернатива Claude: бесплатный провайдер без карты (Groq)
 

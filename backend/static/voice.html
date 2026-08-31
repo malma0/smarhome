@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Jarvis - голосовой демо</title>
+<style>
+  body {
+    font-family: -apple-system, Segoe UI, sans-serif;
+    max-width: 640px;
+    margin: 40px auto;
+    padding: 0 20px;
+    background: #12141a;
+    color: #e8e8ec;
+  }
+  h1 { font-weight: 600; }
+  label { display: block; margin: 16px 0 4px; font-size: 14px; color: #9a9aa5; }
+  input[type=text] {
+    width: 100%;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #333;
+    background: #1c1f27;
+    color: #e8e8ec;
+    box-sizing: border-box;
+  }
+  button {
+    margin-top: 20px;
+    padding: 16px 32px;
+    font-size: 18px;
+    border-radius: 999px;
+    border: none;
+    background: #4a7dff;
+    color: white;
+    cursor: pointer;
+  }
+  button:disabled { background: #444; cursor: default; }
+  button.listening { background: #ff4a6e; }
+  #status { margin: 16px 0; color: #9a9aa5; min-height: 20px; }
+  .bubble {
+    margin: 10px 0;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: #1c1f27;
+    white-space: pre-wrap;
+  }
+  .bubble.you { background: #23324f; }
+  #log { margin-top: 20px; }
+</style>
+</head>
+<body>
+  <h1>🎙️ Jarvis</h1>
+  <p>Голосовой демо поверх уже работающего backend. Работает лучше всего в Chrome.</p>
+
+  <label for="residentId">Кто говорит (resident id)</label>
+  <input type="text" id="residentId" value="default" placeholder="ivan">
+
+  <div>
+    <button id="micBtn">🎤 Говорить</button>
+  </div>
+  <div id="status"></div>
+  <div id="log"></div>
+
+<script>
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+const micBtn = document.getElementById('micBtn');
+const residentIdEl = document.getElementById('residentId');
+
+const sessionId = crypto.randomUUID();
+
+if (!SpeechRecognitionImpl) {
+  statusEl.textContent = 'Этот браузер не поддерживает распознавание речи. Откройте страницу в Chrome.';
+  micBtn.disabled = true;
+}
+
+function addBubble(text, who) {
+  const div = document.createElement('div');
+  div.className = 'bubble ' + who;
+  div.textContent = (who === 'you' ? '🗣 ' : '🤖 ') + text;
+  logEl.appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth' });
+}
+
+function speak(text) {
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'ru-RU';
+  speechSynthesis.speak(utter);
+}
+
+async function sendMessage(text) {
+  const residentId = residentIdEl.value.trim() || 'default';
+  const resp = await fetch('/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, resident_id: residentId, message: text }),
+  });
+  if (!resp.ok) {
+    throw new Error('Backend returned ' + resp.status);
+  }
+  return resp.json();
+}
+
+let recognition = null;
+if (SpeechRecognitionImpl) {
+  recognition = new SpeechRecognitionImpl();
+  recognition.lang = 'ru-RU';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    micBtn.classList.add('listening');
+    micBtn.textContent = '🔴 Слушаю...';
+    statusEl.textContent = 'Говорите...';
+  };
+
+  recognition.onend = () => {
+    micBtn.classList.remove('listening');
+    micBtn.textContent = '🎤 Говорить';
+  };
+
+  recognition.onerror = (event) => {
+    statusEl.textContent = 'Ошибка распознавания: ' + event.error;
+  };
+
+  recognition.onresult = async (event) => {
+    const transcript = event.results[0][0].transcript;
+    addBubble(transcript, 'you');
+    statusEl.textContent = 'Jarvis думает...';
+    try {
+      const data = await sendMessage(transcript);
+      addBubble(data.response, 'jarvis');
+      statusEl.textContent = '';
+      speak(data.response);
+      for (const action of data.actions || []) {
+        console.log('[action]', action);
+      }
+    } catch (err) {
+      statusEl.textContent = 'Ошибка: ' + err.message;
+    }
+  };
+
+  micBtn.addEventListener('click', () => recognition.start());
+}
+</script>
+</body>
+</html>

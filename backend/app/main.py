@@ -1,9 +1,13 @@
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.agent import build_default_agent
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 app = FastAPI(title="Jarvis Backend")
 agent = build_default_agent()
@@ -33,6 +37,14 @@ class SettingsUpdate(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/voice")
+async def voice_page():
+    # Browser-based STT/TTS demo, same origin as /chat so there's no CORS
+    # setup to fight with. Not a replacement for the real voice pipeline
+    # (phase 7) - just the fastest way to actually talk to Jarvis today.
+    return FileResponse(STATIC_DIR / "voice.html")
 
 
 @app.post("/chat", response_model=ChatResponse)
