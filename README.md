@@ -21,8 +21,8 @@ Voice-agent платформа                                    <- пока н
 │                                                              │
 │  Ядро (device-agnostic И llm-agnostic)         <- ЭТО ЕСТЬ  │
 │   ├── цикл tool use через LLMProvider-адаптер               │
-│   │     (llm/claude.py — дефолт; llm/ollama.py — self-hosted│
-│   │      proof of concept, см. ниже)                        │
+│   │     (llm/claude.py, llm/groq.py, llm/ollama.py —        │
+│   │      см. разделы про провайдеров ниже)                  │
 │   ├── ToolRegistry — пуст, ждёт доменных тулов              │
 │   ├── персона: butler / warm / adaptive                     │
 │   └── память: SQLite (настройки дома + предпочтения          │
@@ -58,8 +58,9 @@ backend/
     persona.py                # 3 режима характера, adaptive — эвристика стиля общения (EMA)
     llm/
       base.py                  # LLMProvider protocol, ToolDef/ContentBlock/LLMResponse
-      claude.py                 # ClaudeProvider — дефолт, лучшее качество tool use
-      ollama.py                  # OllamaProvider — free/self-hosted, CPU proof-of-concept
+      claude.py                 # ClaudeProvider — платный, лучшее качество tool use
+      groq.py                    # GroqProvider — бесплатный тариф, без карты, открытые модели
+      ollama.py                   # OllamaProvider — free/self-hosted, CPU proof-of-concept
     tools/
       registry.py                # ToolRegistry + TurnContext, пока без единого домена
     agent.py                     # JarvisAgent — сам цикл tool use
@@ -119,7 +120,27 @@ Home Assistant не нужен — только Claude API ключ.
      -d '{"persona_mode": "butler"}'
    ```
 
-## Альтернатива Claude: локальный self-hosted провайдер (Ollama)
+## Альтернатива Claude: бесплатный провайдер без карты (Groq)
+
+`LLM_PROVIDER=groq` в `.env` переключает ядро на [Groq](https://console.groq.com/keys) —
+бесплатный тариф без привязки карты (14 400 запросов/день), крутит открытые
+модели (`openai/gpt-oss-120b` по умолчанию) на своём железе — GPU не нужен.
+Веса моделей открытые, поэтому нет привязки к одному закрытому провайдеру:
+при желании те же веса можно позже поднять у себя.
+
+```
+LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=openai/gpt-oss-120b
+```
+
+**Честно про качество**: заметно надёжнее, чем локальная модель через Ollama
+(ниже) — в ручной проверке 3 из 3 одинаковых команд ("включи свет в спальне")
+дали идентичный корректный вызов тула, без пропущенных или лишних полей.
+Не идентично Claude, но для разработки и тестов вполне рабочий бесплатный
+вариант.
+
+## Локальный self-hosted провайдер без интернета (Ollama)
 
 `LLM_PROVIDER=ollama` в `.env` переключает ядро на бесплатную, полностью
 локальную модель через [Ollama](https://ollama.com) — без единого платного
@@ -161,6 +182,9 @@ pytest
 - `test_llm_ollama.py` — `OllamaProvider` мокает HTTP-вызов к Ollama, включая
   перевод истории сообщений в OpenAI-стиль (tool_calls/role:"tool"), которого
   `ClaudeProvider` не требует, — реальный Ollama для CI не нужен.
+- `test_llm_groq.py` — `GroqProvider` мокает HTTP-вызов к Groq; отдельно
+  проверяет, что аргументы тула кодируются/декодируются как JSON-строка
+  (в отличие от Ollama, где это уже был dict) — реальный ключ для CI не нужен.
 - `test_registry.py` — `ToolRegistry` тестируется на фейковом `echo`-туле, без
   единого упоминания Home Assistant.
 - `test_memory.py`, `test_persona.py` — работают на временной SQLite
@@ -175,10 +199,11 @@ pytest
 
 - [x] `LLMProvider`-адаптер: ядро не импортирует `anthropic` напрямую нигде,
       кроме `llm/claude.py`.
-- [x] Второй провайдер (`llm/ollama.py`, self-hosted/бесплатный) подключён
-      без единого изменения в `agent.py` — подтверждает, что адаптер сделан
-      правильно. Качество tool use на маленькой модели ниже, чем у Claude —
-      см. раздел про Ollama выше.
+- [x] Два дополнительных провайдера (`llm/groq.py`, `llm/ollama.py` —
+      бесплатные) подключены без единого изменения в `agent.py` —
+      подтверждает, что адаптер сделан правильно. Groq (открытые модели на их
+      железе) заметно надёжнее на tool use, чем Ollama (маленькая модель на
+      CPU) — см. разделы выше.
 - [x] Device-agnostic `ToolRegistry`: цикл tool use работает и с нулём
       зарегистрированных тулов.
 - [x] Персона: 3 режима, `adaptive` — реальный (пусть и эвристический v1)

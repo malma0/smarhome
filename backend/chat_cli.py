@@ -4,9 +4,16 @@ Usage: python chat_cli.py
 """
 
 import asyncio
+import sys
 import uuid
 
 from app.agent import build_default_agent
+
+# Windows consoles often default to a legacy codepage (cp1251/cp866) that
+# can't print every character a model might use (emoji, "smart" punctuation,
+# non-breaking spaces). Force UTF-8 so a reply never crashes the REPL.
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stdin.reconfigure(encoding="utf-8")
 
 
 async def main():

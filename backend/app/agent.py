@@ -7,6 +7,7 @@ from app.config import settings
 from app.db import connect
 from app.llm.base import LLMProvider
 from app.llm.claude import ClaudeProvider
+from app.llm.groq import GroqProvider
 from app.llm.ollama import OllamaProvider
 from app.memory import MemoryStore
 from app.persona import build_persona_prompt, update_style
@@ -101,7 +102,14 @@ def _build_llm_provider() -> LLMProvider:
         # the core is genuinely llm-agnostic, not a production-quality swap
         # yet. See README for the tradeoffs (tool-use reliability, latency).
         return OllamaProvider(model=settings.ollama_model, base_url=settings.ollama_base_url)
-    raise ValueError(f"Unsupported LLM_PROVIDER {settings.llm_provider!r}. Valid: claude, ollama")
+    if settings.llm_provider == "groq":
+        # Free tier, no credit card, open-weight models on Groq's hardware -
+        # no local GPU needed and no vendor lock-in on the model itself
+        # (the weights are open, unlike Claude's).
+        return GroqProvider(
+            api_key=settings.groq_api_key, model=settings.groq_model, base_url=settings.groq_base_url
+        )
+    raise ValueError(f"Unsupported LLM_PROVIDER {settings.llm_provider!r}. Valid: claude, ollama, groq")
 
 
 def build_default_agent() -> JarvisAgent:
