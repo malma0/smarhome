@@ -11,15 +11,18 @@ from app.agent import build_default_agent
 
 # Windows consoles often default to a legacy codepage (cp1251/cp866) that
 # can't print every character a model might use (emoji, "smart" punctuation,
-# non-breaking spaces). Force UTF-8 so a reply never crashes the REPL.
+# non-breaking spaces). Force UTF-8 on output only - reconfiguring stdin too
+# has been observed to break input() entirely in some Windows terminals.
 sys.stdout.reconfigure(encoding="utf-8")
-sys.stdin.reconfigure(encoding="utf-8")
 
 
 async def main():
     agent = build_default_agent()
     session_id = str(uuid.uuid4())
-    resident_id = input("resident id (enter for 'default')> ").strip() or "default"
+    try:
+        resident_id = input("resident id (enter for 'default')> ").strip() or "default"
+    except (EOFError, KeyboardInterrupt):
+        resident_id = "default"
     print(f"Jarvis CLI - resident '{resident_id}', type 'quit' to exit.\n")
 
     while True:
