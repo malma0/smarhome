@@ -74,6 +74,16 @@ def record_until_enter() -> bytes:
 
 
 def build_tts_provider() -> TTSProvider:
+    if settings.tts_provider == "elevenlabs":
+        from app.tts.elevenlabs import ElevenLabsTTSProvider
+
+        if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
+            raise ValueError("ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID must both be set in .env")
+        return ElevenLabsTTSProvider(
+            api_key=settings.elevenlabs_api_key,
+            voice_id=settings.elevenlabs_voice_id,
+            model=settings.elevenlabs_model,
+        )
     if settings.tts_provider == "piper":
         from app.tts.piper import PiperTTSProvider
 
@@ -86,7 +96,7 @@ def build_tts_provider() -> TTSProvider:
         from app.tts.sapi import SapiTTSProvider
 
         return SapiTTSProvider()
-    raise ValueError(f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: piper, edge, sapi")
+    raise ValueError(f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: elevenlabs, piper, edge, sapi")
 
 
 async def speak(primary: TTSProvider, fallback: TTSProvider, text: str) -> None:

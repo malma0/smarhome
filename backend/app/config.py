@@ -24,6 +24,9 @@ class Settings:
     edge_tts_voice: str
     piper_model_path: str
     piper_config_path: str
+    elevenlabs_api_key: str
+    elevenlabs_voice_id: str
+    elevenlabs_model: str
 
 
 def load_settings() -> Settings:
@@ -40,10 +43,13 @@ def load_settings() -> Settings:
         home_assistant_token=os.environ.get("HOME_ASSISTANT_TOKEN", ""),
         db_path=os.environ.get("JARVIS_DB_PATH", "jarvis.db"),
         port=int(os.environ.get("JARVIS_PORT", "8000")),
-        tts_provider=os.environ.get("TTS_PROVIDER", "piper"),
+        tts_provider=os.environ.get("TTS_PROVIDER", "edge"),
         edge_tts_voice=os.environ.get("EDGE_TTS_VOICE", "ru-RU-DmitryNeural"),
         piper_model_path=os.environ.get("PIPER_MODEL_PATH", "voices/ru_RU-irina-medium.onnx"),
         piper_config_path=os.environ.get("PIPER_CONFIG_PATH", "voices/ru_RU-irina-medium.onnx.json"),
+        elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY", ""),
+        elevenlabs_voice_id=os.environ.get("ELEVENLABS_VOICE_ID", ""),
+        elevenlabs_model=os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
     )
 
 
