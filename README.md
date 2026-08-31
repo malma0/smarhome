@@ -21,7 +21,8 @@ Voice-agent платформа                                    <- пока н
 │                                                              │
 │  Ядро (device-agnostic И llm-agnostic)         <- ЭТО ЕСТЬ  │
 │   ├── цикл tool use через LLMProvider-адаптер               │
-│   │     (llm/claude.py — дефолтная реализация)              │
+│   │     (llm/claude.py — дефолт; llm/ollama.py — self-hosted│
+│   │      proof of concept, см. ниже)                        │
 │   ├── ToolRegistry — пуст, ждёт доменных тулов              │
 │   ├── персона: butler / warm / adaptive                     │
 │   └── память: SQLite (настройки дома + предпочтения          │
@@ -57,7 +58,8 @@ backend/
     persona.py                # 3 режима характера, adaptive — эвристика стиля общения (EMA)
     llm/
       base.py                  # LLMProvider protocol, ToolDef/ContentBlock/LLMResponse
-      claude.py                 # ClaudeProvider — единственная реализация, дефолт
+      claude.py                 # ClaudeProvider — дефолт, лучшее качество tool use
+      ollama.py                  # OllamaProvider — free/self-hosted, CPU proof-of-concept
     tools/
       registry.py                # ToolRegistry + TurnContext, пока без единого домена
     agent.py                     # JarvisAgent — сам цикл tool use
@@ -117,6 +119,34 @@ Home Assistant не нужен — только Claude API ключ.
      -d '{"persona_mode": "butler"}'
    ```
 
+## Альтернатива Claude: локальный self-hosted провайдер (Ollama)
+
+`LLM_PROVIDER=ollama` в `.env` переключает ядро на бесплатную, полностью
+локальную модель через [Ollama](https://ollama.com) — без единого платного
+API-вызова. Проверялось на этой машине (без GPU, только CPU) с
+`qwen2.5:1.5b`:
+
+```bash
+# один раз: ollama pull qwen2.5:1.5b, дальше служба Ollama работает в фоне
+```
+
+```
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen2.5:1.5b
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+**Честно про качество**: на общих вопросах работает нормально ("какая
+столица Франции?" → "Paris."), но **на tool use ощутимо менее надёжна**, чем
+Claude — в ручной проверке одна и та же команда ("включи свет в спальне") на
+одном прогоне пропустила обязательный параметр `on`, на другом добавила
+несуществующее поле `object`, которого нет в схеме тула. Это ожидаемо для
+модели такого размера на CPU, не баг адаптера. Использовать это стоит как
+доказательство, что ядро реально llm-agnostic (не привязано к Claude), а не
+как замену для реальных сценариев управления домом — тем более что
+tool-use-домены (фаза 1+) как раз про надёжное управление реальными
+устройствами.
+
 ## Как гонять тесты
 
 ```bash
@@ -128,6 +158,9 @@ pytest
 рабочую БД:
 - `test_llm_claude.py` — `ClaudeProvider` мокает HTTP-вызов `AsyncAnthropic`,
   проверяет только перевод схем/content-блоков в обе стороны.
+- `test_llm_ollama.py` — `OllamaProvider` мокает HTTP-вызов к Ollama, включая
+  перевод истории сообщений в OpenAI-стиль (tool_calls/role:"tool"), которого
+  `ClaudeProvider` не требует, — реальный Ollama для CI не нужен.
 - `test_registry.py` — `ToolRegistry` тестируется на фейковом `echo`-туле, без
   единого упоминания Home Assistant.
 - `test_memory.py`, `test_persona.py` — работают на временной SQLite
@@ -142,6 +175,10 @@ pytest
 
 - [x] `LLMProvider`-адаптер: ядро не импортирует `anthropic` напрямую нигде,
       кроме `llm/claude.py`.
+- [x] Второй провайдер (`llm/ollama.py`, self-hosted/бесплатный) подключён
+      без единого изменения в `agent.py` — подтверждает, что адаптер сделан
+      правильно. Качество tool use на маленькой модели ниже, чем у Claude —
+      см. раздел про Ollama выше.
 - [x] Device-agnostic `ToolRegistry`: цикл tool use работает и с нулём
       зарегистрированных тулов.
 - [x] Персона: 3 режима, `adaptive` — реальный (пусть и эвристический v1)

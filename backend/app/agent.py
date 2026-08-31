@@ -7,6 +7,7 @@ from app.config import settings
 from app.db import connect
 from app.llm.base import LLMProvider
 from app.llm.claude import ClaudeProvider
+from app.llm.ollama import OllamaProvider
 from app.memory import MemoryStore
 from app.persona import build_persona_prompt, update_style
 from app.tools.registry import ToolRegistry, TurnContext
@@ -92,12 +93,21 @@ class JarvisAgent:
         return {"response": final_text, "actions": actions}
 
 
+def _build_llm_provider() -> LLMProvider:
+    if settings.llm_provider == "claude":
+        return ClaudeProvider(api_key=settings.anthropic_api_key, model=settings.anthropic_model)
+    if settings.llm_provider == "ollama":
+        # Free, self-hosted, CPU-friendly small model - proof of concept that
+        # the core is genuinely llm-agnostic, not a production-quality swap
+        # yet. See README for the tradeoffs (tool-use reliability, latency).
+        return OllamaProvider(model=settings.ollama_model, base_url=settings.ollama_base_url)
+    raise ValueError(f"Unsupported LLM_PROVIDER {settings.llm_provider!r}. Valid: claude, ollama")
+
+
 def build_default_agent() -> JarvisAgent:
     """Single wiring point for the production agent - main.py and chat_cli.py
     both call this rather than constructing JarvisAgent themselves."""
-    if settings.llm_provider != "claude":
-        raise ValueError(f"Unsupported LLM_PROVIDER {settings.llm_provider!r}")
-    llm = ClaudeProvider(api_key=settings.anthropic_api_key, model=settings.anthropic_model)
+    llm = _build_llm_provider()
     memory = MemoryStore(connect(settings.db_path))
     tools = ToolRegistry()  # empty until phase 1 registers domain tools
     return JarvisAgent(llm=llm, tools=tools, memory=memory)
