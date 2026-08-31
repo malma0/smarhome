@@ -9,3 +9,5 @@ pytest>=8.0.0
 sounddevice>=0.4.6
 numpy>=1.26.0
 pyttsx3>=2.90
+edge-tts>=7.0.0
+pygame>=2.6.0

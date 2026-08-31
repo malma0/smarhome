@@ -63,13 +63,17 @@ backend/
       ollama.py                   # OllamaProvider — free/self-hosted, CPU proof-of-concept
     tools/
       registry.py                # ToolRegistry + TurnContext, пока без единого домена
+    tts/
+      base.py                     # TTSProvider protocol — тот же паттерн, что и LLMProvider
+      edge.py                      # EdgeTTSProvider — бесплатные нейро-голоса, дефолт
+      sapi.py                      # SapiTTSProvider — офлайн Windows-голоса, фолбэк
     agent.py                     # JarvisAgent — сам цикл tool use
     main.py                      # FastAPI: POST /chat, GET/PUT /settings, GET /voice
   static/voice.html             # браузерный STT/TTS демо, устарело — см. voice_app.py
-  voice_app.py                   # десктопное голосовое приложение (фаза 1) — Whisper (Groq) + SAPI TTS
+  voice_app.py                   # десктопное голосовое приложение (фаза 1) — Whisper (Groq) + TTSProvider
   chat_cli.py                   # локальный текстовый REPL без HTTP
-  tests/                        # test_llm_claude/groq/ollama, test_registry, test_memory,
-                                 # test_persona, test_agent, test_main, test_voice_app — моки/tmp_path
+  tests/                        # test_llm_claude/groq/ollama, test_tts_edge/sapi, test_registry,
+                                 # test_memory, test_persona, test_agent, test_main, test_voice_app
   ha_client.py                  # (сохранён на будущее, не импортируется пока нигде)
 docs/TZ.md                      # полное техническое задание
 ```
@@ -132,12 +136,20 @@ Home Assistant не нужен — только Claude API ключ.
    Whisper, независимо от того, какой `LLM_PROVIDER` отвечает на сам вопрос).
    Введите имя, нажмите Enter — начнётся запись, скажите что-нибудь, нажмите
    Enter ещё раз — запись остановится, Jarvis распознает речь, ответит и
-   озвучит ответ через системный голос Windows (для русского — "Microsoft
-   Irina", если установлен). Никаких новых аккаунтов, всё бесплатно.
+   озвучит ответ. Никаких новых аккаунтов, всё бесплатно.
 
-   Живая проверка (не моки): синтезированная офлайн-фраза "Привет Джарвис,
-   включи свет в спальне" была распознана Whisper практически без ошибок —
-   пайплайн действительно работает, не только собирается без ошибок.
+   **Голос озвучки — сменный** (`app/tts/`, тот же паттерн, что и у LLM):
+   - `TTS_PROVIDER=edge` (по умолчанию) — бесплатные нейросетевые голоса
+     Microsoft Edge (`edge-tts`, без ключа/аккаунта), заметно естественнее
+     системных. Голос по умолчанию — `ru-RU-DmitryNeural` (мужской), есть
+     также `ru-RU-SvetlanaNeural` (женский) — задаётся `EDGE_TTS_VOICE`.
+   - `TTS_PROVIDER=sapi` — офлайн-голоса Windows (pyttsx3), ниже качеством,
+     используется автоматически как фолбэк, если `edge` не сработал (нет
+     интернета и т.п.).
+
+   Живая проверка (не моки): синтезированные фразы гонялись обратно через
+   настоящий Whisper (Groq) и распознавались практически без ошибок —
+   и STT, и TTS реально работают, не только собираются без ошибок.
 
 7. **Поговорить голосом — браузерный демо (устарело, только для Chrome/Edge):**
    с запущенным `uvicorn` откройте `http://localhost:8000/voice`. Не

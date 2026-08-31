@@ -20,6 +20,8 @@ class Settings:
     home_assistant_token: str
     db_path: str
     port: int
+    tts_provider: str
+    edge_tts_voice: str
 
 
 def load_settings() -> Settings:
@@ -36,6 +38,8 @@ def load_settings() -> Settings:
         home_assistant_token=os.environ.get("HOME_ASSISTANT_TOKEN", ""),
         db_path=os.environ.get("JARVIS_DB_PATH", "jarvis.db"),
         port=int(os.environ.get("JARVIS_PORT", "8000")),
+        tts_provider=os.environ.get("TTS_PROVIDER", "edge"),
+        edge_tts_voice=os.environ.get("EDGE_TTS_VOICE", "ru-RU-DmitryNeural"),
     )
 
 

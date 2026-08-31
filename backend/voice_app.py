@@ -6,7 +6,9 @@ an actual house. Both pieces here are free, no new accounts:
 - STT: records the mic, sends the clip to Groq's free Whisper endpoint
   (reuses GROQ_API_KEY - independent of whichever LLM_PROVIDER answers the
   chat itself).
-- TTS: the OS's own SAPI voices via pyttsx3, fully offline.
+- TTS: pluggable via app.tts.base.TTSProvider - defaults to free neural
+  voices (app.tts.edge), falls back to offline SAPI (app.tts.sapi) if that
+  fails (no internet, the reverse-engineered service breaks, etc).
 
 Usage: python voice_app.py
 """
@@ -18,11 +20,11 @@ from typing import Any
 
 import httpx
 import numpy as np
-import pyttsx3
 import sounddevice as sd
 
 from app.agent import build_default_agent
 from app.config import settings
+from app.tts.base import TTSProvider
 
 SAMPLE_RATE = 16000
 WHISPER_MODEL = "whisper-large-v3-turbo"
@@ -69,12 +71,24 @@ def record_until_enter() -> bytes:
     return frames_to_wav_bytes(frames)
 
 
-def pick_voice(engine: "pyttsx3.Engine", language_hint: str = "ru") -> None:
-    for voice in engine.getProperty("voices"):
-        if language_hint in voice.id.lower() or any(language_hint in lang.lower() for lang in getattr(voice, "languages", [])):
-            engine.setProperty("voice", voice.id)
-            return
-    # No Russian voice installed - fall back to whatever the default is.
+def build_tts_provider() -> TTSProvider:
+    if settings.tts_provider == "edge":
+        from app.tts.edge import EdgeTTSProvider
+
+        return EdgeTTSProvider(voice=settings.edge_tts_voice)
+    if settings.tts_provider == "sapi":
+        from app.tts.sapi import SapiTTSProvider
+
+        return SapiTTSProvider()
+    raise ValueError(f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: edge, sapi")
+
+
+async def speak(primary: TTSProvider, fallback: TTSProvider, text: str) -> None:
+    try:
+        await primary.speak(text)
+    except Exception as exc:  # noqa: BLE001 - synthesis failing shouldn't kill the loop
+        print(f"(озвучка через {settings.tts_provider} не удалась: {exc} - пробую офлайн-голос)")
+        await fallback.speak(text)
 
 
 async def main() -> None:
@@ -83,8 +97,10 @@ async def main() -> None:
         return
 
     agent = build_default_agent()
-    tts_engine = pyttsx3.init()
-    pick_voice(tts_engine)
+    tts_provider = build_tts_provider()
+    from app.tts.sapi import SapiTTSProvider
+
+    tts_fallback = SapiTTSProvider()
 
     session_id = "voice-session"
     try:
@@ -124,8 +140,7 @@ async def main() -> None:
             print(f"   [action] {action['tool']}({action['input']}) -> {action['result']}")
         print()
 
-        tts_engine.say(result["response"])
-        tts_engine.runAndWait()
+        await speak(tts_provider, tts_fallback, result["response"])
 
 
 if __name__ == "__main__":
