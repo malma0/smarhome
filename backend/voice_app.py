@@ -124,14 +124,19 @@ async def main() -> None:
         return
 
     agent = build_default_agent()
-    from app.tts.sapi import SapiTTSProvider
 
-    tts_fallback = SapiTTSProvider()
-    try:
-        tts_provider = build_tts_provider()
-    except Exception as exc:  # noqa: BLE001 - e.g. piper model files not downloaded yet
-        print(f"Не удалось запустить {settings.tts_provider}: {exc}\nИспользую офлайн-голос вместо него.")
-        tts_provider = tts_fallback
+    tts_provider = tts_fallback = None
+    if settings.tts_enabled:
+        from app.tts.sapi import SapiTTSProvider
+
+        tts_fallback = SapiTTSProvider()
+        try:
+            tts_provider = build_tts_provider()
+        except Exception as exc:  # noqa: BLE001 - e.g. piper model files not downloaded yet
+            print(f"Не удалось запустить {settings.tts_provider}: {exc}\nИспользую офлайн-голос вместо него.")
+            tts_provider = tts_fallback
+    else:
+        print("Озвучка отключена (JARVIS_TTS_ENABLED=false) - Jarvis будет отвечать только текстом.\n")
 
     session_id = "voice-session"
     try:
@@ -171,7 +176,8 @@ async def main() -> None:
             print(f"   [action] {action['tool']}({action['input']}) -> {action['result']}")
         print()
 
-        await speak(tts_provider, tts_fallback, result["response"])
+        if settings.tts_enabled:
+            await speak(tts_provider, tts_fallback, result["response"])
 
 
 if __name__ == "__main__":

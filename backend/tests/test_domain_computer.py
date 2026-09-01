@@ -49,7 +49,7 @@ def test_russian_alias_resolves_to_same_executable():
     mock_popen.assert_called_once_with(["notepad.exe"])
 
 
-def test_browser_alias_opens_via_startfile_not_popen():
+def test_browser_alias_with_no_url_opens_default_page():
     registry = make_registry()
     ctx = TurnContext()
     with (
@@ -58,9 +58,57 @@ def test_browser_alias_opens_via_startfile_not_popen():
     ):
         result = asyncio.run(registry.dispatch("open_application", {"app": "browser"}, ctx))
 
-    mock_startfile.assert_called_once()
+    mock_startfile.assert_called_once_with("https://www.google.com")
     mock_popen.assert_not_called()
-    assert result == {"ok": True, "opened": "browser"}
+    assert result == {"ok": True, "opened": "browser", "url": "https://www.google.com"}
+
+
+def test_browser_with_bare_site_name_gets_https_prefix():
+    registry = make_registry()
+    ctx = TurnContext()
+    with patch("app.domains.computer.os.startfile") as mock_startfile:
+        result = asyncio.run(
+            registry.dispatch("open_application", {"app": "browser", "url": "youtube.com"}, ctx)
+        )
+
+    mock_startfile.assert_called_once_with("https://youtube.com")
+    assert result == {"ok": True, "opened": "browser", "url": "https://youtube.com"}
+
+
+def test_browser_with_full_url_passed_through_unchanged():
+    registry = make_registry()
+    ctx = TurnContext()
+    with patch("app.domains.computer.os.startfile") as mock_startfile:
+        asyncio.run(
+            registry.dispatch(
+                "open_application", {"app": "browser", "url": "http://example.com/page"}, ctx
+            )
+        )
+
+    mock_startfile.assert_called_once_with("http://example.com/page")
+
+
+def test_russian_browser_alias_supports_url_too():
+    registry = make_registry()
+    ctx = TurnContext()
+    with patch("app.domains.computer.os.startfile") as mock_startfile:
+        asyncio.run(
+            registry.dispatch("open_application", {"app": "браузер", "url": "youtube.com"}, ctx)
+        )
+
+    mock_startfile.assert_called_once_with("https://youtube.com")
+
+
+def test_non_http_scheme_url_is_rejected():
+    registry = make_registry()
+    ctx = TurnContext()
+    with patch("app.domains.computer.os.startfile") as mock_startfile:
+        result = asyncio.run(
+            registry.dispatch("open_application", {"app": "browser", "url": "file:///C:/secrets.txt"}, ctx)
+        )
+
+    mock_startfile.assert_not_called()
+    assert "error" in result
 
 
 def test_unknown_app_rejected_without_launching_anything():

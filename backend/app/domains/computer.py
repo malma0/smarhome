@@ -40,17 +40,40 @@ TOOL_DESCRIPTION = (
     "file explorer, or the default web browser). Only applications on a "
     "fixed allowlist can be opened - there is no shell/terminal access and "
     "no way to run arbitrary commands. If asked for something not "
-    "supported, say so rather than guessing at a substitute."
+    "supported, say so rather than guessing at a substitute. When app is "
+    "'browser' and the user named a site (e.g. 'open YouTube'), pass its "
+    "address as url - otherwise the browser opens to a generic default "
+    "page, which is not what was asked for."
 )
+
+DEFAULT_BROWSER_URL = "https://www.google.com"
+
+
+def _normalize_url(raw_url: str) -> str | None:
+    """Only http/https are allowed - other schemes (file:, mailto:, custom
+    protocol handlers) can do more than 'open a website' implies, so they're
+    rejected rather than silently forwarded to os.startfile. A bare site
+    name with no scheme at all (e.g. 'youtube.com') is assumed https."""
+    url = raw_url.strip()
+    if not url:
+        return None
+    if "://" in url:
+        scheme = url.split("://", 1)[0].lower()
+        return url if scheme in ("http", "https") else None
+    return f"https://{url}"
 
 
 async def _open_application(tool_input: dict, ctx: TurnContext) -> dict:
     app = tool_input["app"].strip().lower()
 
     if app in BROWSER_ALIASES:
-        os.startfile("https://www.google.com")
+        raw_url = tool_input.get("url") or ""
+        url = _normalize_url(raw_url) if raw_url else DEFAULT_BROWSER_URL
+        if url is None:
+            return {"error": f"'{raw_url}' is not a usable http/https address."}
+        os.startfile(url)
         ctx.touched.add("browser")
-        return {"ok": True, "opened": "browser"}
+        return {"ok": True, "opened": "browser", "url": url}
 
     exe = KNOWN_APPS.get(app)
     if not exe:
@@ -77,7 +100,14 @@ def register(registry: ToolRegistry) -> None:
                     "app": {
                         "type": "string",
                         "description": "Application name, e.g. 'notepad', 'calculator', 'browser'.",
-                    }
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": (
+                            "Only used when app is 'browser'. A specific site to open, e.g. "
+                            "'youtube.com' or 'https://www.youtube.com'. Omit to open a default page."
+                        ),
+                    },
                 },
                 "required": ["app"],
             },

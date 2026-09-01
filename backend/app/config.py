@@ -27,6 +27,7 @@ class Settings:
     elevenlabs_api_key: str
     elevenlabs_voice_id: str
     elevenlabs_model: str
+    tts_enabled: bool
 
 
 def load_settings() -> Settings:
@@ -50,6 +51,7 @@ def load_settings() -> Settings:
         elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY", ""),
         elevenlabs_voice_id=os.environ.get("ELEVENLABS_VOICE_ID", ""),
         elevenlabs_model=os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
+        tts_enabled=os.environ.get("JARVIS_TTS_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
     )
 
 
