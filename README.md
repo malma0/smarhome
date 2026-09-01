@@ -64,7 +64,8 @@ backend/
     tools/
       registry.py                # ToolRegistry + TurnContext
     domains/
-      computer.py                 # фаза 2: open_application — первый доменный тул
+      computer.py                 # фаза 2: open_application, allowlist без shell
+      files.py                     # фаза 2: list/read/write/delete, без песочницы + safety
     tts/
       base.py                     # TTSProvider protocol — тот же паттерн, что и LLMProvider
       edge.py                     # EdgeTTSProvider — бесплатные нейро-голоса Microsoft, дефолт
@@ -78,7 +79,7 @@ backend/
   voices/                        # скачанные модели Piper (.onnx), не в git — см. инструкцию ниже
   chat_cli.py                   # локальный текстовый REPL без HTTP
   tests/                        # test_llm_claude/groq/ollama, test_tts_piper/edge/sapi/elevenlabs,
-                                 # test_registry, test_domain_computer, test_memory, test_persona,
+                                 # test_registry, test_domain_computer/files, test_memory, test_persona,
                                  # test_agent, test_main, test_voice_app
   ha_client.py                  # (сохранён на будущее, не импортируется пока нигде)
 docs/TZ.md                      # полное техническое задание
@@ -305,12 +306,20 @@ pytest
 - [x] `voice_app.py` — STT через Whisper (Groq, бесплатно) + сменный
       `TTSProvider` (`edge`/`piper`/`sapi`/`elevenlabs`).
 
-**Фаза 2 (управление компьютером, начата):**
+**Фаза 2 (управление компьютером):**
 - [x] `open_application` (`app/domains/computer.py`) — allowlist известных
       программ, явно без доступа к shell/терминалу. Проверено вживую на
       реальной LLM: "открой калькулятор" запускает `calc.exe`, "открой
       терминал" модель отклоняет сама, ещё до попытки вызова тула.
-- [ ] Работа с файлами — следующий тул в этом домене.
+- [x] `list_directory`/`read_file`/`write_file`/`delete_file`
+      (`app/domains/files.py`) — доступ ко всей файловой системе (осознанный
+      выбор пользователя, без песочницы), но перезапись/удаление и второй
+      файл за один ход требуют `confirmed=true`, а системные папки Windows
+      (`C:\Windows`, `Program Files` и т.п.) защищены безусловно, даже с
+      подтверждением. Проверено вживую: перезапись без подтверждения
+      отклонена моделью до вызова тула, с подтверждением — прошла; попытка
+      удалить `hosts` с "я подтверждаю" в том же сообщении отклонена моделью
+      полностью, до нашего кода-предохранителя дело не дошло.
 
 ## Что сознательно отложено
 
