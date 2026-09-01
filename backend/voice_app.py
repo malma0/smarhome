@@ -96,7 +96,20 @@ def build_tts_provider() -> TTSProvider:
         from app.tts.sapi import SapiTTSProvider
 
         return SapiTTSProvider()
-    raise ValueError(f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: elevenlabs, piper, edge, sapi")
+    if settings.tts_provider == "voicebox":
+        from app.tts.voicebox import VoiceboxTTSProvider
+
+        if not settings.voicebox_profile:
+            raise ValueError("VOICEBOX_PROFILE must be set in .env (the cloned-voice profile name)")
+        return VoiceboxTTSProvider(
+            profile=settings.voicebox_profile,
+            base_url=settings.voicebox_base_url,
+            engine=settings.voicebox_engine,
+            language=settings.voicebox_language,
+        )
+    raise ValueError(
+        f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: elevenlabs, piper, edge, sapi, voicebox"
+    )
 
 
 async def speak(primary: TTSProvider, fallback: TTSProvider, text: str) -> None:
