@@ -72,13 +72,14 @@ backend/
       piper.py                     # PiperTTSProvider — открытая модель, офлайн, ниже качеством
       sapi.py                        # SapiTTSProvider — офлайн Windows-голоса, аварийный фолбэк
       elevenlabs.py                   # ElevenLabsTTSProvider — лучшее качество, free tier не даёт API
+      voicebox.py                      # VoiceboxTTSProvider — клонированный голос, локально, бесплатно
     agent.py                     # JarvisAgent — сам цикл tool use
     main.py                      # FastAPI: POST /chat, GET/PUT /settings, GET /voice
   static/voice.html             # браузерный STT/TTS демо, устарело — см. voice_app.py
   voice_app.py                   # десктопное голосовое приложение (фаза 1) — Whisper (Groq) + TTSProvider
   voices/                        # скачанные модели Piper (.onnx), не в git — см. инструкцию ниже
   chat_cli.py                   # локальный текстовый REPL без HTTP
-  tests/                        # test_llm_claude/groq/ollama, test_tts_piper/edge/sapi/elevenlabs,
+  tests/                        # test_llm_claude/groq/ollama, test_tts_piper/edge/sapi/elevenlabs/voicebox,
                                  # test_registry, test_domain_computer/files, test_memory, test_persona,
                                  # test_agent, test_main, test_voice_app
   ha_client.py                  # (сохранён на будущее, не импортируется пока нигде)
@@ -192,11 +193,33 @@ Home Assistant не нужен — только Claude API ключ.
      но проверить его на реальном голосе бесплатно не вышло — честно
      фиксируем это здесь, чтобы не наступать на те же грабли дважды.
 
-   Живая проверка (не моки): синтезированные фразы (Piper и Edge) гонялись
-   обратно через настоящий Whisper (Groq) и распознавались практически без
-   ошибок — и STT, и оба TTS реально работают, не только собираются без
-   ошибок. Само проигрывание через колонки я подтвердить не могу (не
-   слышу) — это на вашей стороне.
+   - `TTS_PROVIDER=voicebox` — клонированный голос через
+     [Voicebox](https://github.com/jamiepine/voicebox) + модель Chatterbox
+     Multilingual (Resemble AI): единственный вариант здесь, который не
+     завязан ни на какого облачного вендора и не имеет free-tier ограничений
+     ElevenLabs — голос клонируется локально из короткого (~30с) образца
+     реальной речи на нужном языке (кросс-языковое клонирование даёт
+     заметный акцент — проверено на практике, не рекомендуется) и дальше
+     генерируется полностью на этой машине. Требования:
+     - отдельно запущенный `voicebox-server.exe` (из его собственной папки
+       установки, не из этого репозитория — иначе он насоздаёт `data/`
+       прямо в репо) — порт по умолчанию (8000) совпадает с `JARVIS_PORT`,
+       одновременно не запускать;
+     - заранее созданный голосовой профиль (`POST /profiles` +
+       `POST /profiles/{id}/samples` с образцом голоса) — имя профиля в
+       `VOICEBOX_PROFILE`.
+
+     Минус — скорость: без GPU генерация на CPU занимает по нескольку
+     секунд на короткую фразу (на длинных ответах кратно дольше) — это
+     осознанный выбор качества голоса, а не альтернатива `edge` по
+     скорости. Как и все остальные провайдеры, при ошибке (сервер не
+     запущен, генерация не удалась) автоматически откатывается на `sapi`.
+
+   Живая проверка (не моки): синтезированные фразы (Piper, Edge и клонированный
+   голос через Voicebox) гонялись обратно через настоящий Whisper (Groq) и
+   распознавались практически без ошибок — STT и все TTS реально работают,
+   не только собираются без ошибок. Само проигрывание через колонки я
+   подтвердить не могу (не слышу) — это на вашей стороне.
 
 8. **Поговорить голосом — браузерный демо (устарело, только для Chrome/Edge):**
    с запущенным `uvicorn` откройте `http://localhost:8000/voice`. Не
@@ -308,7 +331,7 @@ pytest
 
 **Фаза 1 (десктопный голос):**
 - [x] `voice_app.py` — STT через Whisper (Groq, бесплатно) + сменный
-      `TTSProvider` (`edge`/`piper`/`sapi`/`elevenlabs`).
+      `TTSProvider` (`edge`/`piper`/`sapi`/`elevenlabs`/`voicebox`).
 
 **Фаза 2 (управление компьютером):**
 - [x] `open_application` (`app/domains/computer.py`) — небольшой быстрый
