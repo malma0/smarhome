@@ -49,18 +49,36 @@ def test_russian_alias_resolves_to_same_executable():
     mock_popen.assert_called_once_with(["notepad.exe"])
 
 
-def test_browser_alias_with_no_url_opens_default_page():
+def test_browser_alias_with_no_url_launches_the_real_default_browser(tmp_path):
+    fake_browser = tmp_path / "librewolf.exe"
+    fake_browser.write_text("")  # just needs to exist for os.path.exists
     registry = make_registry()
     ctx = TurnContext()
     with (
-        patch("app.domains.computer.os.startfile") as mock_startfile,
+        patch("app.domains.computer._default_browser_executable", return_value=str(fake_browser)),
         patch("app.domains.computer.subprocess.Popen") as mock_popen,
+        patch("app.domains.computer.os.startfile") as mock_startfile,
     ):
         result = asyncio.run(registry.dispatch("open_application", {"app": "browser"}, ctx))
 
-    mock_startfile.assert_called_once_with("https://www.google.com")
+    mock_popen.assert_called_once_with([str(fake_browser)])
+    mock_startfile.assert_not_called()
+    assert result == {"ok": True, "opened": "browser"}
+
+
+def test_browser_alias_falls_back_to_a_url_if_default_browser_cannot_be_found():
+    registry = make_registry()
+    ctx = TurnContext()
+    with (
+        patch("app.domains.computer._default_browser_executable", return_value=None),
+        patch("app.domains.computer.subprocess.Popen") as mock_popen,
+        patch("app.domains.computer.os.startfile") as mock_startfile,
+    ):
+        result = asyncio.run(registry.dispatch("open_application", {"app": "browser"}, ctx))
+
     mock_popen.assert_not_called()
-    assert result == {"ok": True, "opened": "browser", "url": "https://www.google.com"}
+    mock_startfile.assert_called_once()
+    assert result == {"ok": True, "opened": "browser"}
 
 
 def test_browser_with_bare_site_name_gets_https_prefix():

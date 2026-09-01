@@ -42,11 +42,40 @@ TOOL_DESCRIPTION = (
     "no way to run arbitrary commands. If asked for something not "
     "supported, say so rather than guessing at a substitute. When app is "
     "'browser' and the user named a site (e.g. 'open YouTube'), pass its "
-    "address as url - otherwise the browser opens to a generic default "
-    "page, which is not what was asked for."
+    "address as url - otherwise the browser just opens to whatever its own "
+    "home/new-tab page is, same as clicking its icon."
 )
 
-DEFAULT_BROWSER_URL = "https://www.google.com"
+# Only used if the real default browser can't be found via the registry -
+# should be rare. Not the normal case, so it doesn't need to be anyone's
+# actual homepage.
+_FALLBACK_BROWSER_URL = "https://www.google.com"
+
+
+def _default_browser_executable() -> str | None:
+    """Looks up the user's actual default browser via the registry, so
+    'open the browser' with no site launches it plainly - showing its own
+    configured home/new-tab page - instead of os.startfile-ing a URL we
+    picked (previously always google.com, which isn't anyone's homepage)."""
+    import shlex
+    import winreg
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
+        ) as key:
+            prog_id, _ = winreg.QueryValueEx(key, "ProgId")
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, rf"{prog_id}\shell\open\command") as key:
+            command, _ = winreg.QueryValueEx(key, "")
+    except OSError:
+        return None
+
+    try:
+        parts = shlex.split(command, posix=False)
+    except ValueError:
+        return None
+    return parts[0].strip('"') if parts else None
 
 
 def _normalize_url(raw_url: str) -> str | None:
@@ -68,12 +97,21 @@ async def _open_application(tool_input: dict, ctx: TurnContext) -> dict:
 
     if app in BROWSER_ALIASES:
         raw_url = tool_input.get("url") or ""
-        url = _normalize_url(raw_url) if raw_url else DEFAULT_BROWSER_URL
-        if url is None:
-            return {"error": f"'{raw_url}' is not a usable http/https address."}
-        os.startfile(url)
+        if raw_url:
+            url = _normalize_url(raw_url)
+            if url is None:
+                return {"error": f"'{raw_url}' is not a usable http/https address."}
+            os.startfile(url)
+            ctx.touched.add("browser")
+            return {"ok": True, "opened": "browser", "url": url}
+
+        browser_exe = _default_browser_executable()
+        if browser_exe and os.path.exists(browser_exe):
+            subprocess.Popen([browser_exe])
+        else:
+            os.startfile(_FALLBACK_BROWSER_URL)
         ctx.touched.add("browser")
-        return {"ok": True, "opened": "browser", "url": url}
+        return {"ok": True, "opened": "browser"}
 
     exe = KNOWN_APPS.get(app)
     if not exe:
