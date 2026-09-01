@@ -3,22 +3,33 @@ registered into the generic ToolRegistry built in phase 0. This exists as a
 tool-use proving ground before any Home Assistant domain - real, visible
 consequences (a program actually opens) without needing physical hardware.
 
-Deliberately excluded from the allowlist: shell/terminal apps (cmd,
-powershell, wsl, bash, terminal) - opening a program is meant to stay a
-low-risk, reversible action. Giving a voice command a path to a shell
-prompt is a fundamentally bigger risk than "open notepad", and isn't a
-decision to make implicitly by leaving it off an allowlist by accident -
-it's excluded on purpose, and stays excluded unless that's revisited
+Two ways an app gets opened:
+1. A small fixed allowlist (KNOWN_APPS) of core Windows utilities, launched
+   directly by exe name - fast, no external calls, always available.
+2. Anything else is looked up among every app Windows itself knows how to
+   launch (Get-StartApps - the same list Start Menu search uses), matched
+   by name, and launched via the universal `explorer.exe shell:AppsFolder\\
+   <AppID>` mechanism. This is how "open Steam" (or literally any other
+   installed application) works without hardcoding a path for each one.
+
+Deliberately excluded from BOTH paths: shell/terminal apps (cmd, powershell,
+wsl, bash, terminal, and their variants - Get-StartApps lists these too,
+e.g. "Developer PowerShell for VS 2022", "Git Bash", "WSL"). Opening a
+program is meant to stay a low-risk, reversible action. Giving a voice
+command a path to a shell prompt is a fundamentally bigger risk than "open
+notepad" or even "open Steam", and isn't a decision to make implicitly by
+letting the generic lookup find one by accident - it's excluded on purpose
+(see _is_blocked_app_name), and stays excluded unless that's revisited
 deliberately later.
 """
 
+import json
 import os
 import subprocess
 
 from app.tools.registry import Tool, ToolRegistry, TurnContext
 
-# Explicit allowlist only - no arbitrary executable names, no shell=True.
-# Windows built-ins resolve via PATH (System32 is always on it).
+# Fast path: core Windows utilities, launched directly, no external calls.
 KNOWN_APPS: dict[str, str] = {
     "notepad": "notepad.exe",
     "блокнот": "notepad.exe",
@@ -35,16 +46,75 @@ KNOWN_APPS: dict[str, str] = {
 # a URL via os.startfile hands it to whatever's registered as default.
 BROWSER_ALIASES = {"browser", "web browser", "браузер", "интернет"}
 
+# Checked against both the requested name and whatever Get-StartApps matched
+# it to - substring match on purpose, so "Developer PowerShell for VS 2022"
+# and "Git Bash" are caught, not just exact "cmd"/"powershell".
+_BLOCKED_APP_KEYWORDS = (
+    "powershell",
+    "cmd",
+    "command prompt",
+    "terminal",
+    "wsl",
+    "bash",
+    "cmder",
+    "shell",
+)
+
 TOOL_DESCRIPTION = (
-    "Open a known desktop application by name (notepad, calculator, paint, "
-    "file explorer, or the default web browser). Only applications on a "
-    "fixed allowlist can be opened - there is no shell/terminal access and "
-    "no way to run arbitrary commands. If asked for something not "
-    "supported, say so rather than guessing at a substitute. When app is "
+    "Open a desktop application by name - a core Windows utility (notepad, "
+    "calculator, paint, file explorer), the default web browser, or the "
+    "name of any other installed application (e.g. 'Steam', 'Discord', "
+    "'Blender') - looked up among what's actually installed on this "
+    "machine. There is no shell/terminal access and no way to run arbitrary "
+    "commands, regardless of what name is requested. If nothing matching "
+    "is installed, say so rather than guessing at a substitute. When app is "
     "'browser' and the user named a site (e.g. 'open YouTube'), pass its "
     "address as url - otherwise the browser just opens to whatever its own "
     "home/new-tab page is, same as clicking its icon."
 )
+
+
+def _is_blocked_app_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(keyword in lowered for keyword in _BLOCKED_APP_KEYWORDS)
+
+
+def _list_start_apps() -> list[dict]:
+    """Everything Windows itself can launch from the Start Menu - same data
+    Start Menu search uses. Returns [] on any failure rather than raising;
+    a missing/broken PowerShell shouldn't take down the whole tool."""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", "Get-StartApps | ConvertTo-Json -Compress"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict):
+        data = [data]
+    return [app for app in data if isinstance(app, dict) and app.get("Name") and app.get("AppID")]
+
+
+def _find_installed_app(query: str) -> dict | None:
+    """Exact name match first, then substring, so 'steam' finds 'Steam' and
+    'blender' finds 'Blender' without needing the exact display name."""
+    query_lower = query.strip().lower()
+    apps = _list_start_apps()
+    for app in apps:
+        if app["Name"].strip().lower() == query_lower:
+            return app
+    for app in apps:
+        if query_lower in app["Name"].strip().lower():
+            return app
+    return None
+
 
 # Only used if the real default browser can't be found via the registry -
 # should be rare. Not the normal case, so it doesn't need to be anyone's
@@ -113,18 +183,24 @@ async def _open_application(tool_input: dict, ctx: TurnContext) -> dict:
         ctx.touched.add("browser")
         return {"ok": True, "opened": "browser"}
 
-    exe = KNOWN_APPS.get(app)
-    if not exe:
-        return {
-            "error": (
-                f"'{tool_input['app']}' is not on the allowed application list. "
-                f"Known: {sorted(set(KNOWN_APPS) | BROWSER_ALIASES)}."
-            )
-        }
+    if _is_blocked_app_name(app):
+        return {"error": f"'{tool_input['app']}' is not allowed - no shell/terminal access, no exceptions."}
 
-    subprocess.Popen([exe])
-    ctx.touched.add(app)
-    return {"ok": True, "opened": app}
+    exe = KNOWN_APPS.get(app)
+    if exe:
+        subprocess.Popen([exe])
+        ctx.touched.add(app)
+        return {"ok": True, "opened": app}
+
+    match = _find_installed_app(tool_input["app"])
+    if match is None:
+        return {"error": f"No installed application matching '{tool_input['app']}' was found."}
+    if _is_blocked_app_name(match["Name"]):
+        return {"error": f"'{match['Name']}' is not allowed - no shell/terminal access, no exceptions."}
+
+    subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{match['AppID']}"])
+    ctx.touched.add(match["Name"])
+    return {"ok": True, "opened": match["Name"]}
 
 
 def register(registry: ToolRegistry) -> None:
