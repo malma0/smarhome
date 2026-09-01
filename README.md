@@ -62,7 +62,9 @@ backend/
       groq.py                    # GroqProvider — бесплатный тариф, без карты, открытые модели
       ollama.py                   # OllamaProvider — free/self-hosted, CPU proof-of-concept
     tools/
-      registry.py                # ToolRegistry + TurnContext, пока без единого домена
+      registry.py                # ToolRegistry + TurnContext
+    domains/
+      computer.py                 # фаза 2: open_application — первый доменный тул
     tts/
       base.py                     # TTSProvider protocol — тот же паттерн, что и LLMProvider
       edge.py                     # EdgeTTSProvider — бесплатные нейро-голоса Microsoft, дефолт
@@ -75,8 +77,9 @@ backend/
   voice_app.py                   # десктопное голосовое приложение (фаза 1) — Whisper (Groq) + TTSProvider
   voices/                        # скачанные модели Piper (.onnx), не в git — см. инструкцию ниже
   chat_cli.py                   # локальный текстовый REPL без HTTP
-  tests/                        # test_llm_claude/groq/ollama, test_tts_piper/edge/sapi, test_registry,
-                                 # test_memory, test_persona, test_agent, test_main, test_voice_app
+  tests/                        # test_llm_claude/groq/ollama, test_tts_piper/edge/sapi/elevenlabs,
+                                 # test_registry, test_domain_computer, test_memory, test_persona,
+                                 # test_agent, test_main, test_voice_app
   ha_client.py                  # (сохранён на будущее, не импортируется пока нигде)
 docs/TZ.md                      # полное техническое задание
 ```
@@ -280,15 +283,15 @@ pytest
 Ключи и запущенный Home Assistant для `pytest` не нужны — только для
 реального end-to-end прогона через `uvicorn`/`chat_cli.py`.
 
-## Что реализовано (фаза 0 из ТЗ)
+## Что реализовано
 
+**Фаза 0 (ядро):**
 - [x] `LLMProvider`-адаптер: ядро не импортирует `anthropic` напрямую нигде,
       кроме `llm/claude.py`.
-- [x] Два дополнительных провайдера (`llm/groq.py`, `llm/ollama.py` —
-      бесплатные) подключены без единого изменения в `agent.py` —
-      подтверждает, что адаптер сделан правильно. Groq (открытые модели на их
-      железе) заметно надёжнее на tool use, чем Ollama (маленькая модель на
-      CPU) — см. разделы выше.
+- [x] Три провайдера (`llm/claude.py`, `llm/groq.py`, `llm/ollama.py`)
+      подключены без единого изменения в `agent.py` — подтверждает, что
+      адаптер сделан правильно. Groq (открытые модели на их железе) заметно
+      надёжнее на tool use, чем Ollama (маленькая модель на CPU).
 - [x] Device-agnostic `ToolRegistry`: цикл tool use работает и с нулём
       зарегистрированных тулов.
 - [x] Персона: 3 режима, `adaptive` — реальный (пусть и эвристический v1)
@@ -297,6 +300,17 @@ pytest
 - [x] Персистентная память (SQLite): настройки дома + предпочтения жильца.
 - [x] `POST /chat` → `{response, actions}`, `GET/PUT /settings`.
 - [x] Jarvis отвечает на общие вопросы без единого домашнего тула.
+
+**Фаза 1 (десктопный голос):**
+- [x] `voice_app.py` — STT через Whisper (Groq, бесплатно) + сменный
+      `TTSProvider` (`edge`/`piper`/`sapi`/`elevenlabs`).
+
+**Фаза 2 (управление компьютером, начата):**
+- [x] `open_application` (`app/domains/computer.py`) — allowlist известных
+      программ, явно без доступа к shell/терминалу. Проверено вживую на
+      реальной LLM: "открой калькулятор" запускает `calc.exe`, "открой
+      терминал" модель отклоняет сама, ещё до попытки вызова тула.
+- [ ] Работа с файлами — следующий тул в этом домене.
 
 ## Что сознательно отложено
 
