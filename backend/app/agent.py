@@ -1,7 +1,9 @@
 """JarvisAgent: the device-agnostic, llm-agnostic tool-use loop. It knows
 nothing about Home Assistant, rooms, or Claude specifically - only the
 LLMProvider/ToolRegistry/MemoryStore interfaces. Domain tools are registered
-into the ToolRegistry from outside (none yet - see docs/TZ.md phase 1+)."""
+into the ToolRegistry from outside - build_default_agent() wires in
+app.domains.computer (phase 2); Home Assistant domains follow in phase 3+,
+see docs/TZ.md."""
 
 from app.config import settings
 from app.db import connect
@@ -113,9 +115,13 @@ def _build_llm_provider() -> LLMProvider:
 
 
 def build_default_agent() -> JarvisAgent:
-    """Single wiring point for the production agent - main.py and chat_cli.py
-    both call this rather than constructing JarvisAgent themselves."""
+    """Single wiring point for the production agent - main.py, chat_cli.py
+    and voice_app.py all call this rather than constructing JarvisAgent
+    themselves."""
+    from app.domains import computer
+
     llm = _build_llm_provider()
     memory = MemoryStore(connect(settings.db_path))
-    tools = ToolRegistry()  # empty until phase 1 registers domain tools
+    tools = ToolRegistry()
+    computer.register(tools)  # phase 2: first domain, no Home Assistant needed
     return JarvisAgent(llm=llm, tools=tools, memory=memory)
