@@ -16,6 +16,10 @@ backend/*.db
 # downloaded Piper voice models (tens of MB, fetched by README instructions)
 backend/voices/
 
+# voice-cloning reference samples and test generations (personal audio, not
+# source - see README for how these were sourced/created)
+backend/voice_reference/
+
 # home assistant runtime state (not our mock config)
 homeassistant/config/.storage/
 homeassistant/config/.ha_run.lock
