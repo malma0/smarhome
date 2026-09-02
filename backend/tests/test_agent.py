@@ -13,7 +13,7 @@ from app.agent import MAX_TOOL_ITERATIONS, JarvisAgent
 from app.db import connect
 from app.llm.base import ContentBlock, LLMResponse
 from app.memory import MemoryStore
-from app.persona import get_style
+from app.persona import get_resident_gender, get_style
 from app.tools.registry import Tool, ToolRegistry
 
 
@@ -131,3 +131,24 @@ def test_non_adaptive_persona_does_not_touch_style(memory):
     asyncio.run(agent.chat("session-1", "ivan", "Не могли бы Вы подсказать?"))
 
     assert get_style(memory, "ivan").formality == 0.5  # untouched default
+
+
+def test_gender_revealed_in_the_message_is_stored_and_reaches_the_prompt(memory):
+    llm = FakeLLM([text_response("Понял.")])
+    agent = make_agent(llm, memory)
+
+    asyncio.run(agent.chat("session-1", "ivan", "я сегодня сделала уборку"))
+
+    assert get_resident_gender(memory, "ivan") == "female"
+    system_prompt = llm.generate.call_args.kwargs["system"]
+    assert "feminine" in system_prompt.lower()
+
+
+def test_reply_with_gender_hedge_notation_is_resolved_before_returning(memory):
+    llm = FakeLLM([text_response("Спасибо, что спросил(а)!")])
+    agent = make_agent(llm, memory)
+
+    result = asyncio.run(agent.chat("session-1", "ivan", "как дела?"))
+
+    assert "(" not in result["response"]
+    assert result["response"] == "Спасибо, что спросил!"

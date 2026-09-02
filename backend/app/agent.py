@@ -12,7 +12,14 @@ from app.llm.claude import ClaudeProvider
 from app.llm.groq import GroqProvider
 from app.llm.ollama import OllamaProvider
 from app.memory import MemoryStore
-from app.persona import build_persona_prompt, update_style
+from app.persona import (
+    build_persona_prompt,
+    gender_prompt_note,
+    get_resident_gender,
+    resolve_gendered_notation,
+    update_resident_gender,
+    update_style,
+)
 from app.tools.registry import ToolRegistry, TurnContext
 
 MAX_TOOL_ITERATIONS = 8
@@ -47,10 +54,15 @@ class JarvisAgent:
     def _build_system_prompt(self, resident_id: str) -> str:
         mode = self.memory.get_persona_mode()
         persona_prompt = build_persona_prompt(mode, self.memory, resident_id)
-        return f"{GENERAL_ASSISTANT_PREAMBLE}\n\n{persona_prompt}"
+        gender_note = gender_prompt_note(get_resident_gender(self.memory, resident_id))
+        return f"{GENERAL_ASSISTANT_PREAMBLE}\n\n{persona_prompt}\n\n{gender_note}"
 
     async def chat(self, session_id: str, resident_id: str, user_message: str) -> dict:
         self.memory.ensure_resident(resident_id)
+        # Detected early (before the system prompt is built) so a message
+        # that reveals gender for the first time can already inform this
+        # same turn's reply, not just later ones - see persona.py.
+        update_resident_gender(self.memory, resident_id, user_message)
         history = self._sessions.setdefault(session_id, [])
         history.append({"role": "user", "content": user_message})
 
@@ -89,6 +101,11 @@ class JarvisAgent:
                 "I've hit the tool-call limit for this turn without reaching a final "
                 "answer - something may be going in circles. Please rephrase or try again."
             )
+
+        # Unconditional backstop (see persona.py) - even with the prompt
+        # instruction above, the model can still slip into "сделал(а)"-style
+        # notation, which reads fine but derails TTS when spoken aloud.
+        final_text = resolve_gendered_notation(final_text, get_resident_gender(self.memory, resident_id))
 
         if self.memory.get_persona_mode() == "adaptive":
             update_style(self.memory, resident_id, user_message)
