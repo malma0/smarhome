@@ -4,15 +4,17 @@ is intentionally not exercised here - it needs actual speech audio and a
 Everything else (storage, matching) is pure numpy/json and tested directly.
 """
 
+import json
+
 import numpy as np
 import pytest
 
 from app.db import connect
 from app.memory import MemoryStore
 from app.speaker_id import (
+    MAX_ENROLLED_SAMPLES,
+    VOICEPRINT_PREFERENCE_KEY,
     cosine_similarity,
-    embedding_from_json,
-    embedding_to_json,
     enroll_resident,
     identify_resident,
     load_enrolled_voiceprints,
@@ -26,12 +28,6 @@ def memory(tmp_path):
 
 def _vec(*values: float) -> np.ndarray:
     return np.array(values, dtype=np.float32)
-
-
-def test_embedding_round_trips_through_json():
-    original = _vec(0.1, -0.2, 0.3)
-    restored = embedding_from_json(embedding_to_json(original))
-    assert np.allclose(original, restored)
 
 
 def test_cosine_similarity_of_identical_vectors_is_one():
@@ -54,8 +50,8 @@ def test_cosine_similarity_handles_a_zero_vector_without_dividing_by_zero():
 def test_identify_resident_returns_best_match_above_threshold():
     target = _vec(1.0, 0.0)
     enrolled = {
-        "matvei": _vec(0.99, 0.05),  # nearly identical direction
-        "ivan": _vec(0.0, 1.0),  # orthogonal - clearly a different voice
+        "matvei": [_vec(0.99, 0.05)],  # nearly identical direction
+        "ivan": [_vec(0.0, 1.0)],  # orthogonal - clearly a different voice
     }
 
     assert identify_resident(target, enrolled) == "matvei"
@@ -63,7 +59,7 @@ def test_identify_resident_returns_best_match_above_threshold():
 
 def test_identify_resident_returns_none_below_threshold():
     target = _vec(1.0, 0.0)
-    enrolled = {"ivan": _vec(0.0, 1.0)}  # nothing close enough
+    enrolled = {"ivan": [_vec(0.0, 1.0)]}  # nothing close enough
 
     assert identify_resident(target, enrolled) is None
 
@@ -74,9 +70,19 @@ def test_identify_resident_returns_none_when_nobody_enrolled():
 
 def test_identify_resident_respects_a_custom_threshold():
     target = _vec(1.0, 0.0)
-    enrolled = {"ivan": _vec(0.9, 0.1)}  # similarity ~0.99, but demand more
+    enrolled = {"ivan": [_vec(0.9, 0.1)]}  # similarity ~0.99, but demand more
 
     assert identify_resident(target, enrolled, threshold=0.999) is None
+
+
+def test_identify_resident_matches_against_the_best_of_several_samples():
+    """One noisy/atypical enrolled sample shouldn't sink a resident's match
+    if another of their samples is a close hit - matching takes the best
+    across all stored samples, not an average of them."""
+    target = _vec(1.0, 0.0)
+    enrolled = {"matvei": [_vec(0.0, 1.0), _vec(0.99, 0.05)]}  # one bad, one great
+
+    assert identify_resident(target, enrolled) == "matvei"
 
 
 def test_enroll_resident_stores_and_loads_back(memory):
@@ -86,7 +92,8 @@ def test_enroll_resident_stores_and_loads_back(memory):
 
     enrolled = load_enrolled_voiceprints(memory)
     assert set(enrolled) == {"matvei"}
-    assert np.allclose(enrolled["matvei"], embedding)
+    assert len(enrolled["matvei"]) == 1
+    assert np.allclose(enrolled["matvei"][0], embedding)
 
 
 def test_load_enrolled_voiceprints_skips_residents_with_no_voice_enrolled(memory):
@@ -98,10 +105,37 @@ def test_load_enrolled_voiceprints_skips_residents_with_no_voice_enrolled(memory
     assert set(enrolled) == {"matvei"}
 
 
-def test_re_enrolling_overwrites_the_previous_embedding(memory):
+def test_re_enrolling_adds_a_sample_without_discarding_previous_ones(memory):
     enroll_resident(memory, "matvei", _vec(1.0, 0.0))
     enroll_resident(memory, "matvei", _vec(0.0, 1.0))
 
     enrolled = load_enrolled_voiceprints(memory)
 
-    assert np.allclose(enrolled["matvei"], _vec(0.0, 1.0))
+    assert len(enrolled["matvei"]) == 2
+    assert np.allclose(enrolled["matvei"][0], _vec(1.0, 0.0))
+    assert np.allclose(enrolled["matvei"][1], _vec(0.0, 1.0))
+
+
+def test_enrollment_caps_at_max_samples_dropping_the_oldest_first(memory):
+    for i in range(MAX_ENROLLED_SAMPLES + 3):
+        enroll_resident(memory, "matvei", _vec(float(i), 0.0))
+
+    enrolled = load_enrolled_voiceprints(memory)
+
+    assert len(enrolled["matvei"]) == MAX_ENROLLED_SAMPLES
+    # the oldest (0, 1, 2) were dropped - the most recent ones survive
+    first_values = [sample[0] for sample in enrolled["matvei"]]
+    assert first_values == [3.0, 4.0, 5.0, 6.0, 7.0]
+
+
+def test_legacy_single_embedding_format_still_loads(memory):
+    """The very first version of this module stored one flat embedding
+    (not a list of samples) - old profiles must keep working, not get
+    silently dropped by a schema change."""
+    memory.ensure_resident("matvei")
+    memory.set_preference("matvei", VOICEPRINT_PREFERENCE_KEY, json.dumps([0.1, 0.2, 0.3]))
+
+    enrolled = load_enrolled_voiceprints(memory)
+
+    assert len(enrolled["matvei"]) == 1
+    assert np.allclose(enrolled["matvei"][0], _vec(0.1, 0.2, 0.3))

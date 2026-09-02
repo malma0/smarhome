@@ -93,7 +93,13 @@ def identify_or_enroll_speaker(
     a new voice under a name typed once. Falls back to default_resident_id
     whenever speaker ID can't help - unavailable/failed embedding, or a
     stranger who declines to give a name - so this only ever improves on
-    the default, never blocks the conversation."""
+    the default, never blocks the conversation.
+
+    Every confident match also feeds this recording back into that
+    resident's profile (speaker_id.enroll_resident keeps only the most
+    recent few, see MAX_ENROLLED_SAMPLES) - the profile quietly gets more
+    robust from ordinary use instead of staying frozen at whatever the
+    first, one-shot enrollment happened to sound like."""
     try:
         embedding = speaker_id.embed_wav_bytes(wav_bytes)
     except Exception as exc:  # noqa: BLE001 - e.g. resemblyzer not installed, clip too short
@@ -103,6 +109,7 @@ def identify_or_enroll_speaker(
     enrolled = speaker_id.load_enrolled_voiceprints(memory)
     match = speaker_id.identify_resident(embedding, enrolled, threshold=threshold)
     if match:
+        speaker_id.enroll_resident(memory, match, embedding)
         print(f"(голос: {match})")
         return match
 

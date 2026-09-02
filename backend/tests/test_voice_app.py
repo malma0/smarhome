@@ -62,14 +62,30 @@ def memory(tmp_path):
 
 def test_confident_match_is_returned_without_prompting(memory, monkeypatch):
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
-    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"matvei": "known"})
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"matvei": ["known"]})
     monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: "matvei")
+    monkeypatch.setattr("voice_app.speaker_id.enroll_resident", Mock())
     prompt = Mock()
 
     result = identify_or_enroll_speaker(memory, b"wav", "default", 0.75, prompt_for_name=prompt)
 
     assert result == "matvei"
     prompt.assert_not_called()
+
+
+def test_confident_match_also_feeds_the_recording_back_into_the_profile(memory, monkeypatch):
+    """A successful match isn't just returned - it's fed back into
+    speaker_id.enroll_resident so the profile keeps absorbing real usage
+    instead of staying frozen at the first one-shot enrollment."""
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"matvei": ["known"]})
+    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: "matvei")
+    enroll = Mock()
+    monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
+
+    identify_or_enroll_speaker(memory, b"wav", "default", 0.75, prompt_for_name=Mock())
+
+    enroll.assert_called_once_with(memory, "matvei", "embedding")
 
 
 def test_unrecognized_voice_enrolls_under_the_given_name(memory, monkeypatch):
