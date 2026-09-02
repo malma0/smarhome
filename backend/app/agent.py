@@ -126,7 +126,10 @@ def _build_llm_provider() -> LLMProvider:
         # no local GPU needed and no vendor lock-in on the model itself
         # (the weights are open, unlike Claude's).
         return GroqProvider(
-            api_key=settings.groq_api_key, model=settings.groq_model, base_url=settings.groq_base_url
+            api_key=settings.groq_api_key,
+            model=settings.groq_model,
+            base_url=settings.groq_base_url,
+            temperature=settings.groq_temperature,
         )
     raise ValueError(f"Unsupported LLM_PROVIDER {settings.llm_provider!r}. Valid: claude, ollama, groq")
 

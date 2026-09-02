@@ -25,9 +25,21 @@ _FINISH_REASON_MAP: dict[str, StopReason] = {
 
 
 class GroqProvider:
-    def __init__(self, api_key: str, model: str, base_url: str = "https://api.groq.com/openai/v1"):
+    # Groq's own API default is 1.0 - observed live to occasionally produce
+    # repetitive/garbled text ("Выполняем только только пере-перелё-пер пер
+    # пер...") on this model, especially right after a multi-tool-call turn.
+    # A lower default doesn't eliminate that risk (it's the model, not a
+    # bug in this file), but noticeably reduces how often it happens.
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str = "https://api.groq.com/openai/v1",
+        temperature: float = 0.4,
+    ):
         self._model = model
         self._base_url = base_url.rstrip("/")
+        self._temperature = temperature
         self._client = httpx.AsyncClient(timeout=60, headers={"Authorization": f"Bearer {api_key}"})
 
     async def generate(
@@ -43,6 +55,7 @@ class GroqProvider:
                 "model": self._model,
                 "messages": openai_messages,
                 "tools": [self._to_openai_tool(t) for t in tools],
+                "temperature": self._temperature,
             },
         )
         response.raise_for_status()

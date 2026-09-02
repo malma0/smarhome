@@ -47,6 +47,30 @@ def test_tool_schema_translated_to_openai_function_envelope():
     ]
 
 
+def test_temperature_defaults_to_a_conservative_value_and_is_sent():
+    provider = make_provider()
+    provider._client.post = AsyncMock(
+        return_value=fake_http_response(chat_completion({"role": "assistant", "content": "ok"}))
+    )
+
+    asyncio.run(provider.generate(system="sys", messages=[], tools=[]))
+
+    sent = provider._client.post.call_args.kwargs["json"]
+    assert sent["temperature"] == 0.4
+
+
+def test_custom_temperature_is_passed_through():
+    provider = GroqProvider(api_key="test-key", model="openai/gpt-oss-120b", temperature=0.9)
+    provider._client.post = AsyncMock(
+        return_value=fake_http_response(chat_completion({"role": "assistant", "content": "ok"}))
+    )
+
+    asyncio.run(provider.generate(system="sys", messages=[], tools=[]))
+
+    sent = provider._client.post.call_args.kwargs["json"]
+    assert sent["temperature"] == 0.9
+
+
 def test_system_prompt_becomes_system_message():
     provider = make_provider()
     provider._client.post = AsyncMock(
