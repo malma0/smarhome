@@ -65,3 +65,7 @@ class MemoryStore:
             "SELECT key, value FROM preferences WHERE resident_id = ?", (resident_id,)
         ).fetchall()
         return {row["key"]: row["value"] for row in rows}
+
+    def list_resident_ids(self) -> list[str]:
+        rows = self._conn.execute("SELECT resident_id FROM residents").fetchall()
+        return [row["resident_id"] for row in rows]

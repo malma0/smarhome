@@ -64,3 +64,14 @@ def test_get_preferences_returns_all_for_resident(store):
 def test_ensure_resident_is_idempotent(store):
     store.ensure_resident("ivan", "Ivan")
     store.ensure_resident("ivan", "Ivan")  # should not raise
+
+
+def test_list_resident_ids_returns_everyone_ensured(store):
+    store.ensure_resident("ivan")
+    store.ensure_resident("olga")
+
+    assert set(store.list_resident_ids()) == {"ivan", "olga"}
+
+
+def test_list_resident_ids_empty_when_nobody_ensured_yet(store):
+    assert store.list_resident_ids() == []
