@@ -5,12 +5,15 @@ isn't something CI can exercise, so it's left as manually-verified glue."""
 import asyncio
 import wave
 from io import BytesIO
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import numpy as np
+import pytest
 
-from voice_app import frames_to_wav_bytes, transcribe
+from app.db import connect
+from app.memory import MemoryStore
+from voice_app import frames_to_wav_bytes, identify_or_enroll_speaker, transcribe
 
 
 def test_empty_frames_produce_empty_bytes():
@@ -46,3 +49,81 @@ def test_transcribe_posts_multipart_and_returns_stripped_text(monkeypatch):
     sent_kwargs = mock_post.call_args.kwargs
     assert sent_kwargs["data"]["model"] == "whisper-large-v3-turbo"
     assert sent_kwargs["files"]["file"][0] == "speech.wav"
+
+
+# --- identify_or_enroll_speaker (app.speaker_id itself is mocked - no real
+# embedding model or audio involved) ---
+
+
+@pytest.fixture
+def memory(tmp_path):
+    return MemoryStore(connect(str(tmp_path / "test.db")))
+
+
+def test_confident_match_is_returned_without_prompting(memory, monkeypatch):
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"matvei": "known"})
+    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: "matvei")
+    prompt = Mock()
+
+    result = identify_or_enroll_speaker(memory, b"wav", "default", 0.75, prompt_for_name=prompt)
+
+    assert result == "matvei"
+    prompt.assert_not_called()
+
+
+def test_unrecognized_voice_enrolls_under_the_given_name(memory, monkeypatch):
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
+    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    enrolled_calls = []
+    monkeypatch.setattr(
+        "voice_app.speaker_id.enroll_resident",
+        lambda mem, resident_id, emb: enrolled_calls.append((resident_id, emb)),
+    )
+
+    result = identify_or_enroll_speaker(
+        memory, b"wav", "default", 0.75, prompt_for_name=lambda _prompt: "matvei"
+    )
+
+    assert result == "matvei"
+    assert enrolled_calls == [("matvei", "embedding")]
+
+
+def test_unrecognized_voice_declining_to_enroll_falls_back_to_default(memory, monkeypatch):
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
+    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    enroll = Mock()
+    monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
+
+    result = identify_or_enroll_speaker(memory, b"wav", "default", 0.75, prompt_for_name=lambda _prompt: "")
+
+    assert result == "default"
+    enroll.assert_not_called()
+
+
+def test_a_broken_embedding_step_falls_back_to_default_without_crashing(memory, monkeypatch):
+    def _raise(wav):
+        raise RuntimeError("model not installed")
+
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", _raise)
+    prompt = Mock()
+
+    result = identify_or_enroll_speaker(memory, b"wav", "default", 0.75, prompt_for_name=prompt)
+
+    assert result == "default"
+    prompt.assert_not_called()
+
+
+def test_declining_via_eof_falls_back_to_default(memory, monkeypatch):
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
+    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+
+    def _eof(_prompt):
+        raise EOFError
+
+    result = identify_or_enroll_speaker(memory, b"wav", "default", 0.75, prompt_for_name=_eof)
+
+    assert result == "default"

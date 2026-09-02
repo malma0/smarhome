@@ -11,6 +11,11 @@ an actual house. Both pieces here are free, no new accounts:
   SAPI voices (app.tts.sapi) if the configured provider fails to build or
   speak for any reason.
 
+Who's talking is identified per-utterance from the voice itself
+(app.speaker_id), on top of the manually-typed session default - see
+identify_or_enroll_speaker(). Set VOICE_ID_ENABLED=false in .env to fall
+back to the old always-ask-once-by-name behavior entirely.
+
 Usage: python voice_app.py
 """
 
@@ -24,8 +29,10 @@ import httpx
 import numpy as np
 import sounddevice as sd
 
+from app import speaker_id
 from app.agent import build_default_agent
 from app.config import settings
+from app.memory import MemoryStore
 from app.tts.base import TTSProvider
 
 SAMPLE_RATE = 16000
@@ -71,6 +78,44 @@ def record_until_enter() -> bytes:
         input()  # second Enter press stops the recording
 
     return frames_to_wav_bytes(frames)
+
+
+def identify_or_enroll_speaker(
+    memory: MemoryStore,
+    wav_bytes: bytes,
+    default_resident_id: str,
+    threshold: float,
+    prompt_for_name=input,
+) -> str:
+    """Voice-based resident ID (app.speaker_id) layered on top of the
+    manually-typed session default: tries to recognize the speaker from
+    this recording alone, and if nobody enrolled matches, offers to enroll
+    a new voice under a name typed once. Falls back to default_resident_id
+    whenever speaker ID can't help - unavailable/failed embedding, or a
+    stranger who declines to give a name - so this only ever improves on
+    the default, never blocks the conversation."""
+    try:
+        embedding = speaker_id.embed_wav_bytes(wav_bytes)
+    except Exception as exc:  # noqa: BLE001 - e.g. resemblyzer not installed, clip too short
+        print(f"(распознавание голоса недоступно: {exc})")
+        return default_resident_id
+
+    enrolled = speaker_id.load_enrolled_voiceprints(memory)
+    match = speaker_id.identify_resident(embedding, enrolled, threshold=threshold)
+    if match:
+        print(f"(голос: {match})")
+        return match
+
+    try:
+        name = prompt_for_name("Не узнал голос — как вас зовут? (Enter, чтобы не запоминать) ").strip()
+    except (EOFError, KeyboardInterrupt):
+        name = ""
+    if not name:
+        return default_resident_id
+
+    speaker_id.enroll_resident(memory, name, embedding)
+    print(f"Запомнил ваш голос как «{name}».")
+    return name
 
 
 def build_tts_provider() -> TTSProvider:
@@ -170,6 +215,11 @@ async def main() -> None:
         if not wav_bytes:
             print("(ничего не записано)\n")
             continue
+
+        if settings.voice_id_enabled:
+            resident_id = identify_or_enroll_speaker(
+                agent.memory, wav_bytes, resident_id, settings.voice_id_threshold
+            )
 
         print("Распознаю...")
         try:
