@@ -70,7 +70,13 @@ TOOL_DESCRIPTION = (
     "is installed, say so rather than guessing at a substitute. When app is "
     "'browser' and the user named a site (e.g. 'open YouTube'), pass its "
     "address as url - otherwise the browser just opens to whatever its own "
-    "home/new-tab page is, same as clicking its icon."
+    "home/new-tab page is, same as clicking its icon. When the user wants to "
+    "see or write text in an app like notepad (e.g. 'open notepad and write "
+    "hello world'), first write the content with write_file, then call this "
+    "tool with that same path as file - this opens the app already showing "
+    "that content, instead of a blank window unrelated to what you wrote. "
+    "file only works for the built-in utilities (notepad, paint, etc.), not "
+    "for other installed applications looked up by name."
 )
 
 
@@ -188,7 +194,13 @@ async def _open_application(tool_input: dict, ctx: TurnContext) -> dict:
 
     exe = KNOWN_APPS.get(app)
     if exe:
-        subprocess.Popen([exe])
+        file_path = tool_input.get("file") or ""
+        if file_path:
+            if not os.path.exists(file_path):
+                return {"error": f"File not found: {file_path}"}
+            subprocess.Popen([exe, file_path])
+        else:
+            subprocess.Popen([exe])
         ctx.touched.add(app)
         return {"ok": True, "opened": app}
 
@@ -220,6 +232,15 @@ def register(registry: ToolRegistry) -> None:
                         "description": (
                             "Only used when app is 'browser'. A specific site to open, e.g. "
                             "'youtube.com' or 'https://www.youtube.com'. Omit to open a default page."
+                        ),
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": (
+                            "Only works for built-in utilities (notepad, paint, etc.), not other "
+                            "installed applications. Path to a file to open directly in the app "
+                            "(e.g. after writing to it with write_file), so it opens already "
+                            "showing that content instead of blank."
                         ),
                     },
                 },

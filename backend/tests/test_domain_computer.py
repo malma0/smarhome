@@ -48,6 +48,36 @@ def test_matching_is_case_insensitive():
     mock_popen.assert_called_once_with(["calc.exe"])
 
 
+def test_known_app_with_a_file_path_opens_that_file_directly(tmp_path):
+    """This is the actual fix for a reported bug: 'open notepad and write
+    hello world' wrote hello.txt but then opened a blank Notepad unrelated
+    to it - passing file lets the two tool calls actually connect."""
+    written_file = tmp_path / "hello.txt"
+    written_file.write_text("привет мира", encoding="utf-8")
+    registry = make_registry()
+    ctx = TurnContext()
+    with patch("app.domains.computer.subprocess.Popen") as mock_popen:
+        result = asyncio.run(
+            registry.dispatch("open_application", {"app": "notepad", "file": str(written_file)}, ctx)
+        )
+
+    mock_popen.assert_called_once_with(["notepad.exe", str(written_file)])
+    assert result == {"ok": True, "opened": "notepad"}
+
+
+def test_known_app_with_a_missing_file_path_errors_without_launching(tmp_path):
+    missing_file = tmp_path / "does_not_exist.txt"
+    registry = make_registry()
+    ctx = TurnContext()
+    with patch("app.domains.computer.subprocess.Popen") as mock_popen:
+        result = asyncio.run(
+            registry.dispatch("open_application", {"app": "notepad", "file": str(missing_file)}, ctx)
+        )
+
+    assert "error" in result
+    mock_popen.assert_not_called()
+
+
 def test_russian_alias_resolves_to_same_executable():
     registry = make_registry()
     ctx = TurnContext()
