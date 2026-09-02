@@ -107,6 +107,112 @@ def update_style(memory: MemoryStore, resident_id: str, user_message: str) -> Ad
     return updated
 
 
+# --- resident gender: not a persona style, but lives here because it's the
+# same shape of problem as the signals above - a crude v1 heuristic reading
+# free text, feeding into MemoryStore. Exists to fix a real, reported issue:
+# Russian past-tense verbs and short adjectives are grammatically gendered
+# ("сделал" vs "сделала"), so without knowing the resident's gender the LLM
+# hedges with parenthetical notation ("спросил(а)") - fine in writing, but
+# TTS reads the parenthesis literally and the sentence's prosody falls
+# apart. resolve_gendered_notation() is the unconditional backstop for that;
+# get/update_resident_gender feed the system prompt so the LLM ideally never
+# needs to hedge in the first place.
+
+_WORD_RE = re.compile(r"[а-яё]+", re.IGNORECASE)
+
+# Short-form adjectives commonly used for self-reference ("я рад" / "я
+# рада") - checked before the verb-suffix scan below since a single one of
+# these is a much cleaner signal than a bare suffix match.
+_MASCULINE_ADJ = {"рад", "готов", "уверен", "сам", "должен", "занят", "согласен", "спокоен"}
+_FEMININE_ADJ = {"рада", "готова", "уверена", "сама", "должна", "занята", "согласна", "спокойна"}
+
+
+def _gender_signal(message: str) -> str | None:
+    """Heuristic v1, like every other signal in this file: scans for
+    first-person self-reference anywhere in the message (requires "я" to
+    appear at all, to cut down on picking up reported/quoted speech) and
+    tallies masculine vs feminine markers - past-tense verb endings
+    ("сделал"/"сделала") and the short-adjective list above. Whichever
+    tally wins; a tie (including "no markers at all") returns None rather
+    than guessing. Not reliable off one ambiguous message on purpose -
+    callers only ever persist a result once, and only when unset."""
+    words = _WORD_RE.findall(message.lower())
+    if "я" not in words:
+        return None
+
+    male_votes = female_votes = 0
+    for word in words:
+        if word in _FEMININE_ADJ:
+            female_votes += 1
+        elif word in _MASCULINE_ADJ:
+            male_votes += 1
+        elif word.endswith("лась") or word.endswith("ла"):
+            female_votes += 1
+        elif word.endswith("лся") or word.endswith("л"):
+            male_votes += 1
+
+    if female_votes > male_votes:
+        return "female"
+    if male_votes > female_votes:
+        return "male"
+    return None
+
+
+def get_resident_gender(memory: MemoryStore, resident_id: str) -> str | None:
+    return memory.get_preference(resident_id, "gender")
+
+
+def update_resident_gender(memory: MemoryStore, resident_id: str, user_message: str) -> str | None:
+    """Sticky: only ever sets the preference the first time a signal shows
+    up, and never overwrites an existing value - a later ambiguous message
+    (or one quoting someone else) shouldn't flip a resident's own stored
+    gender back and forth."""
+    existing = get_resident_gender(memory, resident_id)
+    if existing:
+        return existing
+    signal = _gender_signal(user_message)
+    if signal:
+        memory.set_preference(resident_id, "gender", signal)
+    return signal
+
+
+def gender_prompt_note(gender: str | None) -> str:
+    if gender == "female":
+        return (
+            "This resident is grammatically female - use feminine Russian self-reference "
+            'forms about them ("сделала", "рада"), never a masculine one.'
+        )
+    if gender == "male":
+        return (
+            "This resident is grammatically male - use masculine Russian self-reference "
+            'forms about them ("сделал", "рад"), never a feminine one.'
+        )
+    return (
+        "This resident's grammatical gender in Russian isn't known yet. Never hedge with "
+        'parenthetical notation like "сделал(а)" - it reads fine but is read aloud literally '
+        'by text-to-speech. Instead phrase around needing a gendered form about them (e.g. '
+        '"Спасибо за вопрос!" instead of "Спасибо, что спросил(а)").'
+    )
+
+
+_GENDER_SUFFIX_RE = re.compile(r"([А-ЯЁа-яё]+)\(([а-яё]{1,4})\)")
+
+
+def resolve_gendered_notation(text: str, gender: str | None) -> str:
+    """Backstop for the prompt instruction above - applied unconditionally,
+    even once gender is known, since the model can still slip back into the
+    habit. Resolves "слово(суффикс)" to the feminine form when the resident
+    is known female, otherwise strips the parenthetical down to the bare
+    (masculine/base) form - never leaves a literal paren in text that's
+    about to be spoken."""
+
+    def replace(match: re.Match) -> str:
+        base, suffix = match.group(1), match.group(2)
+        return base + suffix if gender == "female" else base
+
+    return _GENDER_SUFFIX_RE.sub(replace, text)
+
+
 def build_persona_prompt(mode: str, memory: MemoryStore, resident_id: str) -> str:
     if mode == "butler":
         return BUTLER_PROMPT

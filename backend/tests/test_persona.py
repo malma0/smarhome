@@ -2,7 +2,15 @@ import pytest
 
 from app.db import connect
 from app.memory import MemoryStore
-from app.persona import build_persona_prompt, get_style, update_style
+from app.persona import (
+    build_persona_prompt,
+    gender_prompt_note,
+    get_resident_gender,
+    get_style,
+    resolve_gendered_notation,
+    update_resident_gender,
+    update_style,
+)
 
 
 @pytest.fixture
@@ -71,3 +79,75 @@ def test_repeated_signal_moves_further_than_one_message(memory):
     update_style(memory, "ivan", "ты как?")
     twice = get_style(memory, "ivan").formality
     assert twice < once  # keeps drifting informal, doesn't jump straight there
+
+
+# --- resident gender ---
+
+
+def test_gender_unknown_by_default(memory):
+    assert get_resident_gender(memory, "ivan") is None
+
+
+def test_feminine_past_tense_verb_detected(memory):
+    gender = update_resident_gender(memory, "ivan", "я вчера сделала уроки")
+    assert gender == "female"
+    assert get_resident_gender(memory, "ivan") == "female"
+
+
+def test_masculine_past_tense_verb_detected(memory):
+    gender = update_resident_gender(memory, "ivan", "я вчера сделал уроки")
+    assert gender == "male"
+    assert get_resident_gender(memory, "ivan") == "male"
+
+
+def test_feminine_short_adjective_detected(memory):
+    assert update_resident_gender(memory, "ivan", "я готова выходить") == "female"
+
+
+def test_masculine_short_adjective_detected(memory):
+    assert update_resident_gender(memory, "ivan", "я готов выходить") == "male"
+
+
+def test_ambiguous_message_without_self_reference_stays_unknown(memory):
+    assert update_resident_gender(memory, "ivan", "какая погода завтра?") is None
+    assert get_resident_gender(memory, "ivan") is None
+
+
+def test_gender_is_sticky_once_set(memory):
+    update_resident_gender(memory, "ivan", "я сделала уроки")
+    # A later, contradictory message must not flip it back and forth.
+    result = update_resident_gender(memory, "ivan", "я сделал ошибку")
+    assert result == "female"
+    assert get_resident_gender(memory, "ivan") == "female"
+
+
+def test_gender_prompt_note_mentions_feminine_forms_when_known():
+    note = gender_prompt_note("female")
+    assert "feminine" in note.lower()
+
+
+def test_gender_prompt_note_mentions_masculine_forms_when_known():
+    note = gender_prompt_note("male")
+    assert "masculine" in note.lower()
+
+
+def test_gender_prompt_note_warns_against_parenthetical_notation_when_unknown():
+    note = gender_prompt_note(None)
+    assert "сделал(а)" in note
+
+
+def test_resolve_gendered_notation_strips_to_base_form_when_unknown():
+    assert resolve_gendered_notation("Спасибо, что спросил(а)!", None) == "Спасибо, что спросил!"
+
+
+def test_resolve_gendered_notation_strips_to_base_form_when_male():
+    assert resolve_gendered_notation("Спасибо, что спросил(а)!", "male") == "Спасибо, что спросил!"
+
+
+def test_resolve_gendered_notation_resolves_to_feminine_form_when_female():
+    assert resolve_gendered_notation("Спасибо, что спросил(а)!", "female") == "Спасибо, что спросила!"
+
+
+def test_resolve_gendered_notation_leaves_plain_text_untouched():
+    text = "Включаю свет в спальне."
+    assert resolve_gendered_notation(text, "female") == text
