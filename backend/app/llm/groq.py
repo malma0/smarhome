@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from app.http_client import ssl_context
 from app.llm.base import ContentBlock, LLMResponse, StopReason, ToolDef
 
 _FINISH_REASON_MAP: dict[str, StopReason] = {
@@ -40,7 +41,9 @@ class GroqProvider:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._temperature = temperature
-        self._client = httpx.AsyncClient(timeout=60, headers={"Authorization": f"Bearer {api_key}"})
+        self._client = httpx.AsyncClient(
+            timeout=60, headers={"Authorization": f"Bearer {api_key}"}, verify=ssl_context()
+        )
 
     async def generate(
         self, *, system: str, messages: list[dict[str, Any]], tools: list[ToolDef]
