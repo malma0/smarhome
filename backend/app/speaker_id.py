@@ -35,6 +35,8 @@ testable without it.
 
 import io
 import json
+import threading
+import wave
 
 import numpy as np
 
@@ -44,16 +46,47 @@ VOICEPRINT_PREFERENCE_KEY = "voice_embedding"
 DEFAULT_MATCH_THRESHOLD = 0.75
 MAX_ENROLLED_SAMPLES = 5
 
+# Measured on this laptop's hybrid CPU (Core Ultra 9 185H, 22 threads):
+# one embedding took 1100-1900 ms with PyTorch's default thread count
+# (16-22) and 30-60 ms with 12 or fewer - every step of the small network
+# waits for its slowest thread, and some land on the low-power cores. 4 is
+# the fastest measured. Process-wide, but nothing else in Jarvis's process
+# uses PyTorch (Voicebox runs as its own server).
+TORCH_THREADS = 4
+
 _encoder = None
+# The background warm-up at startup and the first real phrase can both get
+# here at once; without the lock both loaded the model, competing for the
+# CPU - a live test measured 61 s instead of ~6 s.
+_encoder_lock = threading.Lock()
 
 
 def _get_encoder():
     global _encoder
-    if _encoder is None:
-        from resemblyzer import VoiceEncoder
+    with _encoder_lock:
+        if _encoder is None:
+            import torch
+            from resemblyzer import VoiceEncoder
 
-        _encoder = VoiceEncoder()
+            torch.set_num_threads(TORCH_THREADS)
+            _encoder = VoiceEncoder()
     return _encoder
+
+
+def warm_up() -> None:
+    """Loads the model (~3s) and runs one throwaway embedding - the first
+    one measured 4.3s on its own (one-time setup inside the libraries) vs
+    ~0.05s after. Meant for a background thread at startup, so the first
+    real phrase doesn't pay for it."""
+    rng = np.random.default_rng(0)
+    noise = (rng.normal(0, 3000, 16000)).astype(np.int16)  # 1s - silence would be trimmed to nothing
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(noise.tobytes())
+    embed_wav_bytes(buffer.getvalue())
 
 
 def embed_wav_bytes(wav_bytes: bytes) -> np.ndarray:
