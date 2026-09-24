@@ -21,8 +21,10 @@ can't catch it. contains_speech() runs WebRTC's voice activity detector
 """
 
 import collections
+import queue
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -120,3 +122,158 @@ def speech_seconds(frames: list[np.ndarray], sample_rate: int) -> float:
 
 def contains_speech(frames: list[np.ndarray], sample_rate: int) -> bool:
     return speech_seconds(frames, sample_rate) >= MIN_SPEECH_SECONDS
+
+
+# --- hands-free mode: continuous listening, cut into phrases by VAD ---
+
+
+def make_vad(sample_rate: int) -> Callable[[np.ndarray], bool]:
+    import webrtcvad
+
+    vad = webrtcvad.Vad(VAD_MODE)
+    return lambda frame: vad.is_speech(frame.reshape(-1).astype(np.int16).tobytes(), sample_rate)
+
+
+class UtteranceSegmenter:
+    """Turns a continuous stream of 30 ms frames into separate phrases, with
+    no key presses. Decisions are by proportion over a sliding window, not
+    by an unbroken run: a phrase starts when >= start_ratio of the last
+    start_seconds is speech (so a cough or a door slam doesn't open one),
+    and ends when >= end_ratio of the last end_silence_seconds is silence.
+
+    The first version required unbroken silence to end a phrase, and a real
+    test failed: the VAD flags a stray frame of room hiss as speech now and
+    then, each one restarted the count, and a phrase followed by 2s of
+    ordinary hiss never ended at all.
+
+    The pre-roll puts the audio just before the detected start back in
+    front, for the same first-word reason as push-to-talk. Pure logic -
+    is_speech is injected."""
+
+    def __init__(
+        self,
+        is_speech: Callable[[np.ndarray], bool],
+        frame_seconds: float = VAD_FRAME_SECONDS,
+        preroll_seconds: float = PREROLL_SECONDS,
+        start_seconds: float = 0.3,
+        start_ratio: float = 0.7,
+        end_silence_seconds: float = 0.8,
+        end_ratio: float = 0.9,
+        max_seconds: float = 15.0,
+    ):
+        self._is_speech = is_speech
+        self._preroll: collections.deque[np.ndarray] = collections.deque(
+            maxlen=max(1, round(preroll_seconds / frame_seconds))
+        )
+        self._start_window: collections.deque[bool] = collections.deque(
+            maxlen=max(1, round(start_seconds / frame_seconds))
+        )
+        self._end_window: collections.deque[bool] = collections.deque(
+            maxlen=max(1, round(end_silence_seconds / frame_seconds))
+        )
+        self._start_ratio = start_ratio
+        self._end_ratio = end_ratio
+        self._max_frames = round(max_seconds / frame_seconds)
+        self.reset()
+
+    def reset(self) -> None:
+        self._preroll.clear()
+        self._start_window.clear()
+        self._end_window.clear()
+        self._frames: list[np.ndarray] | None = None
+
+    @staticmethod
+    def _full(window: collections.deque) -> bool:
+        return len(window) == window.maxlen
+
+    def feed(self, frame: np.ndarray) -> list[np.ndarray] | None:
+        """Returns a finished phrase's frames, or None while still waiting."""
+        speech = self._is_speech(frame)
+        if self._frames is None:
+            self._preroll.append(frame)
+            self._start_window.append(speech)
+            window = self._start_window
+            if self._full(window) and sum(window) >= self._start_ratio * len(window):
+                self._frames = list(self._preroll)
+                self._preroll.clear()
+                self._end_window.clear()
+            return None
+
+        self._frames.append(frame)
+        self._end_window.append(speech)
+        window = self._end_window
+        silent = len(window) - sum(window)
+        if (self._full(window) and silent >= self._end_ratio * len(window)) or len(self._frames) >= self._max_frames:
+            phrase = self._frames
+            self.reset()
+            return phrase
+        return None
+
+
+class HandsFreeListener:
+    """Mic -> 30 ms frames -> UtteranceSegmenter on its own thread, so audio
+    keeps being captured and cut into phrases while the main loop is busy
+    transcribing or thinking. mute() while Jarvis is working/speaking -
+    otherwise it would hear its own voice as the next phrase."""
+
+    def __init__(self, sample_rate: int):
+        import sounddevice as sd
+
+        frame_len = int(sample_rate * VAD_FRAME_SECONDS)
+        self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=500)
+        self._phrases: queue.Queue[list[np.ndarray]] = queue.Queue()
+        self._segmenter = UtteranceSegmenter(make_vad(sample_rate))
+        self._muted = threading.Event()
+        self._stop = threading.Event()
+        self._stream = sd.InputStream(
+            samplerate=sample_rate, channels=1, dtype="int16", blocksize=frame_len, callback=self._callback
+        )
+        self._stream.start()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _callback(self, indata: np.ndarray, frame_count: int, time_info: Any, status: Any) -> None:
+        try:
+            self._frames.put_nowait(indata.copy())
+        except queue.Full:  # main side stalled - dropping audio beats unbounded memory
+            pass
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                frame = self._frames.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if self._muted.is_set():
+                self._segmenter.reset()
+                continue
+            phrase = self._segmenter.feed(frame)
+            if phrase is not None:
+                self._phrases.put(phrase)
+
+    def mute(self) -> None:
+        self._muted.set()
+        _drain(self._phrases)
+
+    def unmute(self) -> None:
+        _drain(self._frames)
+        self._muted.clear()
+
+    def next_phrase(self, timeout: float | None = None) -> list[np.ndarray] | None:
+        try:
+            return self._phrases.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def close(self) -> None:
+        self._stop.set()
+        self._stream.stop()
+        self._stream.close()
+
+
+def _drain(q: queue.Queue) -> None:
+    while True:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            return
