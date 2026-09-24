@@ -36,6 +36,9 @@ class Settings:
     tts_enabled: bool
     voice_id_enabled: bool
     voice_id_threshold: float
+    whisper_vocabulary: str
+    dataset_enabled: bool
+    dataset_dir: str
 
 
 def load_settings() -> Settings:
@@ -68,6 +71,9 @@ def load_settings() -> Settings:
         tts_enabled=os.environ.get("JARVIS_TTS_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
         voice_id_enabled=os.environ.get("VOICE_ID_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
         voice_id_threshold=float(os.environ.get("VOICE_ID_THRESHOLD", "0.75")),
+        whisper_vocabulary=os.environ.get("WHISPER_VOCABULARY", ""),
+        dataset_enabled=os.environ.get("JARVIS_DATASET_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
+        dataset_dir=os.environ.get("JARVIS_DATASET_DIR", "dataset"),
     )
 
 

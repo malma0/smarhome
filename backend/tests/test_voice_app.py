@@ -13,7 +13,14 @@ import pytest
 
 from app.db import connect
 from app.memory import MemoryStore
-from voice_app import frames_to_wav_bytes, identify_or_enroll_speaker, transcribe
+from voice_app import (
+    DEFAULT_WHISPER_VOCABULARY,
+    MAX_WHISPER_PROMPT_CHARS,
+    build_whisper_prompt,
+    frames_to_wav_bytes,
+    identify_or_enroll_speaker,
+    transcribe,
+)
 
 
 def test_empty_frames_produce_empty_bytes():
@@ -49,6 +56,54 @@ def test_transcribe_posts_multipart_and_returns_stripped_text(monkeypatch):
     sent_kwargs = mock_post.call_args.kwargs
     assert sent_kwargs["data"]["model"] == "whisper-large-v3-turbo"
     assert sent_kwargs["files"]["file"][0] == "speech.wav"
+    assert "prompt" not in sent_kwargs["data"]  # none given -> not sent at all
+
+
+def test_transcribe_sends_the_vocabulary_prompt_when_given(monkeypatch):
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"text": "открой Майнкрафт"}
+
+    mock_post = AsyncMock(return_value=_Resp())
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    asyncio.run(transcribe(b"wav", api_key="key", base_url="https://x", prompt="Джарвис, Майнкрафт"))
+
+    assert mock_post.call_args.kwargs["data"]["prompt"] == "Джарвис, Майнкрафт"
+
+
+# --- build_whisper_prompt ---
+
+
+def test_whisper_prompt_starts_with_the_default_vocabulary():
+    prompt = build_whisper_prompt("", [])
+    assert prompt == ", ".join(DEFAULT_WHISPER_VOCABULARY)
+
+
+def test_whisper_prompt_adds_extra_words_and_resident_names_but_not_default():
+    prompt = build_whisper_prompt(" Кухня , Алиса ,", ["Матвей", "default"])
+    words = prompt.split(", ")
+    assert words[-3:] == ["Кухня", "Алиса", "Матвей"]
+    assert "default" not in words
+
+
+def test_whisper_prompt_deduplicates_case_insensitively():
+    prompt = build_whisper_prompt("джарвис, YOUTUBE", ["Матвей", "матвей"])
+    words = [w.lower() for w in prompt.split(", ")]
+    assert words.count("джарвис") == 1
+    assert words.count("youtube") == 1
+    assert words.count("матвей") == 1
+
+
+def test_whisper_prompt_is_capped_at_a_whole_word():
+    many = ", ".join(f"слово{i}" for i in range(200))
+    prompt = build_whisper_prompt(many, [])
+    assert len(prompt) <= MAX_WHISPER_PROMPT_CHARS
+    assert prompt.split(", ")[-1].startswith("слово")  # last entry is a complete word, not a cut fragment
+    assert not prompt.endswith(",")
 
 
 # --- identify_or_enroll_speaker (app.speaker_id itself is mocked - no real

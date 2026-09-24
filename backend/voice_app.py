@@ -16,6 +16,15 @@ Who's talking is identified per-utterance from the voice itself
 identify_or_enroll_speaker(). Set VOICE_ID_ENABLED=false in .env to fall
 back to the old always-ask-once-by-name behavior entirely.
 
+Recognition quality, without training anything:
+- the mic stays open with a short pre-roll so the first word isn't lost,
+  and silent clips never reach Whisper (app.audio_capture);
+- Whisper gets a vocabulary hint with this household's words
+  (build_whisper_prompt).
+
+Every utterance is kept as training data - audio, transcript, and a typed
+correction when Whisper got it wrong (app.dataset).
+
 Usage: python voice_app.py
 """
 
@@ -23,20 +32,40 @@ import asyncio
 import io
 import time
 import wave
-from typing import Any
 
 import httpx
 import numpy as np
-import sounddevice as sd
 
 from app import speaker_id
 from app.agent import build_default_agent
+from app.audio_capture import MicRecorder, contains_speech
 from app.config import settings
+from app.dataset import UtteranceLog
 from app.memory import MemoryStore
 from app.tts.base import TTSProvider
 
 SAMPLE_RATE = 16000
 WHISPER_MODEL = "whisper-large-v3-turbo"
+
+# Words Whisper otherwise tends to mishear - names, brands, app names.
+# Extended from WHISPER_VOCABULARY in .env and with every known resident's
+# name (see build_whisper_prompt).
+DEFAULT_WHISPER_VOCABULARY = (
+    "Джарвис",
+    "YouTube",
+    "Майнкрафт",
+    "Steam",
+    "Discord",
+    "LibreWolf",
+    "блокнот",
+    "калькулятор",
+    "браузер",
+    "проводник",
+)
+# Whisper only reads the last 224 tokens of a prompt, and its tokenizer
+# spends roughly one token per 2-3 Cyrillic characters - so the prompt is
+# capped well below that rather than silently losing its start.
+MAX_WHISPER_PROMPT_CHARS = 300
 
 
 def frames_to_wav_bytes(frames: list[np.ndarray], sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -54,30 +83,49 @@ def frames_to_wav_bytes(frames: list[np.ndarray], sample_rate: int = SAMPLE_RATE
     return buffer.getvalue()
 
 
-async def transcribe(wav_bytes: bytes, api_key: str, base_url: str) -> str:
+def build_whisper_prompt(extra_vocabulary: str, resident_ids: list[str]) -> str:
+    """Comma-separated vocabulary hint: defaults, then WHISPER_VOCABULARY
+    from .env, then resident names - deduplicated case-insensitively, and
+    cut at a whole word once MAX_WHISPER_PROMPT_CHARS would be exceeded."""
+    words = list(DEFAULT_WHISPER_VOCABULARY)
+    words += [w.strip() for w in extra_vocabulary.split(",") if w.strip()]
+    words += [r for r in resident_ids if r != "default"]
+
+    seen: set[str] = set()
+    prompt = ""
+    for word in words:
+        if word.lower() in seen:
+            continue
+        seen.add(word.lower())
+        candidate = f"{prompt}, {word}" if prompt else word
+        if len(candidate) > MAX_WHISPER_PROMPT_CHARS:
+            break
+        prompt = candidate
+    return prompt
+
+
+async def transcribe(wav_bytes: bytes, api_key: str, base_url: str, prompt: str = "") -> str:
+    data = {"model": WHISPER_MODEL, "language": "ru"}
+    if prompt:
+        data["prompt"] = prompt
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
             f"{base_url}/audio/transcriptions",
             headers={"Authorization": f"Bearer {api_key}"},
             files={"file": ("speech.wav", wav_bytes, "audio/wav")},
-            data={"model": WHISPER_MODEL, "language": "ru"},
+            data=data,
         )
     response.raise_for_status()
     return response.json()["text"].strip()
 
 
-def record_until_enter() -> bytes:
-    """Blocks on a second Enter press while a background PortAudio callback
-    (driven by sounddevice's own thread) keeps appending mic chunks."""
-    frames: list[np.ndarray] = []
-
-    def callback(indata: np.ndarray, frame_count: int, time_info: Any, status: Any) -> None:
-        frames.append(indata.copy())
-
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", callback=callback):
-        input()  # second Enter press stops the recording
-
-    return frames_to_wav_bytes(frames)
+def record_until_enter(recorder: MicRecorder) -> list[np.ndarray]:
+    """The first Enter press already happened (that's what called this) -
+    begin() turns the pre-roll into the start of the recording, then this
+    blocks until the second Enter press."""
+    recorder.begin()
+    input()  # second Enter press stops the recording
+    return recorder.end()
 
 
 def identify_or_enroll_speaker(
@@ -210,45 +258,81 @@ async def main() -> None:
     except (EOFError, KeyboardInterrupt):
         resident_id = "default"
 
+    utterances = UtteranceLog(settings.dataset_dir) if settings.dataset_enabled else None
+    if utterances:
+        stats = utterances.stats()
+        print(
+            f"Датасет для обучения: {stats['utterances']} фраз, {stats['minutes']} мин аудио, "
+            f"{stats['corrected']} исправлено ({settings.dataset_dir}/)"
+        )
+    last_utterance_id: str | None = None
+
+    recorder = MicRecorder(SAMPLE_RATE)
     print(f"\nJarvis voice - resident '{resident_id}'. Ctrl+C для выхода.\n")
 
-    while True:
-        try:
-            input("[Enter] чтобы начать говорить...")
-        except (EOFError, KeyboardInterrupt):
-            break
+    try:
+        while True:
+            try:
+                typed = input("[Enter] — говорить. Если я ошибся — впиши, что ты сказал, и Enter> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                break
 
-        print("🔴 Слушаю... нажмите Enter ещё раз, чтобы закончить")
-        wav_bytes = record_until_enter()
-        if not wav_bytes:
-            print("(ничего не записано)\n")
-            continue
+            if typed:
+                if utterances is None:
+                    print("(запись датасета выключена - JARVIS_DATASET_ENABLED=false)\n")
+                elif last_utterance_id and utterances.correct(last_utterance_id, typed):
+                    print("Исправление сохранено в датасет.\n")
+                else:
+                    print("(исправлять нечего - в этом сеансе ещё не было ни одной фразы)\n")
+                continue
 
-        if settings.voice_id_enabled:
-            resident_id = identify_or_enroll_speaker(
-                agent.memory, wav_bytes, resident_id, settings.voice_id_threshold
-            )
+            print("🔴 Слушаю... нажмите Enter ещё раз, чтобы закончить")
+            frames = record_until_enter(recorder)
+            # Before speaker ID too, not just before Whisper: an unmatched
+            # silent clip would otherwise prompt "who are you?" and could
+            # get enrolled as someone's voice.
+            if not contains_speech(frames, SAMPLE_RATE):
+                print("(не услышал речи - ничего не отправляю)\n")
+                continue
+            wav_bytes = frames_to_wav_bytes(frames)
 
-        print("Распознаю...")
-        try:
-            text = await transcribe(wav_bytes, settings.groq_api_key, settings.groq_base_url)
-        except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
-            print(f"Ошибка распознавания: {exc}\n")
-            continue
+            if settings.voice_id_enabled:
+                resident_id = identify_or_enroll_speaker(
+                    agent.memory, wav_bytes, resident_id, settings.voice_id_threshold
+                )
 
-        if not text:
-            print("(не удалось разобрать речь)\n")
-            continue
+            print("Распознаю...")
+            prompt = build_whisper_prompt(settings.whisper_vocabulary, agent.memory.list_resident_ids())
+            text: str | None = None
+            try:
+                text = await transcribe(wav_bytes, settings.groq_api_key, settings.groq_base_url, prompt=prompt)
+            except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
+                print(f"Ошибка распознавания: {exc}\n")
 
-        print(f"you> {text}")
-        result = await agent.chat(session_id, resident_id, text)
-        print(f"jarvis> {result['response']}")
-        for action in result["actions"]:
-            print(f"   [action] {action['tool']}({action['input']}) -> {action['result']}")
-        print()
+            response: str | None = None
+            if text:
+                print(f"you> {text}")
+                result = await agent.chat(session_id, resident_id, text)
+                response = result["response"]
+                print(f"jarvis> {response}")
+                for action in result["actions"]:
+                    print(f"   [action] {action['tool']}({action['input']}) -> {action['result']}")
+                print()
+            elif text == "":
+                print("(не удалось разобрать речь)\n")
 
-        if settings.tts_enabled:
-            await speak(tts_provider, tts_fallback, result["response"])
+            # Logged even when transcription failed or came back empty - the
+            # audio is real speech (it passed the VAD check) and can still be
+            # corrected by hand into a usable training example.
+            if utterances:
+                last_utterance_id = utterances.log(
+                    wav_bytes=wav_bytes, resident_id=resident_id, transcript=text, response=response
+                )
+
+            if text and settings.tts_enabled:
+                await speak(tts_provider, tts_fallback, response)
+    finally:
+        recorder.close()
 
 
 if __name__ == "__main__":
