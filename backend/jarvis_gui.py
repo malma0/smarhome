@@ -128,6 +128,12 @@ class WebviewUI:
     def speech_envelope(self, levels: list[float], frame_seconds: float) -> None:
         self._send({"type": "envelope", "levels": levels, "frame_seconds": frame_seconds})
 
+    def voices(self, profiles: list[dict]) -> None:
+        self._send({"type": "voices", "profiles": profiles})
+
+    def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
+        self._send({"type": "enroll", "name": name, "collected": collected, "needed": needed, "status": status})
+
     def ask_name(self, prompt: str, known: list[str] = ()) -> str:
         while not self._names.empty():  # an answer left over from an earlier, abandoned prompt
             self._names.get_nowait()
@@ -171,6 +177,14 @@ class JsApi:
 
     def wake(self) -> None:
         self._commands.put(("wake",))
+
+    def start_enroll(self, name: str) -> None:
+        name = (name or "").strip()
+        if name:
+            self._commands.put(("enroll", name))
+
+    def cancel_enroll(self) -> None:
+        self._commands.put(("enroll_cancel",))
 
     def answer_name(self, name: str) -> None:
         self._ui.answer_name(name)

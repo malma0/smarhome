@@ -13,10 +13,10 @@
       <span class="status" id="status"><span class="dot"></span><span id="statusText">Запуск…</span></span>
     </div>
     <div class="chips">
-      <span class="chip" id="residentChip" title="Кто говорит (узнаётся по голосу)">
+      <button class="chip clickable" id="residentChip" title="Кто говорит (узнаётся по голосу). Нажми - голоса в доме">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
         <span id="residentName">—</span>
-      </span>
+      </button>
       <span class="chip" id="datasetChip" title="Сколько твоих фраз накоплено для будущего обучения распознавания">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
         <span id="datasetText">—</span>
@@ -61,6 +61,33 @@
         <button type="submit" class="primary">Запомнить</button>
       </div>
     </form>
+  </div>
+
+  <div class="modal" id="voicesModal" hidden>
+    <div class="modal-card">
+      <div id="voicesHome">
+        <p class="modal-title">Голоса в доме</p>
+        <p class="modal-text">Jarvis узнаёт, кто говорит, по голосу. Запиши голос каждого, кто живёт дома, - дальше он будет различать вас сам.</p>
+        <div class="voice-list" id="voiceList"></div>
+        <form class="new-voice" id="newVoiceForm" autocomplete="off">
+          <input id="newVoiceName" type="text" placeholder="Имя нового человека" maxlength="60">
+          <button type="submit" class="primary">Записать голос</button>
+        </form>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="voicesClose">Закрыть</button>
+        </div>
+      </div>
+      <div id="enrollView" hidden>
+        <p class="modal-title" id="enrollTitle">Запись голоса</p>
+        <p class="modal-text">Прочитай вслух, как обычно говоришь, с короткой паузой после каждой фразы:</p>
+        <ol class="read-lines" id="readLines"></ol>
+        <div class="enroll-progress" id="enrollProgress"></div>
+        <p class="enroll-status" id="enrollStatus">Слушаю…</p>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="enrollCancel">Отмена</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

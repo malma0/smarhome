@@ -290,6 +290,104 @@ function askName(prompt, known) {
   $("nameSkip").onclick = () => done("");
 }
 
+// ---------------------------------------------------------------- voices in the house
+
+let voiceProfiles = [];
+let enrollingName = null;
+
+const READ_LINES = (name) => [
+  `Привет, Джарвис! Меня зовут ${name}, запомни мой голос.`,
+  "Сегодня на улице тепло, и вечером мы пойдём гулять в парк.",
+  "Включи, пожалуйста, свет на кухне и поставь чайник.",
+];
+
+function renderVoices() {
+  const list = $("voiceList");
+  list.innerHTML = "";
+  if (!voiceProfiles.length) {
+    list.innerHTML = `<p class="voice-empty">Пока ни одного голоса.</p>`;
+    return;
+  }
+  for (const p of voiceProfiles) {
+    const row = document.createElement("div");
+    row.className = "voice-row";
+    row.innerHTML = `<div><div class="voice-name"></div><div class="voice-meta"></div></div><button type="button" class="more">Дозаписать</button>`;
+    row.querySelector(".voice-name").textContent = p.name;
+    row.querySelector(".voice-meta").textContent = `${p.samples} ${plural(p.samples, "запись", "записи", "записей")} голоса`;
+    row.querySelector(".more").onclick = () => startEnroll(p.name);
+    list.appendChild(row);
+  }
+}
+
+function openVoices() {
+  renderVoices();
+  $("voicesHome").hidden = false;
+  $("enrollView").hidden = true;
+  $("voicesModal").hidden = false;
+}
+
+function closeVoices() {
+  if (enrollingName) call("cancel_enroll");
+  enrollingName = null;
+  $("voicesModal").hidden = true;
+}
+
+function startEnroll(name) {
+  name = name.trim();
+  if (!name) { $("newVoiceName").focus(); return; }
+  enrollingName = name;
+  $("enrollTitle").textContent = `Запись голоса: ${name}`;
+  const lines = $("readLines");
+  lines.innerHTML = "";
+  for (const text of READ_LINES(name)) {
+    const li = document.createElement("li");
+    li.textContent = text;
+    lines.appendChild(li);
+  }
+  showEnrollProgress(0, 3);
+  $("enrollStatus").textContent = "Слушаю…";
+  $("voicesHome").hidden = true;
+  $("enrollView").hidden = false;
+  $("voicesModal").hidden = false;
+  call("start_enroll", name);
+}
+
+function showEnrollProgress(collected, needed) {
+  const bar = $("enrollProgress");
+  bar.innerHTML = "";
+  for (let i = 0; i < needed; i++) {
+    const dot = document.createElement("span");
+    dot.className = "step" + (i < collected ? " done" : "");
+    bar.appendChild(dot);
+  }
+}
+
+function onEnroll(e) {
+  showEnrollProgress(e.collected, e.needed);
+  const status = $("enrollStatus");
+  if (e.status === "progress") status.textContent = `Записано ${e.collected} из ${e.needed} - продолжай`;
+  if (e.status === "done") status.textContent = `Готово! Голос «${e.name}» запомнен.`;
+  if (e.status === "partial") status.textContent = `Время вышло - сохранил ${e.collected} из ${e.needed}. Можно дозаписать позже.`;
+  if (e.status === "failed") status.textContent = "Не услышал речи. Попробуй ещё раз, ближе к микрофону.";
+  if (["done", "partial", "failed", "cancelled"].includes(e.status)) {
+    enrollingName = null;
+    $("enrollCancel").textContent = "Закрыть";
+    if (e.status === "done") setTimeout(() => { if (!enrollingName) closeVoices(); }, 1800);
+  } else {
+    $("enrollCancel").textContent = "Отмена";
+  }
+}
+
+$("residentChip").onclick = openVoices;
+$("voicesClose").onclick = closeVoices;
+$("enrollCancel").onclick = closeVoices;
+$("newVoiceForm").onsubmit = (e) => {
+  e.preventDefault();
+  const name = $("newVoiceName").value;
+  $("newVoiceName").value = "";
+  startEnroll(name);
+};
+
 // ---------------------------------------------------------------- events from Python
 
 window.jarvis = {
@@ -311,6 +409,8 @@ window.jarvis = {
         if (e.levels && e.levels.length) envelope = { levels: e.levels, frameMs: e.frame_seconds * 1000, start: performance.now() };
         break;
       case "ask_name": askName(e.prompt, e.known); break;
+      case "voices": voiceProfiles = e.profiles || []; if (!$("voicesModal").hidden && !enrollingName) renderVoices(); break;
+      case "enroll": onEnroll(e); break;
     }
   },
 };
@@ -343,8 +443,27 @@ $("composer").onsubmit = (e) => {
 
 const DEMO = new URLSearchParams(location.search).has("demo");
 
+let demoEnrollTimers = [];
+
 function demoCall(method, ...args) {
   if (method === "wake") runDemo();
+  if (method === "start_enroll") {
+    const name = args[0];
+    const ev = (collected, status) => ({ type: "enroll", name, collected, needed: 3, status });
+    demoEnrollTimers = [
+      setTimeout(() => jarvis.event(ev(1, "progress")), 1500),
+      setTimeout(() => jarvis.event(ev(2, "progress")), 3000),
+      setTimeout(() => {
+        jarvis.event(ev(3, "done"));
+        const known = voiceProfiles.filter((p) => p.name !== name);
+        jarvis.event({ type: "voices", profiles: [...known, { name, samples: 3 }] });
+      }, 4500),
+    ];
+  }
+  if (method === "cancel_enroll") {
+    demoEnrollTimers.forEach(clearTimeout);
+    jarvis.event({ type: "enroll", name: "", collected: 0, needed: 3, status: "cancelled" });
+  }
   if (method === "send_text") {
     jarvis.event({ type: "user", text: args[0], voice: false });
     later(600, { type: "state", state: "thinking" });
@@ -389,6 +508,7 @@ function runDemo() {
 }
 
 if (DEMO) {
+  jarvis.event({ type: "voices", profiles: [{ name: "Матвей", samples: 5 }] });
   jarvis.event({ type: "resident", name: "default" });
   jarvis.event({ type: "stats", minutes: 3.2, utterances: 40 });
   jarvis.event({ type: "state", state: "sleeping", detail: "Скажи «Джарвис»" });
