@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="wordmark">JARVIS</span>
+      <span class="status" id="status"><span class="dot"></span><span id="statusText">Запуск…</span></span>
+    </div>
+    <div class="chips">
+      <span class="chip" id="residentChip" title="Кто говорит (узнаётся по голосу)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
+        <span id="residentName">—</span>
+      </span>
+      <span class="chip" id="datasetChip" title="Сколько твоих фраз накоплено для будущего обучения распознавания">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        <span id="datasetText">—</span>
+      </span>
+    </div>
+  </header>
+
+  <section class="stage">
+    <button class="orb" id="orb" aria-label="Нажми, чтобы говорить">
+      <canvas id="orbCanvas"></canvas>
+    </button>
+    <div class="caption" id="caption">Скажи «Джарвис»</div>
+  </section>
+
+  <main class="chat" id="chat">
+    <div class="empty" id="empty">
+      <p class="empty-title">Скажи <b>«Джарвис, включи свет»</b></p>
+      <p>или просто <b>«Джарвис»</b> и дождись сигнала.<br>Можно нажать на кружок или написать внизу.</p>
+      <p class="privacy">Пока имя не прозвучало, ничего не уходит в интернет и не сохраняется.</p>
+    </div>
+  </main>
+
+  <footer class="composer">
+    <form id="composer" autocomplete="off">
+      <input id="input" type="text" placeholder="Написать Джарвису…" maxlength="2000">
+      <button type="submit" id="send" aria-label="Отправить">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5z"/></svg>
+      </button>
+    </form>
+  </footer>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <div class="modal" id="nameModal" hidden>
+    <form class="modal-card" id="nameForm">
+      <p class="modal-title">Не узнал голос</p>
+      <p class="modal-text">Как тебя зовут? Запомню голос и дальше буду узнавать сам.</p>
+      <input id="nameInput" type="text" placeholder="Имя" maxlength="60">
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="nameSkip">Не запоминать</button>
+        <button type="submit" class="primary">Запомнить</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

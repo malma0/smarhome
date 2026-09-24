@@ -23,6 +23,10 @@ soundfile>=0.12.0
 scikit-learn>=1.3.0
 numba>=0.58.0
 
+# Desktop window (jarvis_gui.py) - renders backend/gui/ through the WebView2
+# runtime that ships with Windows 11 (no browser engine downloaded).
+pywebview>=6.2
+
 # Hands-free wake word, fully local (app/wake_word.py). Also needs the small
 # Russian model (46 MB) unzipped into backend/models/ - see README:
 # https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
