@@ -50,15 +50,17 @@ def test_mic_levels_are_dropped_when_the_window_falls_behind():
     assert len(calls) <= 5  # a handful got through, the other ~45 stale ones were dropped
 
 
-def test_saved_utterance_also_refreshes_the_dataset_stats():
+def test_a_saved_voice_phrase_carries_its_id_and_refreshes_the_stats():
     ui, calls = _ui()
     ui.stats_source = lambda: {"utterances": 41, "minutes": 3.4, "corrected": 2}
     ui.mark_ready()
-    ui.utterance_saved("abc")
+    ui.user_said("включи свет", voice=True, utterance_id="abc")
+    ui.user_said("который час", voice=False)  # typed - nothing saved, no stats refresh
     ui.drain()
     assert _events(calls) == [
-        {"type": "saved", "id": "abc"},
+        {"type": "user", "text": "включи свет", "voice": True, "id": "abc"},
         {"type": "stats", "minutes": 3.4, "utterances": 41},
+        {"type": "user", "text": "который час", "voice": False, "id": None},
     ]
 
 
@@ -83,12 +85,14 @@ def test_page_actions_become_commands_for_the_voice_loop():
 
     api.send_text("  который час?  ")
     api.send_text("   ")  # blank - ignored
-    api.correct("utt-1", "включи на нём видео")
+    api.correct("utt-1", "включи на нём видео")  # default: fix and ask again
+    api.correct("utt-2", "только данные", False)
     api.wake()
 
     assert [commands.get_nowait() for _ in range(commands.qsize())] == [
         ("text", "который час?"),
-        ("correct", "включи на нём видео", "utt-1"),
+        ("correct", "включи на нём видео", "utt-1", True),
+        ("correct", "только данные", "utt-2", False),
         ("wake",),
     ]
 

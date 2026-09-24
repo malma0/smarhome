@@ -138,22 +138,42 @@ body {
 }
 .meta .fixed { color: var(--ok); }
 .edit-btn {
-  border: 0; background: none; color: var(--faint);
-  font: inherit; cursor: pointer; padding: 0;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .04);
+  color: var(--muted);
+  font: inherit; font-size: 11.5px;
+  padding: 2px 9px; border-radius: 999px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
 }
-.edit-btn:hover { color: var(--text); }
-.edit-box { display: flex; gap: 6px; margin-top: 6px; width: 100%; }
+.edit-btn:hover { color: var(--text); border-color: rgba(109, 63, 240, .6); background: rgba(109, 63, 240, .15); }
+
+/* a phrase Jarvis couldn't make out: shown, and inviting a correction */
+.msg.unheard .bubble {
+  background: transparent;
+  border: 1px dashed rgba(148, 163, 214, .35);
+  color: var(--muted);
+  font-style: italic;
+}
+.msg.unheard .edit-btn { color: var(--text); border-color: rgba(34, 211, 238, .5); }
+
+.edit-box {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 6px; width: min(340px, 78vw);
+}
 .edit-box input {
-  flex: 1; min-width: 0;
   background: var(--bg-raise); color: var(--text);
   border: 1px solid rgba(109, 63, 240, .6); border-radius: 10px;
-  padding: 7px 10px; font: inherit; font-size: 13.5px; outline: none;
+  padding: 8px 10px; font: inherit; font-size: 13.5px; outline: none;
+  user-select: text;
 }
+.edit-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .edit-box button {
-  border: 0; border-radius: 10px; padding: 0 10px; cursor: pointer;
-  font: inherit; font-size: 13px;
+  border: 0; border-radius: 10px; padding: 6px 11px; cursor: pointer;
+  font: inherit; font-size: 12.5px;
 }
-.edit-box .save { background: #6d3ff0; color: #fff; }
+.edit-box .save { background: linear-gradient(135deg, #22d3ee, #6d3ff0); color: #fff; }
+.edit-box .only { background: rgba(255, 255, 255, .06); color: var(--text); }
 .edit-box .cancel { background: transparent; color: var(--muted); }
 
 .actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 4px 0; }

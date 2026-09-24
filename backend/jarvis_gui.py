@@ -108,12 +108,10 @@ class WebviewUI:
     def state(self, state: str, detail: str = "") -> None:
         self._send({"type": "state", "state": state, "detail": detail})
 
-    def user_said(self, text: str, voice: bool) -> None:
-        self._send({"type": "user", "text": text, "voice": voice})
-
-    def utterance_saved(self, utterance_id: str) -> None:
-        self._send({"type": "saved", "id": utterance_id})
-        self.push_stats()
+    def user_said(self, text: str, voice: bool, utterance_id: str | None = None) -> None:
+        self._send({"type": "user", "text": text, "voice": voice, "id": utterance_id})
+        if utterance_id:
+            self.push_stats()
 
     def jarvis_said(self, text: str, actions: list[dict]) -> None:
         self._send({"type": "jarvis", "text": text, "actions": [summarize_action(a) for a in actions]})
@@ -164,10 +162,12 @@ class JsApi:
         if text:
             self._commands.put(("text", text))
 
-    def correct(self, utterance_id: str, text: str) -> None:
+    def correct(self, utterance_id: str | None, text: str, ask: bool = True) -> None:
+        """ask=True: also send the corrected text to Jarvis - it answered
+        the misheard version. ask=False: only fix the training data."""
         text = (text or "").strip()
         if text:
-            self._commands.put(("correct", text, utterance_id or None))
+            self._commands.put(("correct", text, utterance_id or None, bool(ask)))
 
     def wake(self) -> None:
         self._commands.put(("wake",))

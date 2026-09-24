@@ -148,7 +148,6 @@ function showVisual(vis) {
 // ---------------------------------------------------------------- chat
 
 const chat = $("chat");
-let lastVoiceMessage = null;
 
 function scrollDown() { chat.scrollTop = chat.scrollHeight; }
 
@@ -157,26 +156,25 @@ function hideEmpty() {
   if (empty) empty.remove();
 }
 
-function addUser(text, voice) {
+// A voice phrase can always be corrected, right from the moment it shows up
+// - including one Jarvis couldn't make out at all (empty text).
+function addUser(text, voice, utteranceId) {
   hideEmpty();
   const msg = document.createElement("div");
-  msg.className = "msg user";
+  msg.className = "msg user" + (voice && !text ? " unheard" : "");
   msg.innerHTML = `<div class="bubble"></div><div class="meta"><span class="how"></span></div>`;
-  msg.querySelector(".bubble").textContent = text;
+  msg.querySelector(".bubble").textContent = text || "Не разобрал, что ты сказал";
   msg.querySelector(".how").textContent = voice ? "голосом" : "текстом";
   chat.appendChild(msg);
-  if (voice) lastVoiceMessage = msg;
+  if (voice) {
+    const btn = document.createElement("button");
+    btn.className = "edit-btn";
+    btn.textContent = text ? "✎ Не так понял?" : "✎ Вписать, что я сказал";
+    btn.title = "Впиши, что ты сказал на самом деле - Jarvis ответит заново, а исправление пойдёт в данные для обучения.";
+    btn.onclick = () => startEdit(msg, utteranceId || null);
+    msg.querySelector(".meta").appendChild(btn);
+  }
   scrollDown();
-}
-
-function attachEdit(msg, utteranceId) {
-  const meta = msg.querySelector(".meta");
-  const btn = document.createElement("button");
-  btn.className = "edit-btn";
-  btn.textContent = "✎ исправить";
-  btn.title = "Если я ослышался - впиши, что ты сказал на самом деле. Пойдёт в данные для обучения.";
-  btn.onclick = () => startEdit(msg, utteranceId);
-  meta.appendChild(btn);
 }
 
 function startEdit(msg, utteranceId) {
@@ -184,28 +182,38 @@ function startEdit(msg, utteranceId) {
   const bubble = msg.querySelector(".bubble");
   const box = document.createElement("form");
   box.className = "edit-box";
-  box.innerHTML = `<input maxlength="2000"><button class="save" type="submit">Сохранить</button><button class="cancel" type="button">Отмена</button>`;
+  box.innerHTML =
+    `<input maxlength="2000" placeholder="Что ты сказал на самом деле?">` +
+    `<div class="edit-actions">` +
+    `<button class="save" type="submit">Спросить заново</button>` +
+    (utteranceId ? `<button class="only" type="button">Только сохранить</button>` : "") +
+    `<button class="cancel" type="button">Отмена</button></div>`;
   const input = box.querySelector("input");
-  input.value = bubble.textContent;
-  box.querySelector(".cancel").onclick = () => box.remove();
-  box.onsubmit = (e) => {
-    e.preventDefault();
+  input.value = msg.classList.contains("unheard") ? "" : bubble.textContent;
+  const finish = (ask) => {
     const text = input.value.trim();
-    if (!text) return;
-    call("correct", utteranceId, text);
+    if (!text) { input.focus(); return; }
+    call("correct", utteranceId, text, ask);
     bubble.textContent = text;
+    msg.classList.remove("unheard");
+    msg.querySelector(".edit-btn").textContent = "✎ Не так понял?";
     const meta = msg.querySelector(".meta");
     if (!meta.querySelector(".fixed")) {
       const tag = document.createElement("span");
       tag.className = "fixed";
-      tag.textContent = "исправлено";
+      tag.textContent = ask ? "исправлено, спросил заново" : "исправлено";
       meta.insertBefore(tag, meta.querySelector(".edit-btn"));
     }
     box.remove();
   };
+  box.onsubmit = (e) => { e.preventDefault(); finish(true); };
+  const only = box.querySelector(".only");
+  if (only) only.onclick = () => finish(false);
+  box.querySelector(".cancel").onclick = () => box.remove();
   msg.appendChild(box);
   input.focus();
   input.select();
+  scrollDown();
 }
 
 function addJarvis(text, actions) {
@@ -277,8 +285,7 @@ window.jarvis = {
         pyDetail = e.detail || "";
         shownVisual = null;  // refresh caption on next frame
         break;
-      case "user": addUser(e.text, e.voice); break;
-      case "saved": if (lastVoiceMessage) { attachEdit(lastVoiceMessage, e.id); lastVoiceMessage = null; } break;
+      case "user": addUser(e.text, e.voice, e.id); break;
       case "jarvis": addJarvis(e.text, e.actions); break;
       case "note": addNote(e.text); break;
       case "info": toast(e.text); break;
@@ -329,7 +336,15 @@ function demoCall(method, ...args) {
     later(1800, { type: "jarvis", text: "Это демо-режим - настоящий Jarvis ответит, когда окно запущено из Python.", actions: [] });
     later(2000, { type: "state", state: "listening", detail: "Слушаю ещё 10 с - можно без имени" });
   }
-  if (method === "correct") toast("Исправление сохранено в датасет.");
+  if (method === "correct") {
+    const [, text, ask] = args;
+    toast("Исправление сохранено в датасет.");
+    if (ask) {
+      later(300, { type: "state", state: "thinking", detail: "Думаю..." });
+      later(1300, { type: "jarvis", text: `(демо) Теперь понял: «${text}».`, actions: [] });
+      later(1500, { type: "state", state: "listening", detail: "Слушаю ещё 10 с - можно без имени" });
+    }
+  }
 }
 
 function later(ms, e) { setTimeout(() => jarvis.event(e), ms); }
@@ -342,16 +357,18 @@ function runDemo() {
   for (let i = 0; i < 26; i++) step(90, { type: "mic", level: 0.15 + 0.8 * Math.abs(Math.sin(i * 0.9) * Math.sin(i * 0.37)) });
   step(200, { type: "state", state: "thinking", detail: "Распознаю..." });
   step(900, { type: "resident", name: "Матвей" });
-  step(0, { type: "user", text: "Джарвис, открой блокнот и запиши привет мир", voice: true });
+  step(0, { type: "user", text: "Джарвис, открой блокнот и запиши привет мир", voice: true, id: "demo-1" });
   step(300, { type: "state", state: "thinking", detail: "Думаю..." });
   step(1400, { type: "jarvis", text: "Готово: открыл блокнот, там уже написано «привет мир».",
                actions: [{ ok: true, summary: "Записал hello.txt" }, { ok: true, summary: "Открыл notepad" }] });
-  step(0, { type: "saved", id: "demo-1" });
   step(0, { type: "stats", minutes: 3.4, utterances: 41 });
   step(0, { type: "state", state: "thinking", detail: "Готовлю голос..." });
   const env = Array.from({ length: 70 }, (_, i) => Math.max(0, Math.sin(i * 0.45) * 0.7 + Math.sin(i * 1.7) * 0.3));
   step(1800, { type: "envelope", levels: env, frame_seconds: 0.05 });
   step(3600, { type: "state", state: "listening", detail: "Слушаю ещё 10 с - можно без имени" });
+  step(1500, { type: "state", state: "thinking", detail: "Распознаю..." });
+  step(700, { type: "user", text: "", voice: true, id: "demo-2" });  // a phrase Jarvis couldn't make out
+  step(0, { type: "state", state: "listening", detail: "Слушаю ещё 10 с - можно без имени" });
   step(4000, { type: "state", state: "sleeping", detail: "Скажи «Джарвис»" });
   for (const [ms, e] of steps) later(ms, e);
 }
