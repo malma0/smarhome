@@ -45,8 +45,9 @@ class VoiceUI(Protocol):
         sent once at playback start so a front end can animate in sync."""
         ...
 
-    def ask_name(self, prompt: str) -> str:
-        """Blocking; "" means the person declined."""
+    def ask_name(self, prompt: str, known: list[str] = ()) -> str:
+        """Blocking; "" means the person declined. known: names that already
+        have a voice profile - picking one adds this recording to it."""
         ...
 
 
@@ -79,7 +80,9 @@ class ConsoleUI:
     def speech_envelope(self, levels: list[float], frame_seconds: float) -> None:
         pass
 
-    def ask_name(self, prompt: str) -> str:
+    def ask_name(self, prompt: str, known: list[str] = ()) -> str:
+        if known:
+            print(f"(уже знаю голоса: {', '.join(known)} - то же имя добавит эту запись к голосу)")
         try:
             return self.ask(prompt).strip()
         except (EOFError, KeyboardInterrupt):

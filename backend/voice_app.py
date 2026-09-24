@@ -50,7 +50,7 @@ import numpy as np
 
 from app import speaker_id
 from app.agent import build_default_agent
-from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech
+from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech, speech_seconds
 from app.config import settings
 from app.dataset import UtteranceLog
 from app.hands_free import CUE, IGNORE, HandsFreeState
@@ -146,13 +146,31 @@ def record_until_enter(recorder: MicRecorder) -> list[np.ndarray]:
     return recorder.end()
 
 
+# Measured on real recordings from this laptop's mic: a phrase with 4 s of
+# speech matched its speaker's profile at 0.73-0.78, but short commands
+# (~1 s of speech) scored 0.54-0.60 against the same person - no threshold
+# lets those through while keeping other voices (up to 0.56) out. Too little
+# voice to tell who it is.
+MIN_SPEECH_FOR_VOICE_ID = 1.5
+
+
+def _existing_resident(memory: MemoryStore, typed: str) -> str:
+    """'матвей' or ' Матвей ' -> the existing 'Матвей', not a second person."""
+    name = " ".join(typed.split())
+    for resident_id in memory.list_resident_ids():
+        if resident_id.casefold() == name.casefold():
+            return resident_id
+    return name
+
+
 def identify_or_enroll_speaker(
     memory: MemoryStore,
     wav_bytes: bytes,
     default_resident_id: str,
     threshold: float,
-    prompt_for_name=input,
+    prompt_for_name=None,
     ui: VoiceUI | None = None,
+    speech_seconds: float | None = None,
 ) -> str:
     """Voice-based resident ID (app.speaker_id) layered on top of the
     manually-typed session default: tries to recognize the speaker from
@@ -166,8 +184,18 @@ def identify_or_enroll_speaker(
     resident's profile (speaker_id.enroll_resident keeps only the most
     recent few, see MAX_ENROLLED_SAMPLES) - the profile quietly gets more
     robust from ordinary use instead of staying frozen at whatever the
-    first, one-shot enrollment happened to sound like."""
+    first, one-shot enrollment happened to sound like.
+
+    Short phrases (under MIN_SPEECH_FOR_VOICE_ID seconds of speech) can
+    still match, but never teach the profile (a noisy sample) and never
+    trigger "who are you?" - without a match, whoever spoke last is assumed
+    to still be speaking, instead of interrupting a quick command.
+
+    Answering the question with an existing name (any case/spacing) adds
+    this recording to that person's profile - that's how an existing voice
+    that wasn't recognized gets better, not a second person."""
     ui = ui or ConsoleUI()
+    short = speech_seconds is not None and speech_seconds < MIN_SPEECH_FOR_VOICE_ID
     try:
         embedding = speaker_id.embed_wav_bytes(wav_bytes)
     except Exception as exc:  # noqa: BLE001 - e.g. resemblyzer not installed, clip too short
@@ -177,19 +205,28 @@ def identify_or_enroll_speaker(
     enrolled = speaker_id.load_enrolled_voiceprints(memory)
     match = speaker_id.identify_resident(embedding, enrolled, threshold=threshold)
     if match:
-        speaker_id.enroll_resident(memory, match, embedding)
+        if not short:
+            speaker_id.enroll_resident(memory, match, embedding)
         ui.resident(match)
         return match
-
-    try:
-        name = prompt_for_name("Не узнал голос — как вас зовут? (Enter, чтобы не запоминать) ").strip()
-    except (EOFError, KeyboardInterrupt):
-        name = ""
-    if not name:
+    if short:
         return default_resident_id
 
+    prompt = "Не узнал голос — как вас зовут? (Enter, чтобы не запоминать) "
+    known = sorted(enrolled)
+    try:
+        answer = prompt_for_name(prompt) if prompt_for_name else ui.ask_name(prompt, known)
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if not answer.strip():
+        return default_resident_id
+
+    name = _existing_resident(memory, answer)
     speaker_id.enroll_resident(memory, name, embedding)
-    ui.info(f"Запомнил ваш голос как «{name}».")
+    if name in enrolled:
+        ui.info(f"Добавил эту запись в голос «{name}» - дальше буду узнавать увереннее.")
+    else:
+        ui.info(f"Запомнил ваш голос как «{name}».")
     ui.resident(name)
     return name
 
@@ -406,8 +443,9 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
             wav_bytes,
             session.resident_id,
             settings.voice_id_threshold,
-            prompt_for_name=prompt_for_name or ui.ask_name,
+            prompt_for_name=prompt_for_name,
             ui=ui,
+            speech_seconds=speech_seconds(frames, SAMPLE_RATE),
         )
 
     ui.state(THINKING, "Распознаю...")

@@ -191,8 +191,8 @@ class _RecordingUI:
     def speech_envelope(self, levels, frame_seconds):
         pass
 
-    def ask_name(self, prompt):
-        self.events.append(("ask_name",))
+    def ask_name(self, prompt, known=()):
+        self.events.append(("ask_name", tuple(known)))
         return self.name_answer
 
 
@@ -251,6 +251,7 @@ def test_unknown_voice_asks_through_the_ui(memory, tmp_path, monkeypatch):
 
     monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, tts_enabled=False))
     monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "speech_seconds", lambda frames, sr: 3.0)  # long enough to ask
     monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value="привет"))
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
@@ -261,7 +262,7 @@ def test_unknown_voice_asks_through_the_ui(memory, tmp_path, monkeypatch):
 
     asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
 
-    assert ("ask_name",) in ui.events
+    assert ("ask_name", ()) in ui.events
     assert ("resident", "Матвей") in ui.events
     assert session.resident_id == "Матвей"
 
@@ -461,6 +462,68 @@ def test_a_broken_embedding_step_falls_back_to_default_without_crashing(memory, 
 
     assert result == "default"
     prompt.assert_not_called()
+
+
+def _unmatched_voice(monkeypatch, enrolled=None):
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: enrolled or {})
+    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    enroll = Mock()
+    monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
+    return enroll
+
+
+def test_short_unrecognized_phrase_keeps_the_last_speaker_without_asking(memory, monkeypatch):
+    """~1 s of speech is too little to tell voices apart (real phrases like
+    that scored 0.54-0.60 against their own speaker) - no "who are you?"
+    interrupting a quick command, no enrollment."""
+    enroll = _unmatched_voice(monkeypatch, {"Матвей": ["known"]})
+    prompt = Mock()
+
+    result = identify_or_enroll_speaker(memory, b"wav", "Матвей", 0.7, prompt_for_name=prompt, speech_seconds=0.9)
+
+    assert result == "Матвей"
+    prompt.assert_not_called()
+    enroll.assert_not_called()
+
+
+def test_short_phrase_can_still_match_but_does_not_teach_the_profile(memory, monkeypatch):
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"Матвей": ["known"]})
+    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: "Матвей")
+    enroll = Mock()
+    monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
+
+    result = identify_or_enroll_speaker(memory, b"wav", "default", 0.7, speech_seconds=1.0)
+
+    assert result == "Матвей"
+    enroll.assert_not_called()
+
+
+def test_answering_with_an_existing_name_in_any_case_adds_to_that_voice(memory, monkeypatch):
+    """The fix for "it knows Матвей but didn't recognize me - now what?":
+    answer with the same name, in whatever case, and the recording joins
+    the existing profile instead of creating a second person."""
+    memory.ensure_resident("Матвей")
+    enroll = _unmatched_voice(monkeypatch, {"Матвей": ["known"]})
+
+    result = identify_or_enroll_speaker(
+        memory, b"wav", "default", 0.7, prompt_for_name=lambda _p: "  матвей ", speech_seconds=3.0
+    )
+
+    assert result == "Матвей"
+    enroll.assert_called_once_with(memory, "Матвей", "embedding")
+    assert memory.list_resident_ids().count("Матвей") == 1
+    assert "матвей" not in memory.list_resident_ids()
+
+
+def test_the_question_offers_the_known_voices(memory, monkeypatch):
+    _unmatched_voice(monkeypatch, {"Матвей": ["a"], "Алиса": ["b"]})
+    ui = _RecordingUI(name_answer="")
+
+    identify_or_enroll_speaker(memory, b"wav", "default", 0.7, ui=ui, speech_seconds=3.0)
+
+    assert ("ask_name", ("Алиса", "Матвей")) in ui.events
 
 
 def test_declining_via_eof_falls_back_to_default(memory, monkeypatch):

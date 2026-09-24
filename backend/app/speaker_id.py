@@ -43,7 +43,13 @@ import numpy as np
 from app.memory import MemoryStore
 
 VOICEPRINT_PREFERENCE_KEY = "voice_embedding"
-DEFAULT_MATCH_THRESHOLD = 0.75
+# From real recordings on this laptop's mic: longer phrases (~4 s of
+# speech) scored 0.73-0.78 against their own speaker's profile, other
+# voices at most 0.56 against it. 0.75 (the first guess, from clean studio
+# clips) sat inside the real same-speaker range; 0.70 keeps a margin on
+# both sides. Short phrases are handled separately - see
+# voice_app.MIN_SPEECH_FOR_VOICE_ID.
+DEFAULT_MATCH_THRESHOLD = 0.70
 MAX_ENROLLED_SAMPLES = 5
 
 # Measured on this laptop's hybrid CPU (Core Ultra 9 185H, 22 threads):
