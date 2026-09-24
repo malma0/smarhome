@@ -3,6 +3,7 @@ microphone recording (record_until_enter) needs a real audio device and
 isn't something CI can exercise, so it's left as manually-verified glue."""
 
 import asyncio
+import json
 import wave
 from io import BytesIO
 from unittest.mock import AsyncMock, Mock
@@ -74,6 +75,91 @@ def test_transcribe_sends_the_vocabulary_prompt_when_given(monkeypatch):
     asyncio.run(transcribe(b"wav", api_key="key", base_url="https://x", prompt="Джарвис, Майнкрафт"))
 
     assert mock_post.call_args.kwargs["data"]["prompt"] == "Джарвис, Майнкрафт"
+
+
+# --- handle_phrase / apply_correction (the per-phrase pipeline both modes share) ---
+
+
+class _FakeAgent:
+    def __init__(self, memory):
+        self.memory = memory
+        self.chat = AsyncMock(return_value={"response": "Включаю.", "actions": []})
+
+
+def _session(memory, tmp_path, dataset=True):
+    import voice_app
+    from app.dataset import UtteranceLog
+
+    return voice_app.VoiceSession(
+        agent=_FakeAgent(memory),
+        tts_provider=None,
+        tts_fallback=None,
+        utterances=UtteranceLog(tmp_path / "ds") if dataset else None,
+        resident_id="default",
+    )
+
+
+def _quiet_settings(monkeypatch):
+    import dataclasses
+
+    import voice_app
+
+    monkeypatch.setattr(
+        voice_app, "settings", dataclasses.replace(voice_app.settings, voice_id_enabled=False, tts_enabled=False)
+    )
+
+
+def test_silent_phrase_goes_nowhere(memory, tmp_path, monkeypatch):
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    session = _session(memory, tmp_path)
+    silence = [np.zeros((16000, 1), dtype=np.int16)]
+
+    asyncio.run(voice_app.handle_phrase(session, silence))
+
+    session.agent.chat.assert_not_called()
+    assert session.utterances.stats()["utterances"] == 0
+
+
+def test_a_phrase_is_transcribed_answered_and_logged(memory, tmp_path, monkeypatch):
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value="включи свет"))
+    session = _session(memory, tmp_path)
+
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    session.agent.chat.assert_awaited_once_with("voice-session", "default", "включи свет", spoken=False)
+    assert session.last_utterance_id is not None
+    metadata = (tmp_path / "ds" / "metadata.jsonl").read_text("utf-8").splitlines()
+    [record] = [json.loads(line) for line in metadata]
+    assert record["transcript"] == "включи свет"
+    assert record["response"] == "Включаю."
+
+
+def test_correction_applies_to_the_last_phrase(memory, tmp_path, monkeypatch):
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value="на нём видео"))
+    session = _session(memory, tmp_path)
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    voice_app.apply_correction(session, "включи на нём видео")
+
+    assert session.utterances.stats()["corrected"] == 1
+
+
+def test_correction_before_any_phrase_changes_nothing(memory, tmp_path):
+    import voice_app
+
+    session = _session(memory, tmp_path)
+    voice_app.apply_correction(session, "что угодно")  # must not raise
+    assert session.utterances.stats() == {"utterances": 0, "minutes": 0.0, "corrected": 0}
 
 
 # --- warm_up_in_background ---

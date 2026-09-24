@@ -11,6 +11,15 @@ an actual house. Both pieces here are free, no new accounts:
   SAPI voices (app.tts.sapi) if the configured provider fails to build or
   speak for any reason.
 
+Two ways to talk (VOICE_MODE):
+- "wake" (default, hands-free): no keys - just say the name. Until it's
+  heard, phrases are checked locally (app.wake_word, Vosk) and dropped -
+  nothing goes online or gets saved. See app.hands_free for the awake/asleep
+  rules (a short listening window after the bare name, a follow-up window
+  after each reply).
+- "push": Enter to start, Enter to stop - also the automatic fallback if
+  Vosk or its model isn't installed.
+
 Who's talking is identified per-utterance from the voice itself
 (app.speaker_id), on top of the manually-typed session default - see
 identify_or_enroll_speaker(). Set VOICE_ID_ENABLED=false in .env to fall
@@ -30,19 +39,24 @@ Usage: python voice_app.py
 
 import asyncio
 import io
+import queue
 import threading
 import time
 import wave
+from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import numpy as np
 
 from app import speaker_id
 from app.agent import build_default_agent
-from app.audio_capture import MicRecorder, contains_speech
+from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech
 from app.config import settings
 from app.dataset import UtteranceLog
+from app.hands_free import CUE, IGNORE, HandsFreeState
 from app.memory import MemoryStore
+from app.wake_word import WakeWordDetector, parse_wake_words
 from app.tts.base import TTSProvider
 from app.tts.text import text_for_speech
 
@@ -288,7 +302,6 @@ async def main() -> None:
     else:
         print("Озвучка отключена (JARVIS_TTS_ENABLED=false) - Jarvis будет отвечать только текстом.\n")
 
-    session_id = "voice-session"
     try:
         resident_id = input("resident id (enter for 'default')> ").strip() or "default"
     except (EOFError, KeyboardInterrupt):
@@ -301,74 +314,205 @@ async def main() -> None:
             f"Датасет для обучения: {stats['utterances']} фраз, {stats['minutes']} мин аудио, "
             f"{stats['corrected']} исправлено ({settings.dataset_dir}/)"
         )
+
+    session = VoiceSession(
+        agent=agent,
+        tts_provider=tts_provider,
+        tts_fallback=tts_fallback,
+        utterances=utterances,
+        resident_id=resident_id,
+    )
+
+    if settings.voice_mode == "wake":
+        try:
+            detector = WakeWordDetector(settings.vosk_model_path, parse_wake_words(settings.wake_words))
+        except Exception as exc:  # noqa: BLE001 - e.g. vosk or its model not installed
+            print(f"Режим без рук недоступен ({exc}) - включаю режим с Enter.")
+        else:
+            await run_hands_free(session, detector)
+            return
+    await run_push_to_talk(session)
+
+
+@dataclass
+class VoiceSession:
+    agent: Any
+    tts_provider: TTSProvider | None
+    tts_fallback: TTSProvider | None
+    utterances: UtteranceLog | None
+    resident_id: str
+    session_id: str = "voice-session"
     last_utterance_id: str | None = None
 
-    recorder = MicRecorder(SAMPLE_RATE)
-    print(f"\nJarvis voice - resident '{resident_id}'. Ctrl+C для выхода.\n")
 
+def apply_correction(session: VoiceSession, typed: str) -> None:
+    if session.utterances is None:
+        print("(запись датасета выключена - JARVIS_DATASET_ENABLED=false)\n")
+    elif session.last_utterance_id and session.utterances.correct(session.last_utterance_id, typed):
+        print("Исправление сохранено в датасет.\n")
+    else:
+        print("(исправлять нечего - в этом сеансе ещё не было ни одной фразы)\n")
+
+
+async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_for_name=input) -> None:
+    """One phrase, whichever mode captured it: speaker ID -> Whisper ->
+    Jarvis -> dataset -> voice."""
+    # Before speaker ID too, not just before Whisper: an unmatched silent
+    # clip would otherwise prompt "who are you?" and could get enrolled as
+    # someone's voice.
+    if not contains_speech(frames, SAMPLE_RATE):
+        print("(не услышал речи - ничего не отправляю)\n")
+        return
+    wav_bytes = frames_to_wav_bytes(frames)
+
+    if settings.voice_id_enabled:
+        session.resident_id = identify_or_enroll_speaker(
+            session.agent.memory,
+            wav_bytes,
+            session.resident_id,
+            settings.voice_id_threshold,
+            prompt_for_name=prompt_for_name,
+        )
+
+    print("Распознаю...")
+    prompt = build_whisper_prompt(settings.whisper_vocabulary, session.agent.memory.list_resident_ids())
+    text: str | None = None
+    try:
+        text = await transcribe(wav_bytes, settings.groq_api_key, settings.groq_base_url, prompt=prompt)
+    except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
+        print(f"Ошибка распознавания: {exc}\n")
+
+    response: str | None = None
+    if text:
+        print(f"you> {text}")
+        result = await session.agent.chat(
+            session.session_id, session.resident_id, text, spoken=settings.tts_enabled
+        )
+        response = result["response"]
+        print(f"jarvis> {response}")
+        for action in result["actions"]:
+            print(f"   [action] {action['tool']}({action['input']}) -> {action['result']}")
+        print()
+    elif text == "":
+        print("(не удалось разобрать речь)\n")
+
+    # Logged even when transcription failed or came back empty - the audio is
+    # real speech (it passed the VAD check) and can still be corrected by
+    # hand into a usable training example.
+    if session.utterances:
+        session.last_utterance_id = session.utterances.log(
+            wav_bytes=wav_bytes, resident_id=session.resident_id, transcript=text, response=response
+        )
+
+    if text and settings.tts_enabled:
+        await speak(session.tts_provider, session.tts_fallback, text_for_speech(response))
+
+
+async def run_push_to_talk(session: VoiceSession) -> None:
+    recorder = MicRecorder(SAMPLE_RATE)
+    print(f"\nJarvis voice (режим с Enter) - resident '{session.resident_id}'. Ctrl+C для выхода.\n")
     try:
         while True:
             try:
                 typed = input("[Enter] — говорить. Если я ошибся — впиши, что ты сказал, и Enter> ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
-
             if typed:
-                if utterances is None:
-                    print("(запись датасета выключена - JARVIS_DATASET_ENABLED=false)\n")
-                elif last_utterance_id and utterances.correct(last_utterance_id, typed):
-                    print("Исправление сохранено в датасет.\n")
-                else:
-                    print("(исправлять нечего - в этом сеансе ещё не было ни одной фразы)\n")
+                apply_correction(session, typed)
                 continue
-
             print("🔴 Слушаю... нажмите Enter ещё раз, чтобы закончить")
-            frames = record_until_enter(recorder)
-            # Before speaker ID too, not just before Whisper: an unmatched
-            # silent clip would otherwise prompt "who are you?" and could
-            # get enrolled as someone's voice.
-            if not contains_speech(frames, SAMPLE_RATE):
-                print("(не услышал речи - ничего не отправляю)\n")
-                continue
-            wav_bytes = frames_to_wav_bytes(frames)
-
-            if settings.voice_id_enabled:
-                resident_id = identify_or_enroll_speaker(
-                    agent.memory, wav_bytes, resident_id, settings.voice_id_threshold
-                )
-
-            print("Распознаю...")
-            prompt = build_whisper_prompt(settings.whisper_vocabulary, agent.memory.list_resident_ids())
-            text: str | None = None
-            try:
-                text = await transcribe(wav_bytes, settings.groq_api_key, settings.groq_base_url, prompt=prompt)
-            except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
-                print(f"Ошибка распознавания: {exc}\n")
-
-            response: str | None = None
-            if text:
-                print(f"you> {text}")
-                result = await agent.chat(session_id, resident_id, text, spoken=settings.tts_enabled)
-                response = result["response"]
-                print(f"jarvis> {response}")
-                for action in result["actions"]:
-                    print(f"   [action] {action['tool']}({action['input']}) -> {action['result']}")
-                print()
-            elif text == "":
-                print("(не удалось разобрать речь)\n")
-
-            # Logged even when transcription failed or came back empty - the
-            # audio is real speech (it passed the VAD check) and can still be
-            # corrected by hand into a usable training example.
-            if utterances:
-                last_utterance_id = utterances.log(
-                    wav_bytes=wav_bytes, resident_id=resident_id, transcript=text, response=response
-                )
-
-            if text and settings.tts_enabled:
-                await speak(tts_provider, tts_fallback, text_for_speech(response))
+            await handle_phrase(session, record_until_enter(recorder))
     finally:
         recorder.close()
+
+
+def start_line_reader() -> "queue.Queue[str]":
+    """Hands-free mode has no input() in its main loop, but typed lines are
+    still wanted - corrections, and a name when an unknown voice is
+    enrolled - so a thread reads them into a queue."""
+    lines: queue.Queue[str] = queue.Queue()
+
+    def _read() -> None:
+        while True:
+            try:
+                lines.put(input().strip())
+            except (EOFError, KeyboardInterrupt):
+                return
+
+    threading.Thread(target=_read, daemon=True).start()
+    return lines
+
+
+def _play_listening_cue() -> None:
+    try:
+        import winsound
+
+        winsound.Beep(880, 150)
+    except Exception:  # noqa: BLE001 - no cue is fine, the printed line still shows it
+        pass
+
+
+def _to_pcm16(frames: list[np.ndarray]) -> bytes:
+    return np.concatenate(frames, axis=0).reshape(-1).astype(np.int16).tobytes()
+
+
+async def run_hands_free(session: VoiceSession, detector: WakeWordDetector) -> None:
+    wake_word = parse_wake_words(settings.wake_words)[0].capitalize()
+    state = HandsFreeState(settings.wake_listen_seconds, settings.follow_up_seconds)
+    listener = HandsFreeListener(SAMPLE_RATE)
+    lines = start_line_reader()
+
+    def prompt_for_name(prompt: str) -> str:
+        print(prompt, end="", flush=True)
+        try:
+            return lines.get(timeout=60)
+        except queue.Empty:
+            print()
+            return ""
+
+    print(
+        f"\nJarvis voice (без рук) - скажи «{wake_word}» и команду, или просто «{wake_word}» и жди сигнала.\n"
+        "Пока имя не прозвучало, ничего не уходит в интернет и не сохраняется.\n"
+        "Если я ошибся - впиши, что ты сказал, и Enter. Ctrl+C для выхода.\n"
+    )
+    try:
+        while True:
+            while not lines.empty():
+                typed = lines.get_nowait()
+                if typed:
+                    apply_correction(session, typed)
+
+            was_awake = state.is_awake()
+            phrase = await asyncio.to_thread(listener.next_phrase, 0.5)
+            if phrase is None:
+                if was_awake and not state.is_awake():
+                    print(f"(сплю - скажи «{wake_word}», чтобы разбудить)\n")
+                continue
+
+            wake_class = None
+            if not state.is_awake():
+                # Local only - a phrase without the name never goes further.
+                wake_class = await asyncio.to_thread(detector.check, _to_pcm16(phrase))
+            action = state.on_phrase(wake_class)
+            if action == IGNORE:
+                continue
+            if action == CUE:
+                await asyncio.to_thread(_play_listening_cue)
+                print(f"🔵 Слушаю ({settings.wake_listen_seconds:.0f} с)...")
+                continue
+
+            listener.mute()  # don't hear our own reply as the next phrase
+            try:
+                await handle_phrase(session, phrase, prompt_for_name=prompt_for_name)
+            finally:
+                await asyncio.sleep(0.3)  # let the room's echo of the reply die down
+                listener.unmute()
+            state.after_reply()
+            print(f"(слушаю ещё {settings.follow_up_seconds:.0f} с - можно продолжать без имени)")
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        listener.close()
 
 
 if __name__ == "__main__":

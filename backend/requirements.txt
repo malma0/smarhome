@@ -23,6 +23,11 @@ soundfile>=0.12.0
 scikit-learn>=1.3.0
 numba>=0.58.0
 
+# Hands-free wake word, fully local (app/wake_word.py). Also needs the small
+# Russian model (46 MB) unzipped into backend/models/ - see README:
+# https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
+vosk>=0.3.45
+
 # Russian stress marks for the Voicebox/Chatterbox voice (app/tts/stress.py).
 # MIT-licensed. Downloads ~195 MB of models into backend/models/ruaccent on
 # first use.

@@ -41,6 +41,11 @@ class Settings:
     whisper_vocabulary: str
     dataset_enabled: bool
     dataset_dir: str
+    voice_mode: str
+    wake_words: str
+    vosk_model_path: str
+    wake_listen_seconds: float
+    follow_up_seconds: float
 
 
 def load_settings() -> Settings:
@@ -79,6 +84,11 @@ def load_settings() -> Settings:
         whisper_vocabulary=os.environ.get("WHISPER_VOCABULARY", ""),
         dataset_enabled=os.environ.get("JARVIS_DATASET_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
         dataset_dir=os.environ.get("JARVIS_DATASET_DIR", "dataset"),
+        voice_mode=os.environ.get("VOICE_MODE", "wake").strip().lower(),
+        wake_words=os.environ.get("WAKE_WORDS", "джарвис,джервис"),
+        vosk_model_path=os.environ.get("VOSK_MODEL_PATH", "models/vosk-model-small-ru-0.22"),
+        wake_listen_seconds=float(os.environ.get("WAKE_LISTEN_SECONDS", "8")),
+        follow_up_seconds=float(os.environ.get("FOLLOW_UP_SECONDS", "10")),
     )
 
 
