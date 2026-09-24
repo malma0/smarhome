@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agent import MAX_TOOL_ITERATIONS, JarvisAgent
+from app.agent import MAX_TOOL_ITERATIONS, SPOKEN_REPLY_RULES, JarvisAgent
 from app.db import connect
 from app.llm.base import ContentBlock, LLMResponse
 from app.memory import MemoryStore
@@ -131,6 +131,19 @@ def test_non_adaptive_persona_does_not_touch_style(memory):
     asyncio.run(agent.chat("session-1", "ivan", "Не могли бы Вы подсказать?"))
 
     assert get_style(memory, "ivan").formality == 0.5  # untouched default
+
+
+def test_spoken_replies_get_the_short_no_markdown_rules(memory):
+    llm = FakeLLM([text_response("Готово."), text_response("Готово.")])
+    agent = make_agent(llm, memory)
+
+    asyncio.run(agent.chat("s1", "ivan", "открой блокнот", spoken=True))
+    spoken_prompt = llm.generate.call_args.kwargs["system"]
+    asyncio.run(agent.chat("s2", "ivan", "открой блокнот"))
+    text_prompt = llm.generate.call_args.kwargs["system"]
+
+    assert SPOKEN_REPLY_RULES in spoken_prompt
+    assert SPOKEN_REPLY_RULES not in text_prompt  # text chat (e.g. POST /chat) unaffected
 
 
 def test_gender_revealed_in_the_message_is_stored_and_reaches_the_prompt(memory):

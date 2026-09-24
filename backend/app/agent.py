@@ -33,6 +33,16 @@ GENERAL_ASSISTANT_PREAMBLE = (
     "reach for a tool when the request is actually about controlling or checking the house."
 )
 
+# Added only when the reply will be spoken (voice_app with TTS on). Local
+# voice-cloning TTS takes ~10x longer to generate than the audio lasts, so
+# every extra sentence costs real waiting - and markdown/emoji get read out
+# literally instead of rendered.
+SPOKEN_REPLY_RULES = (
+    "Your reply will be read aloud by a slow text-to-speech voice, not shown as text. "
+    "Answer in one or two short sentences. No markdown, no lists, no emoji, no code; "
+    "don't read out file paths or URLs unless asked - just say what you did."
+)
+
 
 class JarvisAgent:
     """Holds one conversation per session_id and runs the tool-use loop.
@@ -51,13 +61,16 @@ class JarvisAgent:
     def reset(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
 
-    def _build_system_prompt(self, resident_id: str) -> str:
+    def _build_system_prompt(self, resident_id: str, spoken: bool = False) -> str:
         mode = self.memory.get_persona_mode()
         persona_prompt = build_persona_prompt(mode, self.memory, resident_id)
         gender_note = gender_prompt_note(get_resident_gender(self.memory, resident_id))
-        return f"{GENERAL_ASSISTANT_PREAMBLE}\n\n{persona_prompt}\n\n{gender_note}"
+        prompt = f"{GENERAL_ASSISTANT_PREAMBLE}\n\n{persona_prompt}\n\n{gender_note}"
+        if spoken:
+            prompt += f"\n\n{SPOKEN_REPLY_RULES}"
+        return prompt
 
-    async def chat(self, session_id: str, resident_id: str, user_message: str) -> dict:
+    async def chat(self, session_id: str, resident_id: str, user_message: str, spoken: bool = False) -> dict:
         self.memory.ensure_resident(resident_id)
         # Detected early (before the system prompt is built) so a message
         # that reveals gender for the first time can already inform this
@@ -66,7 +79,7 @@ class JarvisAgent:
         history = self._sessions.setdefault(session_id, [])
         history.append({"role": "user", "content": user_message})
 
-        system_prompt = self._build_system_prompt(resident_id)
+        system_prompt = self._build_system_prompt(resident_id, spoken=spoken)
         tool_defs = self.tools.definitions()
         ctx = TurnContext()
         actions: list[dict] = []
