@@ -3,6 +3,7 @@ MicRecorder itself (the sounddevice glue) needs a real microphone and is
 left as manually-verified glue, same as the rest of voice_app.py's I/O."""
 
 import numpy as np
+import pytest
 
 from app import audio_capture
 from app.audio_capture import PrerollBuffer, UtteranceSegmenter, contains_speech, speech_seconds
@@ -133,6 +134,19 @@ def test_reset_drops_a_half_finished_phrase():
     _feed_all(segmenter, [1, 1, 1])  # phrase in progress
     segmenter.reset()
     assert _feed_all(segmenter, [0, 0, 0, 0]) == []  # nothing left to finish
+
+
+def test_mic_level_maps_quiet_room_to_0_and_close_speech_to_1():
+    from app.audio_capture import mic_level
+
+    def at_dbfs(db):
+        amplitude = 32768 * 10 ** (db / 20)
+        return np.full((480, 1), amplitude, dtype=np.float64)
+
+    assert mic_level(at_dbfs(-70)) == 0.0
+    assert mic_level(at_dbfs(-40)) == pytest.approx(0.5, abs=0.01)
+    assert mic_level(at_dbfs(-10)) == 1.0
+    assert mic_level(np.zeros((480, 1), dtype=np.int16)) == 0.0
 
 
 def test_pure_silence_is_not_speech():

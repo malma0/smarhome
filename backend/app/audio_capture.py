@@ -210,16 +210,37 @@ class UtteranceSegmenter:
         return None
 
 
+def mic_level(frame: np.ndarray) -> float:
+    """0..1 loudness for display: -60 dBFS (a quiet room) -> 0, -20 dBFS
+    (speaking close to the mic) -> 1."""
+    samples = frame.reshape(-1).astype(np.float64)
+    if samples.size == 0:
+        return 0.0
+    rms = np.sqrt(np.mean(samples**2))
+    if rms <= 0:
+        return 0.0
+    dbfs = 20 * np.log10(rms / 32768)
+    return float(min(1.0, max(0.0, (dbfs + 60) / 40)))
+
+
+MIC_LEVEL_INTERVAL_SECONDS = 0.08
+
+
 class HandsFreeListener:
     """Mic -> 30 ms frames -> UtteranceSegmenter on its own thread, so audio
     keeps being captured and cut into phrases while the main loop is busy
     transcribing or thinking. mute() while Jarvis is working/speaking -
-    otherwise it would hear its own voice as the next phrase."""
+    otherwise it would hear its own voice as the next phrase.
 
-    def __init__(self, sample_rate: int):
+    on_level, if given, gets the mic loudness (0..1) about 12 times a
+    second while unmuted - for a front end's listening animation."""
+
+    def __init__(self, sample_rate: int, on_level: Callable[[float], None] | None = None):
         import sounddevice as sd
 
         frame_len = int(sample_rate * VAD_FRAME_SECONDS)
+        self._on_level = on_level
+        self._last_level_at = 0.0
         self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=500)
         self._phrases: queue.Queue[list[np.ndarray]] = queue.Queue()
         self._segmenter = UtteranceSegmenter(make_vad(sample_rate))
@@ -247,6 +268,14 @@ class HandsFreeListener:
             if self._muted.is_set():
                 self._segmenter.reset()
                 continue
+            if self._on_level is not None:
+                now = time.monotonic()
+                if now - self._last_level_at >= MIC_LEVEL_INTERVAL_SECONDS:
+                    self._last_level_at = now
+                    try:
+                        self._on_level(mic_level(frame))
+                    except Exception:  # noqa: BLE001 - a UI hiccup must never stop listening
+                        pass
             phrase = self._segmenter.feed(frame)
             if phrase is not None:
                 self._phrases.put(phrase)

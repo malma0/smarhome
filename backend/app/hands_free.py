@@ -55,3 +55,8 @@ class HandsFreeState:
 
     def after_reply(self) -> None:
         self._awake_until = self._clock() + self._follow_up
+
+    def force_wake(self) -> None:
+        """Same as hearing the bare name - e.g. clicking the orb in the
+        desktop window. Also the only way to wake up if Vosk is missing."""
+        self._awake_until = self._clock() + self._wake_listen

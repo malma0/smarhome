@@ -63,6 +63,16 @@ def test_follow_up_window_is_counted_from_the_end_of_the_reply():
     assert state.is_awake()
 
 
+def test_force_wake_acts_like_hearing_the_bare_name():
+    state, clock = _state()
+    state.force_wake()
+    clock.now += 7
+    assert state.on_phrase(None) == PROCESS
+    state.force_wake()
+    clock.now += 8.1
+    assert not state.is_awake()
+
+
 def test_falls_asleep_after_the_follow_up_window():
     state, clock = _state()
     state.after_reply()
