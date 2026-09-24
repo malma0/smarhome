@@ -90,6 +90,9 @@ def play_wav_bytes(audio_bytes: bytes) -> None:
     if channels > 1:
         audio = audio.reshape(-1, channels)
 
+    from app.tts import playback
+
+    playback.announce(audio, rate)
     sd.play(audio, samplerate=rate)
     sd.wait()
 
@@ -147,6 +150,8 @@ async def ensure_profile(
 
 
 class VoiceboxTTSProvider:
+    announces_playback = True  # see app.tts.playback
+
     def __init__(
         self,
         *,

@@ -22,6 +22,8 @@ def chunks_to_audio_array(chunks: list[Any]) -> np.ndarray:
 
 
 class PiperTTSProvider:
+    announces_playback = True  # see app.tts.playback
+
     def __init__(self, model_path: str, config_path: str | None = None):
         from piper import PiperVoice
 
@@ -33,8 +35,11 @@ class PiperTTSProvider:
     def _speak_sync(self, text: str) -> None:
         import sounddevice as sd
 
+        from app.tts import playback
+
         audio = chunks_to_audio_array(list(self._voice.synthesize(text)))
         if audio.size == 0:
             return
+        playback.announce(audio, self._voice.config.sample_rate)
         sd.play(audio, samplerate=self._voice.config.sample_rate)
         sd.wait()
