@@ -226,12 +226,49 @@ def identify_or_enroll_speaker(
 
     name = _existing_resident(memory, answer)
     speaker_id.enroll_resident(memory, name, embedding)
+    report_voices(memory, ui)
     if name in enrolled:
         ui.info(f"Добавил эту запись в голос «{name}» - дальше буду узнавать увереннее.")
     else:
         ui.info(f"Запомнил ваш голос как «{name}».")
     ui.resident(name)
     return name
+
+
+# Deliberate voice enrollment ("Записать голос" in the window): the person
+# reads a few sentences aloud and each ~4 s piece with enough speech
+# becomes a profile sample - long, clean samples, unlike the short commands
+# a profile otherwise picks up in passing (which score poorly, see
+# MIN_SPEECH_FOR_VOICE_ID).
+ENROLL_SAMPLES_NEEDED = 3
+ENROLL_TIMEOUT_SECONDS = 45.0
+ENROLL_CHUNK_SECONDS = 4.0
+ENROLL_MIN_SPEECH_SECONDS = 2.0
+
+
+def enrollment_chunks(frames: list[np.ndarray]) -> list[list[np.ndarray]]:
+    """Splits one phrase into ~ENROLL_CHUNK_SECONDS pieces (a short phrase
+    stays whole; the last piece absorbs the remainder) and keeps those with
+    at least ENROLL_MIN_SPEECH_SECONDS of actual speech."""
+    audio = np.concatenate(frames, axis=0).reshape(-1, 1)
+    chunk = int(ENROLL_CHUNK_SECONDS * SAMPLE_RATE)
+    count = max(1, len(audio) // chunk) if len(audio) >= 1.5 * chunk else 1
+    pieces = [audio[i * chunk : (i + 1) * chunk] for i in range(count - 1)] + [audio[(count - 1) * chunk :]]
+    return [[piece] for piece in pieces if speech_seconds([piece], SAMPLE_RATE) >= ENROLL_MIN_SPEECH_SECONDS]
+
+
+def enroll_from_phrase(memory: MemoryStore, name: str, frames: list[np.ndarray]) -> int:
+    """Adds this phrase to name's voice profile; returns how many samples."""
+    added = 0
+    for piece in enrollment_chunks(frames):
+        speaker_id.enroll_resident(memory, name, speaker_id.embed_wav_bytes(frames_to_wav_bytes(piece)))
+        added += 1
+    return added
+
+
+def report_voices(memory: MemoryStore, ui: VoiceUI) -> None:
+    enrolled = speaker_id.load_enrolled_voiceprints(memory)
+    ui.voices([{"name": name, "samples": len(samples)} for name, samples in sorted(enrolled.items())])
 
 
 def build_tts_provider() -> TTSProvider:
@@ -506,14 +543,31 @@ async def run_hands_free(
     """The hands-free loop, shared by the terminal and the window. Besides
     the mic it takes commands from a queue, from whichever front end:
     ("text", message), ("correct", text, utterance_id | None, ask),
-    ("wake",), ("quit",). A correction is saved to the dataset and, with
-    ask=True, also sent to Jarvis as what was really said - Jarvis answered
-    the misheard version. Without a detector (Vosk missing) the name can't
-    be heard - waking up then only happens through ("wake",) or typing."""
+    ("wake",), ("enroll", name), ("enroll_cancel",), ("quit",).
+    A correction is saved to the dataset and, with ask=True, also sent to
+    Jarvis as what was really said - Jarvis answered the misheard version.
+    While enrolling a voice, every phrase goes to that person's voice
+    profile instead of being handled as a command (never to Whisper, never
+    into the speech dataset). Without a detector (Vosk missing) the name
+    can't be heard - waking up then only happens through ("wake",) or
+    typing."""
     ui = session.ui
+    memory = session.agent.memory
     wake_word = parse_wake_words(settings.wake_words)[0].capitalize()
     asleep_hint = f"Скажи «{wake_word}»" if detector else "Нажми на кружок, чтобы говорить"
     state = HandsFreeState(settings.wake_listen_seconds, settings.follow_up_seconds)
+    enrolling: dict | None = None  # {"name", "got", "deadline"} while recording a voice
+
+    def finish_enrollment(status: str) -> None:
+        nonlocal enrolling
+        name, got = enrolling["name"], enrolling["got"]
+        enrolling = None
+        ui.enrollment(name, got, ENROLL_SAMPLES_NEEDED, status)
+        report_voices(memory, ui)
+        if got:
+            session.resident_id = name  # whoever just enrolled is most likely the one talking
+            ui.resident(name)
+        ui.state(SLEEPING, asleep_hint)
     listener = HandsFreeListener(
         SAMPLE_RATE,
         on_level=ui.mic_level,
@@ -533,6 +587,7 @@ async def run_hands_free(
         ui.state(LISTENING, f"Слушаю ещё {settings.follow_up_seconds:.0f} с - можно без имени")
 
     ui.state(SLEEPING, asleep_hint)
+    report_voices(memory, ui)
     try:
         while True:
             while True:
@@ -543,7 +598,16 @@ async def run_hands_free(
                 kind = command[0]
                 if kind == "quit":
                     return
-                if kind == "correct":
+                if kind == "enroll":
+                    name = _existing_resident(memory, command[1]) if command[1].strip() else ""
+                    if name:
+                        enrolling = {"name": name, "got": 0, "deadline": time.monotonic() + ENROLL_TIMEOUT_SECONDS}
+                        ui.enrollment(name, 0, ENROLL_SAMPLES_NEEDED, "started")
+                        ui.state(LISTENING, "Читай фразы с экрана вслух")
+                elif kind == "enroll_cancel":
+                    if enrolling:
+                        finish_enrollment("cancelled")
+                elif kind == "correct":
                     _, text, utterance_id, ask = command
                     if session.utterances is not None and (utterance_id or session.last_utterance_id):
                         apply_correction(session, text, utterance_id)
@@ -556,11 +620,26 @@ async def run_hands_free(
                 elif kind == "text":
                     await respond(handle_text(session, command[1]))
 
+            if enrolling and time.monotonic() > enrolling["deadline"]:
+                finish_enrollment("partial" if enrolling["got"] else "failed")
+
             was_awake = state.is_awake()
             phrase = await asyncio.to_thread(listener.next_phrase, 0.3)
             if phrase is None:
-                if was_awake and not state.is_awake():
+                if was_awake and not state.is_awake() and not enrolling:
                     ui.state(SLEEPING, asleep_hint)
+                continue
+
+            if enrolling:
+                # Same thread on purpose: the SQLite connection belongs to it,
+                # and embedding takes ~30 ms per piece.
+                added = enroll_from_phrase(memory, enrolling["name"], phrase.frames)
+                if added:
+                    enrolling["got"] += added
+                    if enrolling["got"] >= ENROLL_SAMPLES_NEEDED:
+                        finish_enrollment("done")
+                    else:
+                        ui.enrollment(enrolling["name"], enrolling["got"], ENROLL_SAMPLES_NEEDED, "progress")
                 continue
 
             wake_class = None

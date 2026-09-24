@@ -50,6 +50,16 @@ class VoiceUI(Protocol):
         have a voice profile - picking one adds this recording to it."""
         ...
 
+    def voices(self, profiles: list[dict]) -> None:
+        """Everyone with a voice profile: [{"name": ..., "samples": n}]."""
+        ...
+
+    def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
+        """Deliberate voice recording for one person. status: "started",
+        "progress", "done", "partial" (timed out with some samples),
+        "failed" (timed out with none), "cancelled"."""
+        ...
+
 
 class ConsoleUI:
     def __init__(self, ask: Callable[[str], str] = input):
@@ -79,6 +89,20 @@ class ConsoleUI:
 
     def speech_envelope(self, levels: list[float], frame_seconds: float) -> None:
         pass
+
+    def voices(self, profiles: list[dict]) -> None:
+        pass
+
+    def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
+        messages = {
+            "started": f"Записываю голос «{name}»: прочитай вслух несколько фраз, с паузой после каждой.",
+            "progress": f"   записано {collected} из {needed}",
+            "done": f"Готово - голос «{name}» запомнен.",
+            "partial": f"Время вышло - сохранил {collected} из {needed} записей голоса «{name}».",
+            "failed": f"Не услышал речи - голос «{name}» не записан.",
+            "cancelled": "Запись голоса отменена.",
+        }
+        print(messages.get(status, status))
 
     def ask_name(self, prompt: str, known: list[str] = ()) -> str:
         if known:

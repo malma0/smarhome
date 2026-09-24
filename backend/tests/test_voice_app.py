@@ -195,6 +195,12 @@ class _RecordingUI:
         self.events.append(("ask_name", tuple(known)))
         return self.name_answer
 
+    def voices(self, profiles):
+        self.events.append(("voices", tuple(p["name"] for p in profiles)))
+
+    def enrollment(self, name, collected, needed, status):
+        self.events.append(("enroll", name, collected, status))
+
 
 def test_a_voice_phrase_is_shown_with_its_dataset_id_before_jarvis_answers(memory, tmp_path, monkeypatch):
     """The id comes with the phrase itself, so "correct this" is available
@@ -541,6 +547,88 @@ def test_the_question_offers_the_known_voices(memory, monkeypatch):
     identify_or_enroll_speaker(memory, b"wav", "default", 0.7, ui=ui, speech_seconds=3.0)
 
     assert ("ask_name", ("Алиса", "Матвей")) in ui.events
+
+
+# --- deliberate voice enrollment ("Записать голос") ---
+
+
+def _seconds(n):
+    return np.ones((int(n * 16000), 1), dtype=np.int16)
+
+
+def test_enrollment_chunks_split_long_reading_and_drop_pieces_without_enough_speech(monkeypatch):
+    import voice_app
+
+    monkeypatch.setattr(voice_app, "speech_seconds", lambda frames, sr: len(frames[0]) / 16000)  # all "speech"
+    assert [len(c[0]) / 16000 for c in voice_app.enrollment_chunks([_seconds(13)])] == [4.0, 4.0, 5.0]
+    assert [len(c[0]) / 16000 for c in voice_app.enrollment_chunks([_seconds(3)])] == [3.0]  # short stays whole
+    assert voice_app.enrollment_chunks([_seconds(1.5)]) == []  # under 2 s of speech - too little to learn from
+
+
+def _fake_listener_factory(phrases, commands):
+    from app.audio_capture import Phrase
+
+    class _FakeListener:
+        def __init__(self, sample_rate, on_level=None, transcriber_factory=None):
+            self._phrases = [Phrase([p], None) for p in phrases]
+
+        def next_phrase(self, timeout):
+            if self._phrases:
+                return self._phrases.pop(0)
+            commands.put(("quit",))
+            return None
+
+        def mute(self): pass
+        def unmute(self): pass
+        def close(self): pass
+
+    return _FakeListener
+
+
+def test_enrolling_a_voice_turns_the_next_phrases_into_samples_not_commands(memory, tmp_path, monkeypatch):
+    import queue
+
+    import voice_app
+
+    commands = queue.Queue()
+    commands.put(("enroll", "Эля"))
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _fake_listener_factory([_seconds(4)] * 3, commands))
+    monkeypatch.setattr(voice_app, "enroll_from_phrase", lambda mem, name, frames: 1)
+    handled = Mock()
+    monkeypatch.setattr(voice_app, "handle_phrase", handled)
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+
+    enroll_events = [e for e in ui.events if e[0] == "enroll"]
+    assert enroll_events == [
+        ("enroll", "Эля", 0, "started"),
+        ("enroll", "Эля", 1, "progress"),
+        ("enroll", "Эля", 2, "progress"),
+        ("enroll", "Эля", 3, "done"),
+    ]
+    handled.assert_not_called()  # the reading never went to Whisper or the dataset
+    assert session.resident_id == "Эля"
+    assert ("resident", "Эля") in ui.events
+
+
+def test_enrollment_can_be_cancelled(memory, tmp_path, monkeypatch):
+    import queue
+
+    import voice_app
+
+    commands = queue.Queue()
+    commands.put(("enroll", "Эля"))
+    commands.put(("enroll_cancel",))
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _fake_listener_factory([], commands))
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+
+    assert ("enroll", "Эля", 0, "cancelled") in ui.events
+    assert session.resident_id == "default"
 
 
 def test_declining_via_eof_falls_back_to_default(memory, monkeypatch):
