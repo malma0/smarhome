@@ -163,14 +163,26 @@ def _existing_resident(memory: MemoryStore, typed: str) -> str:
     return name
 
 
+def _learn(memory: MemoryStore, resident_id: str, embedding, wav_bytes: bytes) -> None:
+    """Adds a sample to the profile and keeps its audio (see
+    speaker_id.save_sample_audio - the data for rebuilding profiles with a
+    better model and for training a household-specific one)."""
+    speaker_id.enroll_resident(memory, resident_id, embedding)
+    try:
+        speaker_id.save_sample_audio(resident_id, wav_bytes)
+    except OSError:
+        pass  # the profile itself is updated; losing one training clip isn't worth failing over
+
+
 def identify_or_enroll_speaker(
     memory: MemoryStore,
     wav_bytes: bytes,
     default_resident_id: str,
-    threshold: float,
+    threshold: float | None,
     prompt_for_name=None,
     ui: VoiceUI | None = None,
     speech_seconds: float | None = None,
+    embedding=None,
 ) -> str:
     """Voice-based resident ID (app.speaker_id) layered on top of the
     manually-typed session default: tries to recognize the speaker from
@@ -196,11 +208,12 @@ def identify_or_enroll_speaker(
     that wasn't recognized gets better, not a second person."""
     ui = ui or ConsoleUI()
     short = speech_seconds is not None and speech_seconds < MIN_SPEECH_FOR_VOICE_ID
-    try:
-        embedding = speaker_id.embed_wav_bytes(wav_bytes)
-    except Exception as exc:  # noqa: BLE001 - e.g. resemblyzer not installed, clip too short
-        ui.info(f"(распознавание голоса недоступно: {exc})")
-        return default_resident_id
+    if embedding is None:
+        try:
+            embedding = speaker_id.embed_wav_bytes(wav_bytes)
+        except Exception as exc:  # noqa: BLE001 - e.g. the model isn't installed
+            ui.info(f"(распознавание голоса недоступно: {exc})")
+            return default_resident_id
 
     enrolled = speaker_id.load_enrolled_voiceprints(memory)
     match, confident = speaker_id.match_resident(embedding, enrolled, threshold=threshold)
@@ -209,7 +222,7 @@ def identify_or_enroll_speaker(
         # short clip, or a "clearly closer than the other person" call, is
         # good enough to know who's talking but would be a noisy sample.
         if confident and not short:
-            speaker_id.enroll_resident(memory, match, embedding)
+            _learn(memory, match, embedding, wav_bytes)
         ui.resident(match)
         return match
     if short:
@@ -225,7 +238,7 @@ def identify_or_enroll_speaker(
         return default_resident_id
 
     name = _existing_resident(memory, answer)
-    speaker_id.enroll_resident(memory, name, embedding)
+    _learn(memory, name, embedding, wav_bytes)
     report_voices(memory, ui)
     if name in enrolled:
         ui.info(f"Добавил эту запись в голос «{name}» - дальше буду узнавать увереннее.")
@@ -261,7 +274,8 @@ def enroll_from_phrase(memory: MemoryStore, name: str, frames: list[np.ndarray])
     """Adds this phrase to name's voice profile; returns how many samples."""
     added = 0
     for piece in enrollment_chunks(frames):
-        speaker_id.enroll_resident(memory, name, speaker_id.embed_wav_bytes(frames_to_wav_bytes(piece)))
+        wav_bytes = frames_to_wav_bytes(piece)
+        _learn(memory, name, speaker_id.embed_wav_bytes(wav_bytes), wav_bytes)
         added += 1
     return added
 
@@ -410,7 +424,8 @@ async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSessi
         ui.info("Озвучка отключена (JARVIS_TTS_ENABLED=false) - Jarvis будет отвечать только текстом.")
 
     if settings.voice_id_enabled:
-        # ~6s of one-time model setup, off the first phrase's critical path.
+        speaker_id.configure(settings.speaker_model)
+        # One-time model setup (seconds), off the first phrase's critical path.
         threading.Thread(target=_warm_up_speaker_id, daemon=True).start()
 
     utterances = UtteranceLog(settings.dataset_dir) if settings.dataset_enabled else None
@@ -477,16 +492,12 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
         return
     wav_bytes = frames_to_wav_bytes(frames)
 
+    # The voice print is computed on a worker thread while Whisper runs -
+    # ECAPA takes ~0.4 s per phrase on this laptop, and there's no reason
+    # to wait for it before even starting the network call.
+    embedding_task = None
     if settings.voice_id_enabled:
-        session.resident_id = identify_or_enroll_speaker(
-            session.agent.memory,
-            wav_bytes,
-            session.resident_id,
-            settings.voice_id_threshold,
-            prompt_for_name=prompt_for_name,
-            ui=ui,
-            speech_seconds=speech_seconds(frames, SAMPLE_RATE),
-        )
+        embedding_task = asyncio.ensure_future(asyncio.to_thread(speaker_id.embed_wav_bytes, wav_bytes))
 
     ui.state(THINKING, "Распознаю...")
     prompt = build_whisper_prompt(settings.whisper_vocabulary, session.agent.memory.list_resident_ids())
@@ -495,6 +506,24 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
         text = await transcribe(wav_bytes, settings.groq_api_key, settings.groq_base_url, prompt=prompt)
     except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
         ui.info(f"Ошибка распознавания: {exc}")
+
+    if embedding_task is not None:
+        try:
+            embedding = await embedding_task
+        except Exception:  # noqa: BLE001 - identify_or_enroll_speaker retries and reports it
+            embedding = None
+        # Identification itself (database, maybe a question) stays on this
+        # thread - the SQLite connection belongs to it.
+        session.resident_id = identify_or_enroll_speaker(
+            session.agent.memory,
+            wav_bytes,
+            session.resident_id,
+            settings.voice_id_threshold,
+            prompt_for_name=prompt_for_name,
+            ui=ui,
+            speech_seconds=speech_seconds(frames, SAMPLE_RATE),
+            embedding=embedding,
+        )
 
     # Logged right away - before answering - so the phrase can be corrected
     # the moment it's shown, and even when transcription failed or came back
