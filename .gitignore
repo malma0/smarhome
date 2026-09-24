@@ -16,6 +16,10 @@ backend/*.db
 # downloaded Piper voice models (tens of MB, fetched by README instructions)
 backend/voices/
 
+# downloaded speech models - Vosk (wake word / offline STT), ruaccent
+# (Russian stress marks) - fetched by README instructions / on first use
+backend/models/
+
 # voice-cloning reference samples and test generations (personal audio, not
 # source - see README for how these were sourced/created)
 backend/voice_reference/

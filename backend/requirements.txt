@@ -23,6 +23,11 @@ soundfile>=0.12.0
 scikit-learn>=1.3.0
 numba>=0.58.0
 
+# Russian stress marks for the Voicebox/Chatterbox voice (app/tts/stress.py).
+# MIT-licensed. Downloads ~195 MB of models into backend/models/ruaccent on
+# first use.
+ruaccent>=1.5.8
+
 # resemblyzer is deliberately NOT listed above: its declared dependency is
 # the real "webrtcvad" package, which has no prebuilt Windows wheel and
 # needs a C++ compiler to build from source - a plain `pip install -r
