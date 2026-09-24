@@ -157,6 +157,54 @@ def test_ensure_profile_errors_when_the_transcript_file_is_missing(monkeypatch, 
     assert [(c.method, c.url.path) for c in calls] == [("GET", "/profiles")]  # nothing half-created
 
 
+class _FakeStresser:
+    def __init__(self, fail=False):
+        self.fail = fail
+
+    def stress(self, text):
+        if self.fail:
+            raise RuntimeError("ruaccent broke")
+        return text.replace("замок", "замо́к")
+
+
+def test_russian_text_is_stressed_before_it_reaches_voicebox(monkeypatch):
+    transport, calls = _make_transport()
+    _use_transport(monkeypatch, transport)
+    monkeypatch.setattr("app.tts.voicebox.play_wav_bytes", lambda audio: None)
+
+    provider = VoiceboxTTSProvider(profile="JarvisVoice", base_url="http://vb", stresser=_FakeStresser())
+    asyncio.run(provider.speak("висит замок"))
+
+    speak_call = next(c for c in calls if c.url.path == "/speak")
+    assert json.loads(speak_call.content)["text"] == "висит замо́к"
+
+
+def test_stresser_ignored_for_non_russian_voices(monkeypatch):
+    transport, calls = _make_transport()
+    _use_transport(monkeypatch, transport)
+    monkeypatch.setattr("app.tts.voicebox.play_wav_bytes", lambda audio: None)
+
+    provider = VoiceboxTTSProvider(profile="JarvisVoice", base_url="http://vb", language="en", stresser=_FakeStresser())
+    asyncio.run(provider.speak("замок"))
+
+    speak_call = next(c for c in calls if c.url.path == "/speak")
+    assert json.loads(speak_call.content)["text"] == "замок"
+
+
+def test_a_failing_stresser_falls_back_to_plain_text_instead_of_silence(monkeypatch):
+    transport, calls = _make_transport()
+    _use_transport(monkeypatch, transport)
+    played = []
+    monkeypatch.setattr("app.tts.voicebox.play_wav_bytes", lambda audio: played.append(audio))
+
+    provider = VoiceboxTTSProvider(profile="JarvisVoice", base_url="http://vb", stresser=_FakeStresser(fail=True))
+    asyncio.run(provider.speak("висит замок"))
+
+    speak_call = next(c for c in calls if c.url.path == "/speak")
+    assert json.loads(speak_call.content)["text"] == "висит замок"
+    assert played  # still spoke
+
+
 def test_warm_up_generates_but_plays_nothing(monkeypatch):
     transport, calls = _make_transport()
     _use_transport(monkeypatch, transport)

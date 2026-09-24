@@ -155,6 +155,7 @@ class VoiceboxTTSProvider:
         engine: str = "chatterbox",
         language: str = "ru",
         reference_wav: str = "",
+        stresser=None,
     ):
         self._profile = profile
         self._base_url = base_url
@@ -162,6 +163,20 @@ class VoiceboxTTSProvider:
         self._language = language
         self._reference_wav = reference_wav
         self._profile_ready = False
+        # app.tts.stress.RussianStresser (or anything with load()/stress()):
+        # adds the stress marks Chatterbox was trained on but Voicebox's
+        # bundle never adds - see that module for the full story.
+        self._stresser = stresser if language == "ru" else None
+
+    async def _prepare_text(self, text: str) -> str:
+        if self._stresser is None:
+            return text
+        try:
+            return await asyncio.to_thread(self._stresser.stress, text)
+        except Exception as exc:  # noqa: BLE001 - unstressed speech beats no speech
+            print(f"(ударения отключены: {exc})")
+            self._stresser = None
+            return text
 
     async def prepare(self) -> None:
         """Makes sure the voice profile exists - one quick GET, plus a
@@ -179,8 +194,10 @@ class VoiceboxTTSProvider:
     async def warm_up(self) -> None:
         """Generates a throwaway phrase so Voicebox loads its ~3 GB model
         before the first real reply needs it (measured: a cold "Привет."
-        took 39s, a warm "Включаю свет." 25s). voice_app runs this in the
-        background at startup; the audio is discarded."""
+        took 39s, a warm "Включаю свет." 25s). Also loads the stress model
+        (~16s from disk). voice_app runs this in the background at startup;
+        the audio is discarded."""
+        await self._prepare_text("Привет.")
         await synthesize(
             "Привет.",
             base_url=self._base_url,
@@ -192,7 +209,7 @@ class VoiceboxTTSProvider:
     async def speak(self, text: str) -> None:
         await self.prepare()
         audio_bytes = await synthesize(
-            text,
+            await self._prepare_text(text),
             base_url=self._base_url,
             profile=self._profile,
             engine=self._engine,

@@ -203,7 +203,13 @@ def build_tts_provider() -> TTSProvider:
 
         if not settings.voicebox_profile:
             raise ValueError("VOICEBOX_PROFILE must be set in .env (the cloned-voice profile name)")
+        stresser = None
+        if settings.voicebox_russian_stress:
+            from app.tts.stress import RussianStresser
+
+            stresser = RussianStresser(settings.ruaccent_model, workdir="models/ruaccent")
         return VoiceboxTTSProvider(
+            stresser=stresser,
             profile=settings.voicebox_profile,
             base_url=settings.voicebox_base_url,
             engine=settings.voicebox_engine,
