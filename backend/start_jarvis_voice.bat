@@ -56,9 +56,18 @@ exit /b
 :run_jarvis
 rem Voicebox runs windowless, so Windows treats it as background work and
 rem parks it on the slow efficiency cores of this hybrid CPU (Core Ultra 9
-rem 185H) - measured 170s for "Включаю свет." at normal priority vs 25s at
+rem 185H) - measured 170s for a short reply at normal priority vs 25s at
 rem High. Applied whether we just started it or it was already running.
 powershell -NoProfile -Command "Get-Process voicebox-server -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'High' }" >NUL 2>&1
+
+rem Default: the Jarvis window (jarvis_gui.py) via pythonw - no console left
+rem behind; its output goes to jarvis_gui.log. "start_jarvis_voice.bat
+rem terminal" runs the old terminal version (voice_app.py) instead.
+if /I "%~1"=="terminal" goto run_terminal
+start "" ".venv\Scripts\pythonw.exe" jarvis_gui.py
+exit /b
+
+:run_terminal
 echo.
 ".venv\Scripts\python.exe" voice_app.py
 echo.

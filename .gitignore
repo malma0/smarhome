@@ -38,3 +38,6 @@ homeassistant/config/secrets.yaml
 homeassistant/config/deps/
 homeassistant/config/tts/
 homeassistant/config/blueprints/
+
+# Jarvis window log (pythonw has no console - see backend/jarvis_gui.py)
+backend/*.log
