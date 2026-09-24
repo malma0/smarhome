@@ -128,10 +128,10 @@ class WebviewUI:
     def speech_envelope(self, levels: list[float], frame_seconds: float) -> None:
         self._send({"type": "envelope", "levels": levels, "frame_seconds": frame_seconds})
 
-    def ask_name(self, prompt: str) -> str:
+    def ask_name(self, prompt: str, known: list[str] = ()) -> str:
         while not self._names.empty():  # an answer left over from an earlier, abandoned prompt
             self._names.get_nowait()
-        self._send({"type": "ask_name", "prompt": prompt})
+        self._send({"type": "ask_name", "prompt": prompt, "known": list(known)})
         try:
             return self._names.get(timeout=120).strip()
         except queue.Empty:

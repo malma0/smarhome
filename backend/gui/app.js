@@ -259,10 +259,17 @@ function toast(text) {
 
 // ---------------------------------------------------------------- name modal
 
-function askName(prompt) {
+function askName(prompt, known) {
   const modal = $("nameModal");
   const input = $("nameInput");
+  const list = $("nameKnown");
   input.value = "";
+  list.innerHTML = "";
+  known = known || [];
+  $("nameText").textContent = known.length
+    ? "Если это кто-то из них - нажми на имя: запись добавится к голосу, и дальше я буду узнавать увереннее. Или впиши новое имя."
+    : "Как тебя зовут? Запомню голос и дальше буду узнавать сам.";
+  input.placeholder = known.length ? "Новое имя" : "Имя";
   modal.hidden = false;
   input.focus();
   const done = (name) => {
@@ -271,6 +278,14 @@ function askName(prompt) {
     $("nameSkip").onclick = null;
     call("answer_name", name);
   };
+  for (const name of known) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "known-name";
+    btn.textContent = `Это ${name}`;
+    btn.onclick = () => done(name);
+    list.appendChild(btn);
+  }
   $("nameForm").onsubmit = (e) => { e.preventDefault(); done(input.value.trim()); };
   $("nameSkip").onclick = () => done("");
 }
@@ -295,7 +310,7 @@ window.jarvis = {
       case "envelope":
         if (e.levels && e.levels.length) envelope = { levels: e.levels, frameMs: e.frame_seconds * 1000, start: performance.now() };
         break;
-      case "ask_name": askName(e.prompt); break;
+      case "ask_name": askName(e.prompt, e.known); break;
     }
   },
 };
