@@ -136,6 +136,68 @@ def test_reset_drops_a_half_finished_phrase():
     assert _feed_all(segmenter, [0, 0, 0, 0]) == []  # nothing left to finish
 
 
+# --- PhraseStreamer: recognition runs while the phrase is being spoken ---
+
+
+class _RecordingTranscript:
+    instances = []
+
+    def __init__(self):
+        self.fed = []
+        _RecordingTranscript.instances.append(self)
+
+    def feed(self, pcm):
+        self.fed.append(np.frombuffer(pcm, dtype=np.int16)[1])  # the frame's position tag
+
+    def finish(self):
+        return f"heard {len(self.fed)} frames"
+
+
+def _streamer(factory=_RecordingTranscript):
+    from app.audio_capture import PhraseStreamer
+
+    _RecordingTranscript.instances = []
+    return PhraseStreamer(_segmenter(preroll_seconds=0.4), factory)
+
+
+def _frames(pattern):
+    return [np.array([[bit], [i]], dtype=np.int16) for i, bit in enumerate(pattern)]
+
+
+def test_transcriber_gets_exactly_the_phrase_preroll_included_and_its_text_comes_with_it():
+    streamer = _streamer()
+    results = [p for f in _frames([0, 0, 1, 1, 1, 0, 0, 0, 0]) if (p := streamer.feed(f)) is not None]
+
+    [phrase] = results
+    [transcript] = _RecordingTranscript.instances
+    assert [int(f[1, 0]) for f in phrase.frames] == list(transcript.fed)  # same audio, same order
+    assert phrase.text == f"heard {len(phrase.frames)} frames"
+
+
+def test_no_transcriber_between_phrases_and_a_fresh_one_per_phrase():
+    streamer = _streamer()
+    pattern = [0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0]
+    phrases = [p for f in _frames(pattern) if (p := streamer.feed(f)) is not None]
+    assert len(phrases) == 2
+    assert len(_RecordingTranscript.instances) == 2
+
+
+def test_reset_drops_the_half_heard_phrase():
+    streamer = _streamer()
+    for f in _frames([1, 1, 1]):
+        streamer.feed(f)
+    streamer.reset()
+    assert [p for f in _frames([0, 0, 0, 0]) if (p := streamer.feed(f)) is not None] == []
+
+
+def test_without_a_transcriber_phrases_come_with_no_text():
+    from app.audio_capture import PhraseStreamer
+
+    streamer = PhraseStreamer(_segmenter())
+    [phrase] = [p for f in _frames([1, 1, 1, 0, 0, 0]) if (p := streamer.feed(f)) is not None]
+    assert phrase.text is None
+
+
 def test_mic_level_maps_quiet_room_to_0_and_close_speech_to_1():
     from app.audio_capture import mic_level
 

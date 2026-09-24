@@ -2,7 +2,17 @@
 test phrases (lowercase, no punctuation). WakeWordDetector itself needs the
 46 MB model and real audio - checked live, see the module docstring."""
 
-from app.wake_word import DEFAULT_WAKE_WORDS, NONE, WAKE_ONLY, WAKE_WITH_COMMAND, classify, parse_wake_words
+import json
+
+from app.wake_word import (
+    DEFAULT_WAKE_WORDS,
+    NONE,
+    WAKE_ONLY,
+    WAKE_WITH_COMMAND,
+    StreamingTranscript,
+    classify,
+    parse_wake_words,
+)
 
 W = DEFAULT_WAKE_WORDS
 
@@ -41,6 +51,35 @@ def test_darwin_is_not_a_wake_word():
 
 def test_empty_text_is_none():
     assert classify("", W) == NONE
+
+
+class _FakeRecognizer:
+    """Mimics Vosk: segments finalized mid-stream (AcceptWaveform -> True)
+    are only in Result(), never repeated in FinalResult()."""
+
+    def __init__(self, script):
+        self._script = list(script)  # per feed: (finalized?, text)
+        self._last = ""
+
+    def AcceptWaveform(self, data):
+        done, text = self._script.pop(0)
+        self._last = text
+        return done
+
+    def Result(self):
+        return json.dumps({"text": self._last})
+
+    def FinalResult(self):
+        return json.dumps({"text": "включи свет"})
+
+
+def test_streaming_collects_segments_finalized_along_the_way():
+    stream = StreamingTranscript(_FakeRecognizer([(False, ""), (True, "эй джарвис"), (False, "")]))
+    for _ in range(3):
+        stream.feed(b"\x00\x00")
+    text = stream.finish()
+    assert text == "эй джарвис включи свет"
+    assert classify(text, W) == WAKE_WITH_COMMAND
 
 
 def test_parse_wake_words_from_env_value():

@@ -25,7 +25,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -157,7 +157,9 @@ class UtteranceSegmenter:
         preroll_seconds: float = PREROLL_SECONDS,
         start_seconds: float = 0.3,
         start_ratio: float = 0.7,
-        end_silence_seconds: float = 0.8,
+        # 0.8 felt sluggish in real use ("I stopped - it should know right
+        # away"); 0.6 still clears normal pauses between words and at commas.
+        end_silence_seconds: float = 0.6,
         end_ratio: float = 0.9,
         max_seconds: float = 15.0,
     ):
@@ -181,6 +183,15 @@ class UtteranceSegmenter:
         self._start_window.clear()
         self._end_window.clear()
         self._frames: list[np.ndarray] | None = None
+
+    @property
+    def in_phrase(self) -> bool:
+        return self._frames is not None
+
+    @property
+    def current_frames(self) -> list[np.ndarray]:
+        """The phrase so far (pre-roll included) - empty between phrases."""
+        return list(self._frames or [])
 
     @staticmethod
     def _full(window: collections.deque) -> bool:
@@ -226,24 +237,74 @@ def mic_level(frame: np.ndarray) -> float:
 MIC_LEVEL_INTERVAL_SECONDS = 0.08
 
 
+class Phrase(NamedTuple):
+    frames: list[np.ndarray]
+    # What the streaming transcriber heard (the local wake-word check) -
+    # None when no transcriber was given.
+    text: str | None = None
+
+
+def _pcm16(frame: np.ndarray) -> bytes:
+    return frame.reshape(-1).astype(np.int16).tobytes()
+
+
+class PhraseStreamer:
+    """Cuts frames into phrases (UtteranceSegmenter) and, if given a
+    transcriber factory, runs recognition on each phrase *while it's being
+    spoken*: pre-roll and every following frame go in as they arrive, so the
+    text is ready as soon as the phrase ends. Pure logic - no audio device."""
+
+    def __init__(self, segmenter: UtteranceSegmenter, transcriber_factory: Callable[[], Any] | None = None):
+        self._segmenter = segmenter
+        self._factory = transcriber_factory
+        self._transcript = None
+
+    def reset(self) -> None:
+        self._segmenter.reset()
+        self._transcript = None
+
+    def feed(self, frame: np.ndarray) -> Phrase | None:
+        was_in_phrase = self._segmenter.in_phrase
+        frames = self._segmenter.feed(frame)
+        if self._factory is not None:
+            if not was_in_phrase and self._segmenter.in_phrase:
+                self._transcript = self._factory()
+                for earlier in self._segmenter.current_frames:  # pre-roll + this frame
+                    self._transcript.feed(_pcm16(earlier))
+            elif was_in_phrase and self._transcript is not None:
+                self._transcript.feed(_pcm16(frame))
+        if frames is None:
+            return None
+        text = self._transcript.finish() if self._transcript is not None else None
+        self._transcript = None
+        return Phrase(frames, text)
+
+
 class HandsFreeListener:
-    """Mic -> 30 ms frames -> UtteranceSegmenter on its own thread, so audio
-    keeps being captured and cut into phrases while the main loop is busy
-    transcribing or thinking. mute() while Jarvis is working/speaking -
+    """Mic -> 30 ms frames -> PhraseStreamer on its own thread, so audio
+    keeps being captured, cut into phrases and (optionally) transcribed
+    while the main loop is busy. mute() while Jarvis is working/speaking -
     otherwise it would hear its own voice as the next phrase.
 
     on_level, if given, gets the mic loudness (0..1) about 12 times a
-    second while unmuted - for a front end's listening animation."""
+    second while unmuted - for a front end's listening animation.
+    transcriber_factory, if given, makes one streaming transcriber per
+    phrase (WakeWordDetector.stream) - see PhraseStreamer."""
 
-    def __init__(self, sample_rate: int, on_level: Callable[[float], None] | None = None):
+    def __init__(
+        self,
+        sample_rate: int,
+        on_level: Callable[[float], None] | None = None,
+        transcriber_factory: Callable[[], Any] | None = None,
+    ):
         import sounddevice as sd
 
         frame_len = int(sample_rate * VAD_FRAME_SECONDS)
         self._on_level = on_level
         self._last_level_at = 0.0
         self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=500)
-        self._phrases: queue.Queue[list[np.ndarray]] = queue.Queue()
-        self._segmenter = UtteranceSegmenter(make_vad(sample_rate))
+        self._phrases: queue.Queue[Phrase] = queue.Queue()
+        self._streamer = PhraseStreamer(UtteranceSegmenter(make_vad(sample_rate)), transcriber_factory)
         self._muted = threading.Event()
         self._stop = threading.Event()
         self._stream = sd.InputStream(
@@ -266,7 +327,7 @@ class HandsFreeListener:
             except queue.Empty:
                 continue
             if self._muted.is_set():
-                self._segmenter.reset()
+                self._streamer.reset()
                 continue
             if self._on_level is not None:
                 now = time.monotonic()
@@ -276,7 +337,11 @@ class HandsFreeListener:
                         self._on_level(mic_level(frame))
                     except Exception:  # noqa: BLE001 - a UI hiccup must never stop listening
                         pass
-            phrase = self._segmenter.feed(frame)
+            try:
+                phrase = self._streamer.feed(frame)
+            except Exception:  # noqa: BLE001 - a transcriber hiccup must not kill listening
+                self._streamer.reset()
+                continue
             if phrase is not None:
                 self._phrases.put(phrase)
 
@@ -288,7 +353,7 @@ class HandsFreeListener:
         _drain(self._frames)
         self._muted.clear()
 
-    def next_phrase(self, timeout: float | None = None) -> list[np.ndarray] | None:
+    def next_phrase(self, timeout: float | None = None) -> Phrase | None:
         try:
             return self._phrases.get(timeout=timeout)
         except queue.Empty:

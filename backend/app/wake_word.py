@@ -49,20 +49,67 @@ def classify(text: str, wake_words: tuple[str, ...]) -> str:
 
 
 class WakeWordDetector:
+    """One recognizer, reset between phrases and warmed up at startup.
+    Measured: a fresh recognizer per phrase cost ~250 ms to create plus
+    ~750 ms for its first half-second of audio - about a second of stall at
+    the start of every phrase, in the same thread as the voice-activity
+    detection. Reused and warmed up, the same phrase start costs 15-30 ms
+    and a whole 3.6 s phrase ~230 ms.
+
+    Not thread-safe: the shared recognizer serves one phrase at a time
+    (HandsFreeListener only ever feeds one, from its own thread)."""
+
     def __init__(self, model_path: str, wake_words: tuple[str, ...] = DEFAULT_WAKE_WORDS, sample_rate: int = 16000):
-        from vosk import Model, SetLogLevel
+        from vosk import KaldiRecognizer, Model, SetLogLevel
 
         SetLogLevel(-1)  # Kaldi otherwise logs every model component to the console
         self._model = Model(model_path)
-        self._wake_words = wake_words
-        self._sample_rate = sample_rate
+        self.wake_words = wake_words
+        self._recognizer = KaldiRecognizer(self._model, sample_rate)
+        self._warm_up(sample_rate)
+
+    def _warm_up(self, sample_rate: int) -> None:
+        import numpy as np
+
+        noise = np.random.default_rng(0).normal(0, 300, sample_rate).astype(np.int16)
+        self.transcribe(noise.tobytes())
 
     def transcribe(self, pcm16: bytes) -> str:
-        from vosk import KaldiRecognizer
-
-        recognizer = KaldiRecognizer(self._model, self._sample_rate)
-        recognizer.AcceptWaveform(pcm16)
-        return json.loads(recognizer.FinalResult()).get("text", "")
+        stream = self.stream()
+        stream.feed(pcm16)
+        return stream.finish()
 
     def check(self, pcm16: bytes) -> str:
-        return classify(self.transcribe(pcm16), self._wake_words)
+        return classify(self.transcribe(pcm16), self.wake_words)
+
+    def stream(self) -> "StreamingTranscript":
+        self._recognizer.Reset()
+        return StreamingTranscript(self._recognizer)
+
+
+class StreamingTranscript:
+    """Recognition fed while the phrase is still being spoken, so the name
+    check is ready the moment it ends. Checking the finished phrase instead
+    measured ~1.1s for 3.6s of speech - all of it added after the person
+    had already stopped talking.
+
+    Vosk finalizes segments on its own pauses: a True from AcceptWaveform
+    means that segment's text is in Result() and won't reappear in
+    FinalResult(), so every segment has to be collected along the way."""
+
+    def __init__(self, recognizer):
+        self._recognizer = recognizer
+        self._segments: list[str] = []
+
+    def feed(self, pcm16: bytes) -> None:
+        if self._recognizer.AcceptWaveform(pcm16):
+            self._collect(self._recognizer.Result())
+
+    def finish(self) -> str:
+        self._collect(self._recognizer.FinalResult())
+        return " ".join(self._segments)
+
+    def _collect(self, result_json: str) -> None:
+        text = json.loads(result_json).get("text", "").strip()
+        if text:
+            self._segments.append(text)
