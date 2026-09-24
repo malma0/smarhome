@@ -137,24 +137,57 @@ def _samples_to_json(samples: list[np.ndarray]) -> str:
     return json.dumps([sample.tolist() for sample in samples])
 
 
+# Relative decision, for when nobody clears the threshold but one person is
+# clearly closer than the rest. From real recordings: a ~1 s phrase scored
+# only 0.60 against its own (male) speaker's profile - under the threshold
+# - but 0.28-0.45 against female voices. Too little voice to be *sure*
+# who it is, plenty to tell which of two very different voices it's nearer.
+RELATIVE_MIN_SCORE = 0.45
+RELATIVE_MARGIN = 0.10
+
+
+def rank_residents(embedding: np.ndarray, enrolled: dict[str, list[np.ndarray]]) -> list[tuple[str, float]]:
+    """Every enrolled resident with their best score (against any one of
+    their samples, not an average - a single close match is a stronger
+    signal than blending it away), best first."""
+    ranked = [
+        (resident_id, max(cosine_similarity(embedding, sample) for sample in samples))
+        for resident_id, samples in enrolled.items()
+    ]
+    return sorted(ranked, key=lambda item: item[1], reverse=True)
+
+
+def decide(ranked: list[tuple[str, float]], threshold: float = DEFAULT_MATCH_THRESHOLD) -> tuple[str | None, bool]:
+    """(resident, confident). Confident: the best score clears the
+    threshold. Not confident but still chosen: with two or more voices
+    enrolled, the best is at least RELATIVE_MIN_SCORE and beats the
+    runner-up by RELATIVE_MARGIN - good enough to say who's talking, not to
+    teach their profile. Otherwise (None, False): "I don't recognize this
+    voice", never a coin toss between two close candidates."""
+    if not ranked:
+        return None, False
+    best_id, best_score = ranked[0]
+    if best_score >= threshold:
+        return best_id, True
+    if len(ranked) >= 2 and best_score >= RELATIVE_MIN_SCORE and best_score - ranked[1][1] >= RELATIVE_MARGIN:
+        return best_id, False
+    return None, False
+
+
+def match_resident(
+    embedding: np.ndarray, enrolled: dict[str, list[np.ndarray]], threshold: float = DEFAULT_MATCH_THRESHOLD
+) -> tuple[str | None, bool]:
+    return decide(rank_residents(embedding, enrolled), threshold)
+
+
 def identify_resident(
     embedding: np.ndarray,
     enrolled: dict[str, list[np.ndarray]],
     threshold: float = DEFAULT_MATCH_THRESHOLD,
 ) -> str | None:
-    """Best cosine-similarity match (against any one of a resident's stored
-    samples, not an average of them - a single close match is a stronger
-    signal than blending it away) above threshold, or None - a stranger, a
-    too-short/unclear clip, or nobody enrolled yet all look the same here:
-    "I don't recognize this voice", never a low-confidence guess."""
-    best_id, best_score = None, -1.0
-    for resident_id, samples in enrolled.items():
-        score = max(cosine_similarity(embedding, sample) for sample in samples)
-        if score > best_score:
-            best_id, best_score = resident_id, score
-    if best_id is not None and best_score >= threshold:
-        return best_id
-    return None
+    """Confident matches only - see match_resident for the full decision."""
+    resident, confident = match_resident(embedding, enrolled, threshold)
+    return resident if confident else None
 
 
 def load_enrolled_voiceprints(memory: MemoryStore) -> dict[str, list[np.ndarray]]:

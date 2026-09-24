@@ -255,7 +255,7 @@ def test_unknown_voice_asks_through_the_ui(memory, tmp_path, monkeypatch):
     monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value="привет"))
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
-    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: (None, False))
     monkeypatch.setattr("voice_app.speaker_id.enroll_resident", Mock())
     session = _session(memory, tmp_path)
     session.ui = ui = _RecordingUI(name_answer="Матвей")
@@ -395,7 +395,7 @@ def memory(tmp_path):
 def test_confident_match_is_returned_without_prompting(memory, monkeypatch):
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"matvei": ["known"]})
-    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: "matvei")
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: ("matvei", True))
     monkeypatch.setattr("voice_app.speaker_id.enroll_resident", Mock())
     prompt = Mock()
 
@@ -411,7 +411,7 @@ def test_confident_match_also_feeds_the_recording_back_into_the_profile(memory, 
     instead of staying frozen at the first one-shot enrollment."""
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"matvei": ["known"]})
-    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: "matvei")
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: ("matvei", True))
     enroll = Mock()
     monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
 
@@ -423,7 +423,7 @@ def test_confident_match_also_feeds_the_recording_back_into_the_profile(memory, 
 def test_unrecognized_voice_enrolls_under_the_given_name(memory, monkeypatch):
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
-    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: (None, False))
     enrolled_calls = []
     monkeypatch.setattr(
         "voice_app.speaker_id.enroll_resident",
@@ -441,7 +441,7 @@ def test_unrecognized_voice_enrolls_under_the_given_name(memory, monkeypatch):
 def test_unrecognized_voice_declining_to_enroll_falls_back_to_default(memory, monkeypatch):
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
-    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: (None, False))
     enroll = Mock()
     monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
 
@@ -467,7 +467,7 @@ def test_a_broken_embedding_step_falls_back_to_default_without_crashing(memory, 
 def _unmatched_voice(monkeypatch, enrolled=None):
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: enrolled or {})
-    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: (None, False))
     enroll = Mock()
     monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
     return enroll
@@ -490,13 +490,30 @@ def test_short_unrecognized_phrase_keeps_the_last_speaker_without_asking(memory,
 def test_short_phrase_can_still_match_but_does_not_teach_the_profile(memory, monkeypatch):
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"Матвей": ["known"]})
-    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: "Матвей")
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: ("Матвей", True))
     enroll = Mock()
     monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
 
     result = identify_or_enroll_speaker(memory, b"wav", "default", 0.7, speech_seconds=1.0)
 
     assert result == "Матвей"
+    enroll.assert_not_called()
+
+
+def test_a_voice_clearly_closer_to_one_of_two_people_is_theirs_without_asking_or_learning(memory, monkeypatch):
+    """Two people at home: a short phrase that doesn't clear the threshold
+    but is clearly Матвей rather than Эля goes to Матвей - not to whoever
+    spoke last, and not by interrupting with a question."""
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {"Матвей": ["a"], "Эля": ["b"]})
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: ("Матвей", False))
+    enroll = Mock()
+    monkeypatch.setattr("voice_app.speaker_id.enroll_resident", enroll)
+    prompt = Mock()
+
+    for seconds in (0.9, 3.0):  # short or long - a relative call never asks, never teaches
+        assert identify_or_enroll_speaker(memory, b"wav", "Эля", 0.7, prompt_for_name=prompt, speech_seconds=seconds) == "Матвей"
+    prompt.assert_not_called()
     enroll.assert_not_called()
 
 
@@ -529,7 +546,7 @@ def test_the_question_offers_the_known_voices(memory, monkeypatch):
 def test_declining_via_eof_falls_back_to_default(memory, monkeypatch):
     monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
     monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
-    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    monkeypatch.setattr("voice_app.speaker_id.match_resident", lambda emb, enrolled, threshold: (None, False))
 
     def _eof(_prompt):
         raise EOFError

@@ -15,9 +15,11 @@ from app.speaker_id import (
     MAX_ENROLLED_SAMPLES,
     VOICEPRINT_PREFERENCE_KEY,
     cosine_similarity,
+    decide,
     enroll_resident,
     identify_resident,
     load_enrolled_voiceprints,
+    rank_residents,
 )
 
 
@@ -83,6 +85,38 @@ def test_identify_resident_matches_against_the_best_of_several_samples():
     enrolled = {"matvei": [_vec(0.0, 1.0), _vec(0.99, 0.05)]}  # one bad, one great
 
     assert identify_resident(target, enrolled) == "matvei"
+
+
+def test_decide_confident_above_threshold():
+    assert decide([("matvei", 0.78), ("elya", 0.40)], threshold=0.70) == ("matvei", True)
+
+
+def test_decide_picks_the_clearly_closer_voice_without_confidence():
+    """The real short-phrase case: 0.60 to his own profile, 0.45 to a
+    female voice - under the threshold, but clearly him."""
+    assert decide([("matvei", 0.60), ("elya", 0.45)], threshold=0.70) == ("matvei", False)
+
+
+def test_decide_refuses_a_coin_toss_between_close_candidates():
+    assert decide([("matvei", 0.60), ("elya", 0.55)], threshold=0.70) == (None, False)
+
+
+def test_decide_needs_two_voices_to_compare():
+    assert decide([("matvei", 0.60)], threshold=0.70) == (None, False)
+
+
+def test_decide_rejects_a_voice_unlike_anyone():
+    assert decide([("matvei", 0.40), ("elya", 0.20)], threshold=0.70) == (None, False)
+
+
+def test_decide_with_nobody_enrolled():
+    assert decide([], threshold=0.70) == (None, False)
+
+
+def test_rank_orders_by_each_residents_best_sample():
+    target = _vec(1.0, 0.0)
+    ranked = rank_residents(target, {"a": [_vec(0.0, 1.0), _vec(1.0, 0.1)], "b": [_vec(0.7, 0.7)]})
+    assert [r for r, _ in ranked] == ["a", "b"]
 
 
 def test_enroll_resident_stores_and_loads_back(memory):

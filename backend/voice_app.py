@@ -203,9 +203,12 @@ def identify_or_enroll_speaker(
         return default_resident_id
 
     enrolled = speaker_id.load_enrolled_voiceprints(memory)
-    match = speaker_id.identify_resident(embedding, enrolled, threshold=threshold)
+    match, confident = speaker_id.match_resident(embedding, enrolled, threshold=threshold)
     if match:
-        if not short:
+        # Only a confident match on enough speech teaches the profile - a
+        # short clip, or a "clearly closer than the other person" call, is
+        # good enough to know who's talking but would be a noisy sample.
+        if confident and not short:
             speaker_id.enroll_resident(memory, match, embedding)
         ui.resident(match)
         return match
