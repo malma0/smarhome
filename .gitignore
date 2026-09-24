@@ -28,6 +28,10 @@ backend/voice_reference/
 # own voices - personal data, never leaves the machine)
 backend/dataset/
 
+# audio behind every voice-profile sample (residents' own voices - personal
+# data), kept to rebuild profiles and train a household speaker model
+backend/voiceprints/
+
 # home assistant runtime state (not our mock config)
 homeassistant/config/.storage/
 homeassistant/config/.ha_run.lock

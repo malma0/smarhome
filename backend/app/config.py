@@ -37,7 +37,8 @@ class Settings:
     ruaccent_model: str
     tts_enabled: bool
     voice_id_enabled: bool
-    voice_id_threshold: float
+    voice_id_threshold: float | None
+    speaker_model: str
     whisper_vocabulary: str
     dataset_enabled: bool
     dataset_dir: str
@@ -80,7 +81,9 @@ def load_settings() -> Settings:
         ruaccent_model=os.environ.get("RUACCENT_MODEL", "tiny2.1"),
         tts_enabled=os.environ.get("JARVIS_TTS_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
         voice_id_enabled=os.environ.get("VOICE_ID_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
-        voice_id_threshold=float(os.environ.get("VOICE_ID_THRESHOLD", "0.70")),
+        # Empty = the chosen model's own measured threshold (app.speaker_id.MODELS).
+        voice_id_threshold=float(os.environ["VOICE_ID_THRESHOLD"]) if os.environ.get("VOICE_ID_THRESHOLD") else None,
+        speaker_model=os.environ.get("SPEAKER_MODEL", "ecapa").strip().lower(),
         whisper_vocabulary=os.environ.get("WHISPER_VOCABULARY", ""),
         dataset_enabled=os.environ.get("JARVIS_DATASET_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
         dataset_dir=os.environ.get("JARVIS_DATASET_DIR", "dataset"),

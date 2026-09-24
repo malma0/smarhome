@@ -13,7 +13,13 @@ edge-tts>=7.0.0
 pygame>=2.6.0
 piper-tts>=1.3.0
 
-# voice-based resident identification (app/speaker_id.py) - everything
+# Speaker identification, default model (SPEAKER_MODEL=ecapa): ECAPA-TDNN
+# via SpeechBrain, Apache-2.0; the ~89 MB model downloads into
+# backend/models/ on first use. Pulls torchaudio 2.11 - the newest that
+# exists - which works with the torch installed here (2.13), verified.
+speechbrain>=1.1
+
+# voice-based resident identification, older model (SPEAKER_MODEL=resemblyzer) - everything
 # resemblyzer actually needs, EXCEPT resemblyzer itself (see below for why).
 webrtcvad-wheels>=2.0.14
 librosa>=0.9.1
