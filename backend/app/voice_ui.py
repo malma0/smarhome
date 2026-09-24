@@ -23,11 +23,11 @@ SPEAKING = "speaking"
 class VoiceUI(Protocol):
     def state(self, state: str, detail: str = "") -> None: ...
 
-    def user_said(self, text: str, voice: bool) -> None: ...
-
-    def utterance_saved(self, utterance_id: str) -> None:
-        """The last user message was stored in the training dataset under
-        this id - lets a front end offer "correct this" on that message."""
+    def user_said(self, text: str, voice: bool, utterance_id: str | None = None) -> None:
+        """text is "" when a spoken phrase couldn't be made out at all -
+        still shown, so it can be corrected. utterance_id: where the phrase
+        is stored in the training dataset (None for typed messages or with
+        the dataset off) - lets a front end offer "correct this" right away."""
         ...
 
     def jarvis_said(self, text: str, actions: list[dict]) -> None: ...
@@ -58,11 +58,8 @@ class ConsoleUI:
         if detail:
             print(detail)
 
-    def user_said(self, text: str, voice: bool) -> None:
-        print(f"you> {text}")
-
-    def utterance_saved(self, utterance_id: str) -> None:
-        pass
+    def user_said(self, text: str, voice: bool, utterance_id: str | None = None) -> None:
+        print(f"you> {text}" if text else "(не удалось разобрать речь - если я ошибся, впиши, что ты сказал)")
 
     def jarvis_said(self, text: str, actions: list[dict]) -> None:
         print(f"jarvis> {text}")

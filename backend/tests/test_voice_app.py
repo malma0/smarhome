@@ -173,11 +173,8 @@ class _RecordingUI:
     def state(self, state, detail=""):
         self.events.append(("state", state))
 
-    def user_said(self, text, voice):
-        self.events.append(("user", text, voice))
-
-    def utterance_saved(self, utterance_id):
-        self.events.append(("saved", utterance_id))
+    def user_said(self, text, voice, utterance_id=None):
+        self.events.append(("user", text, voice, utterance_id))
 
     def jarvis_said(self, text, actions):
         self.events.append(("jarvis", text))
@@ -199,7 +196,9 @@ class _RecordingUI:
         return self.name_answer
 
 
-def test_a_voice_phrase_reports_thinking_user_jarvis_then_saved(memory, tmp_path, monkeypatch):
+def test_a_voice_phrase_is_shown_with_its_dataset_id_before_jarvis_answers(memory, tmp_path, monkeypatch):
+    """The id comes with the phrase itself, so "correct this" is available
+    the moment it's on screen - not only after a possibly long reply."""
     import voice_app
 
     _quiet_settings(monkeypatch)
@@ -210,10 +209,25 @@ def test_a_voice_phrase_reports_thinking_user_jarvis_then_saved(memory, tmp_path
 
     asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
 
-    kinds = [e[0] for e in ui.events]
-    assert kinds == ["state", "user", "state", "jarvis", "saved"]
-    assert ui.events[1] == ("user", "включи свет", True)
-    assert ui.events[4] == ("saved", session.last_utterance_id)
+    assert [e[0] for e in ui.events] == ["state", "user", "state", "jarvis"]
+    assert ui.events[1] == ("user", "включи свет", True, session.last_utterance_id)
+    [record] = [json.loads(l) for l in (tmp_path / "ds" / "metadata.jsonl").read_text("utf-8").splitlines()]
+    assert record["response"] == "Включаю."  # filled in after the answer
+
+
+def test_an_unrecognized_phrase_still_gets_a_bubble_to_correct_but_no_answer(memory, tmp_path, monkeypatch):
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value=""))
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    assert ("user", "", True, session.last_utterance_id) in ui.events
+    session.agent.chat.assert_not_called()
 
 
 def test_a_typed_message_is_answered_but_not_logged_as_speech(memory, tmp_path, monkeypatch):
@@ -225,7 +239,7 @@ def test_a_typed_message_is_answered_but_not_logged_as_speech(memory, tmp_path, 
 
     asyncio.run(voice_app.handle_text(session, "который час?"))
 
-    assert ("user", "который час?", False) in ui.events
+    assert ("user", "который час?", False, None) in ui.events
     assert ("jarvis", "Включаю.") in ui.events
     assert session.utterances.stats()["utterances"] == 0  # no audio -> nothing for the speech dataset
 

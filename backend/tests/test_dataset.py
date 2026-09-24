@@ -69,6 +69,17 @@ def test_correct_sets_corrected_text_on_that_utterance_only(tmp_path):
     assert records[1]["corrected_text"] is None
 
 
+def test_response_can_be_filled_in_after_logging(tmp_path):
+    log = UtteranceLog(tmp_path)
+    utterance_id = log.log(wav_bytes=_wav(0.5), resident_id="default", transcript="сколько времени")
+
+    assert log.set_response(utterance_id, "Сейчас 15:30.") is True
+
+    [record] = _records(tmp_path)
+    assert record["response"] == "Сейчас 15:30."
+    assert record["transcript"] == "сколько времени"
+
+
 def test_correct_unknown_id_returns_false_and_changes_nothing(tmp_path):
     log = UtteranceLog(tmp_path)
     log.log(wav_bytes=_wav(0.5), resident_id="default", transcript="привет")

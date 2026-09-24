@@ -68,13 +68,21 @@ class UtteranceLog:
         return [json.loads(line) for line in self._metadata.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     def correct(self, utterance_id: str, corrected_text: str) -> bool:
+        return self._update(utterance_id, corrected_text=corrected_text)
+
+    def set_response(self, utterance_id: str, response: str | None) -> bool:
+        """The phrase is logged as soon as it's transcribed (so it can be
+        corrected right away), the reply filled in once there is one."""
+        return self._update(utterance_id, response=response)
+
+    def _update(self, utterance_id: str, **fields) -> bool:
         """Rewrites the whole metadata file - fine at the scale of one
         household's recordings, and keeps the file a plain audiofolder
         metadata.jsonl rather than an append-only log of edits."""
         records = self._read_records()
         for record in records:
             if record["id"] == utterance_id:
-                record["corrected_text"] = corrected_text
+                record.update(fields)
                 break
         else:
             return False

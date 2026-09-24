@@ -46,7 +46,6 @@ import wave
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
 import numpy as np
 
 from app import speaker_id
@@ -55,11 +54,12 @@ from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech
 from app.config import settings
 from app.dataset import UtteranceLog
 from app.hands_free import CUE, IGNORE, HandsFreeState
+from app.http_client import shared_client
 from app.memory import MemoryStore
 from app.tts.base import TTSProvider
 from app.tts.text import text_for_speech
 from app.voice_ui import LISTENING, SLEEPING, SPEAKING, THINKING, ConsoleUI, VoiceUI
-from app.wake_word import WakeWordDetector, parse_wake_words
+from app.wake_word import WakeWordDetector, classify, parse_wake_words
 
 SAMPLE_RATE = 16000
 WHISPER_MODEL = "whisper-large-v3-turbo"
@@ -122,16 +122,17 @@ def build_whisper_prompt(extra_vocabulary: str, resident_ids: list[str]) -> str:
 
 
 async def transcribe(wav_bytes: bytes, api_key: str, base_url: str, prompt: str = "") -> str:
+    """Reuses one connection (app.http_client) - a fresh client per phrase
+    measured 2.0-2.4 s for this call, a reused one 0.23-0.31 s."""
     data = {"model": WHISPER_MODEL, "language": "ru"}
     if prompt:
         data["prompt"] = prompt
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            f"{base_url}/audio/transcriptions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": ("speech.wav", wav_bytes, "audio/wav")},
-            data=data,
-        )
+    response = await shared_client().post(
+        f"{base_url}/audio/transcriptions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        files={"file": ("speech.wav", wav_bytes, "audio/wav")},
+        data=data,
+    )
     response.raise_for_status()
     return response.json()["text"].strip()
 
@@ -331,6 +332,10 @@ async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSessi
     else:
         ui.info("Озвучка отключена (JARVIS_TTS_ENABLED=false) - Jarvis будет отвечать только текстом.")
 
+    if settings.voice_id_enabled:
+        # ~6s of one-time model setup, off the first phrase's critical path.
+        threading.Thread(target=_warm_up_speaker_id, daemon=True).start()
+
     utterances = UtteranceLog(settings.dataset_dir) if settings.dataset_enabled else None
     if utterances:
         stats = utterances.stats()
@@ -347,6 +352,13 @@ async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSessi
         resident_id=resident_id,
         ui=ui,
     )
+
+
+def _warm_up_speaker_id() -> None:
+    try:
+        speaker_id.warm_up()
+    except Exception:  # noqa: BLE001 - identify_or_enroll_speaker reports real failures itself
+        pass
 
 
 def build_wake_detector(ui: VoiceUI) -> WakeWordDetector | None:
@@ -406,30 +418,33 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
         ui.info(f"Ошибка распознавания: {exc}")
 
-    response: str | None = None
-    if text:
-        ui.user_said(text, voice=True)
-        response = await _answer(session, text)
-    elif text == "":
-        ui.info("(не удалось разобрать речь)")
-
-    # Logged even when transcription failed or came back empty - the audio is
-    # real speech (it passed the VAD check) and can still be corrected by
-    # hand into a usable training example.
+    # Logged right away - before answering - so the phrase can be corrected
+    # the moment it's shown, and even when transcription failed or came back
+    # empty: the audio is real speech (it passed the VAD check) and a typed
+    # correction turns it into a usable training example.
+    utterance_id: str | None = None
     if session.utterances:
-        session.last_utterance_id = session.utterances.log(
-            wav_bytes=wav_bytes, resident_id=session.resident_id, transcript=text, response=response
+        utterance_id = session.utterances.log(
+            wav_bytes=wav_bytes, resident_id=session.resident_id, transcript=text
         )
-        ui.utterance_saved(session.last_utterance_id)
+        session.last_utterance_id = utterance_id
+    ui.user_said(text or "", voice=True, utterance_id=utterance_id)
+    if not text:
+        return
 
-    if text and settings.tts_enabled:
+    response = await _answer(session, text)
+    if utterance_id:
+        session.utterances.set_response(utterance_id, response)
+    if settings.tts_enabled:
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=ui)
 
 
-async def handle_text(session: VoiceSession, text: str) -> None:
-    """A typed message (the window's input box) - no audio, so nothing to
-    identify or log to the speech dataset."""
-    session.ui.user_said(text, voice=False)
+async def handle_text(session: VoiceSession, text: str, echo: bool = True) -> None:
+    """A typed message (the window's input box), or a corrected phrase being
+    asked again (echo=False - its bubble is already on screen). No audio, so
+    nothing to identify or log to the speech dataset."""
+    if echo:
+        session.ui.user_said(text, voice=False)
     response = await _answer(session, text)
     if settings.tts_enabled:
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=session.ui)
@@ -444,23 +459,27 @@ def _play_listening_cue() -> None:
         pass
 
 
-def _to_pcm16(frames: list[np.ndarray]) -> bytes:
-    return np.concatenate(frames, axis=0).reshape(-1).astype(np.int16).tobytes()
-
-
 async def run_hands_free(
     session: VoiceSession, detector: WakeWordDetector | None, commands: "queue.Queue[tuple]"
 ) -> None:
     """The hands-free loop, shared by the terminal and the window. Besides
     the mic it takes commands from a queue, from whichever front end:
-    ("text", message), ("correct", text, utterance_id | None), ("wake",),
-    ("quit",). Without a detector (Vosk missing) the name can't be heard -
-    waking up then only happens through ("wake",) or typing."""
+    ("text", message), ("correct", text, utterance_id | None, ask),
+    ("wake",), ("quit",). A correction is saved to the dataset and, with
+    ask=True, also sent to Jarvis as what was really said - Jarvis answered
+    the misheard version. Without a detector (Vosk missing) the name can't
+    be heard - waking up then only happens through ("wake",) or typing."""
     ui = session.ui
     wake_word = parse_wake_words(settings.wake_words)[0].capitalize()
     asleep_hint = f"Скажи «{wake_word}»" if detector else "Нажми на кружок, чтобы говорить"
     state = HandsFreeState(settings.wake_listen_seconds, settings.follow_up_seconds)
-    listener = HandsFreeListener(SAMPLE_RATE, on_level=ui.mic_level)
+    listener = HandsFreeListener(
+        SAMPLE_RATE,
+        on_level=ui.mic_level,
+        # The name check runs while the phrase is still being spoken - see
+        # app.wake_word.StreamingTranscript.
+        transcriber_factory=detector.stream if detector else None,
+    )
 
     async def respond(work) -> None:
         listener.mute()  # don't hear our own reply as the next phrase
@@ -484,7 +503,11 @@ async def run_hands_free(
                 if kind == "quit":
                     return
                 if kind == "correct":
-                    apply_correction(session, command[1], command[2])
+                    _, text, utterance_id, ask = command
+                    if session.utterances is not None and (utterance_id or session.last_utterance_id):
+                        apply_correction(session, text, utterance_id)
+                    if ask:
+                        await respond(handle_text(session, text, echo=False))
                 elif kind == "wake":
                     state.force_wake()
                     await asyncio.to_thread(_play_listening_cue)
@@ -502,7 +525,7 @@ async def run_hands_free(
             wake_class = None
             if not state.is_awake() and detector is not None:
                 # Local only - a phrase without the name never goes further.
-                wake_class = await asyncio.to_thread(detector.check, _to_pcm16(phrase))
+                wake_class = classify(phrase.text or "", detector.wake_words)
             action = state.on_phrase(wake_class)
             if action == IGNORE:
                 continue
@@ -510,7 +533,7 @@ async def run_hands_free(
                 await asyncio.to_thread(_play_listening_cue)
                 ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")
                 continue
-            await respond(handle_phrase(session, phrase))
+            await respond(handle_phrase(session, phrase.frames))
     finally:
         listener.close()
 
@@ -537,7 +560,7 @@ class ConsoleLineReader:
             if self._awaiting_name.is_set():
                 self._names.put(line)
             elif line:
-                self._commands.put(("correct", line, None))
+                self._commands.put(("correct", line, None, True))
 
     def ask_name(self, prompt: str) -> str:
         print(prompt, end="", flush=True)
