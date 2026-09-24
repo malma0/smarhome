@@ -157,6 +157,31 @@ def test_ensure_profile_errors_when_the_transcript_file_is_missing(monkeypatch, 
     assert [(c.method, c.url.path) for c in calls] == [("GET", "/profiles")]  # nothing half-created
 
 
+def test_warm_up_generates_but_plays_nothing(monkeypatch):
+    transport, calls = _make_transport()
+    _use_transport(monkeypatch, transport)
+    played = []
+    monkeypatch.setattr("app.tts.voicebox.play_wav_bytes", lambda audio: played.append(audio))
+
+    provider = VoiceboxTTSProvider(profile="JarvisVoice", base_url="http://127.0.0.1:8000")
+    asyncio.run(provider.warm_up())
+
+    assert "/speak" in [c.url.path for c in calls]
+    assert played == []
+
+
+def test_prepare_then_speak_checks_the_profile_once(monkeypatch):
+    transport, calls = _make_transport()
+    _use_transport(monkeypatch, transport)
+    monkeypatch.setattr("app.tts.voicebox.play_wav_bytes", lambda audio: None)
+
+    provider = VoiceboxTTSProvider(profile="JarvisVoice", base_url="http://127.0.0.1:8000")
+    asyncio.run(provider.prepare())
+    asyncio.run(provider.speak("раз"))
+
+    assert sum(1 for c in calls if c.url.path == "/profiles") == 1
+
+
 def test_provider_checks_the_profile_only_once_across_replies(monkeypatch):
     transport, calls = _make_transport()
     _use_transport(monkeypatch, transport)

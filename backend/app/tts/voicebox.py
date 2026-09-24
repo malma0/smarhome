@@ -163,7 +163,9 @@ class VoiceboxTTSProvider:
         self._reference_wav = reference_wav
         self._profile_ready = False
 
-    async def speak(self, text: str) -> None:
+    async def prepare(self) -> None:
+        """Makes sure the voice profile exists - one quick GET, plus a
+        one-time upload if it's missing. Done once per provider."""
         if not self._profile_ready:
             await ensure_profile(
                 base_url=self._base_url,
@@ -174,6 +176,21 @@ class VoiceboxTTSProvider:
             )
             self._profile_ready = True
 
+    async def warm_up(self) -> None:
+        """Generates a throwaway phrase so Voicebox loads its ~3 GB model
+        before the first real reply needs it (measured: a cold "Привет."
+        took 39s, a warm "Включаю свет." 25s). voice_app runs this in the
+        background at startup; the audio is discarded."""
+        await synthesize(
+            "Привет.",
+            base_url=self._base_url,
+            profile=self._profile,
+            engine=self._engine,
+            language=self._language,
+        )
+
+    async def speak(self, text: str) -> None:
+        await self.prepare()
         audio_bytes = await synthesize(
             text,
             base_url=self._base_url,

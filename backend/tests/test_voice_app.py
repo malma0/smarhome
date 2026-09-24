@@ -20,6 +20,7 @@ from voice_app import (
     frames_to_wav_bytes,
     identify_or_enroll_speaker,
     transcribe,
+    warm_up_in_background,
 )
 
 
@@ -73,6 +74,54 @@ def test_transcribe_sends_the_vocabulary_prompt_when_given(monkeypatch):
     asyncio.run(transcribe(b"wav", api_key="key", base_url="https://x", prompt="Джарвис, Майнкрафт"))
 
     assert mock_post.call_args.kwargs["data"]["prompt"] == "Джарвис, Майнкрафт"
+
+
+# --- warm_up_in_background ---
+
+
+def test_warm_up_runs_prepare_then_warm_up_on_another_thread():
+    import threading
+
+    warmed = threading.Event()
+    calls = []
+
+    class _Provider:
+        async def prepare(self):
+            calls.append(("prepare", threading.current_thread().name))
+
+        async def warm_up(self):
+            calls.append(("warm_up", threading.current_thread().name))
+            warmed.set()
+
+    asyncio.run(warm_up_in_background(_Provider()))
+
+    assert warmed.wait(timeout=5)
+    main = threading.main_thread().name
+    assert calls[0] == ("prepare", main)  # before the thread: nothing can race profile creation
+    assert calls[1][0] == "warm_up" and calls[1][1] != main
+
+
+def test_warm_up_skipped_when_prepare_fails():
+    warm = Mock()
+
+    class _Provider:
+        async def prepare(self):
+            raise ConnectionError("voicebox not running")
+
+        async def warm_up(self):
+            warm()
+
+    asyncio.run(warm_up_in_background(_Provider()))  # must not raise
+
+    warm.assert_not_called()
+
+
+def test_warm_up_is_a_no_op_for_providers_without_it():
+    class _FastProvider:  # e.g. edge/sapi - nothing to warm up
+        async def speak(self, text):
+            pass
+
+    asyncio.run(warm_up_in_background(_FastProvider()))  # must not raise
 
 
 # --- build_whisper_prompt ---

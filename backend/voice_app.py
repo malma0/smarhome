@@ -30,6 +30,7 @@ Usage: python voice_app.py
 
 import asyncio
 import io
+import threading
 import time
 import wave
 
@@ -43,6 +44,7 @@ from app.config import settings
 from app.dataset import UtteranceLog
 from app.memory import MemoryStore
 from app.tts.base import TTSProvider
+from app.tts.text import text_for_speech
 
 SAMPLE_RATE = 16000
 WHISPER_MODEL = "whisper-large-v3-turbo"
@@ -213,6 +215,33 @@ def build_tts_provider() -> TTSProvider:
     )
 
 
+async def warm_up_in_background(provider: TTSProvider) -> None:
+    """For providers with a slow cold start (Voicebox loads a ~3 GB model
+    on its first generation): prepare() runs here - it's quick, and doing it
+    before the thread starts means nothing can race to create the voice
+    profile twice - then warm_up() runs on its own thread and event loop.
+    A background asyncio task wouldn't work: the main loop blocks in input()
+    between turns, so the task would never get to run."""
+    prepare = getattr(provider, "prepare", None)
+    warm_up = getattr(provider, "warm_up", None)
+    if prepare is None or warm_up is None:
+        return
+    try:
+        await prepare()
+    except Exception as exc:  # noqa: BLE001 - speak() retries and falls back on its own
+        print(f"(голос {settings.tts_provider} пока недоступен: {exc})")
+        return
+
+    def _run() -> None:
+        try:
+            asyncio.run(warm_up())
+        except Exception:  # noqa: BLE001 - a failed warm-up just means a slower first reply
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+    print("(голос прогревается в фоне - если заговорить сразу, первый ответ будет дольше)")
+
+
 async def speak(primary: TTSProvider, fallback: TTSProvider, text: str) -> None:
     """No timeout wraps the whole call on purpose: playback duration alone
     can legitimately exceed any fixed number for a long reply, and cutting
@@ -249,6 +278,7 @@ async def main() -> None:
         except Exception as exc:  # noqa: BLE001 - e.g. piper model files not downloaded yet
             print(f"Не удалось запустить {settings.tts_provider}: {exc}\nИспользую офлайн-голос вместо него.")
             tts_provider = tts_fallback
+        await warm_up_in_background(tts_provider)
     else:
         print("Озвучка отключена (JARVIS_TTS_ENABLED=false) - Jarvis будет отвечать только текстом.\n")
 
@@ -312,7 +342,7 @@ async def main() -> None:
             response: str | None = None
             if text:
                 print(f"you> {text}")
-                result = await agent.chat(session_id, resident_id, text)
+                result = await agent.chat(session_id, resident_id, text, spoken=settings.tts_enabled)
                 response = result["response"]
                 print(f"jarvis> {response}")
                 for action in result["actions"]:
@@ -330,7 +360,7 @@ async def main() -> None:
                 )
 
             if text and settings.tts_enabled:
-                await speak(tts_provider, tts_fallback, response)
+                await speak(tts_provider, tts_fallback, text_for_speech(response))
     finally:
         recorder.close()
 
