@@ -54,6 +54,11 @@ del "%TEMP%\jarvis_vb_health.txt" >NUL 2>NUL
 exit /b
 
 :run_jarvis
+rem Voicebox runs windowless, so Windows treats it as background work and
+rem parks it on the slow efficiency cores of this hybrid CPU (Core Ultra 9
+rem 185H) - measured 170s for "Включаю свет." at normal priority vs 25s at
+rem High. Applied whether we just started it or it was already running.
+powershell -NoProfile -Command "Get-Process voicebox-server -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'High' }" >NUL 2>&1
 echo.
 ".venv\Scripts\python.exe" voice_app.py
 echo.
