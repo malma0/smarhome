@@ -162,6 +162,133 @@ def test_correction_before_any_phrase_changes_nothing(memory, tmp_path):
     assert session.utterances.stats() == {"utterances": 0, "minutes": 0.0, "corrected": 0}
 
 
+# --- what reaches the UI (the desktop window renders exactly these events) ---
+
+
+class _RecordingUI:
+    def __init__(self, name_answer=""):
+        self.events = []
+        self.name_answer = name_answer
+
+    def state(self, state, detail=""):
+        self.events.append(("state", state))
+
+    def user_said(self, text, voice):
+        self.events.append(("user", text, voice))
+
+    def utterance_saved(self, utterance_id):
+        self.events.append(("saved", utterance_id))
+
+    def jarvis_said(self, text, actions):
+        self.events.append(("jarvis", text))
+
+    def info(self, text):
+        self.events.append(("info", text))
+
+    def resident(self, name):
+        self.events.append(("resident", name))
+
+    def mic_level(self, level):
+        pass
+
+    def speech_envelope(self, levels, frame_seconds):
+        pass
+
+    def ask_name(self, prompt):
+        self.events.append(("ask_name",))
+        return self.name_answer
+
+
+def test_a_voice_phrase_reports_thinking_user_jarvis_then_saved(memory, tmp_path, monkeypatch):
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value="включи свет"))
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    kinds = [e[0] for e in ui.events]
+    assert kinds == ["state", "user", "state", "jarvis", "saved"]
+    assert ui.events[1] == ("user", "включи свет", True)
+    assert ui.events[4] == ("saved", session.last_utterance_id)
+
+
+def test_a_typed_message_is_answered_but_not_logged_as_speech(memory, tmp_path, monkeypatch):
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.handle_text(session, "который час?"))
+
+    assert ("user", "который час?", False) in ui.events
+    assert ("jarvis", "Включаю.") in ui.events
+    assert session.utterances.stats()["utterances"] == 0  # no audio -> nothing for the speech dataset
+
+
+def test_unknown_voice_asks_through_the_ui(memory, tmp_path, monkeypatch):
+    import dataclasses
+
+    import voice_app
+
+    monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, tts_enabled=False))
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value="привет"))
+    monkeypatch.setattr("voice_app.speaker_id.embed_wav_bytes", lambda wav: "embedding")
+    monkeypatch.setattr("voice_app.speaker_id.load_enrolled_voiceprints", lambda mem: {})
+    monkeypatch.setattr("voice_app.speaker_id.identify_resident", lambda emb, enrolled, threshold: None)
+    monkeypatch.setattr("voice_app.speaker_id.enroll_resident", Mock())
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI(name_answer="Матвей")
+
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    assert ("ask_name",) in ui.events
+    assert ("resident", "Матвей") in ui.events
+    assert session.resident_id == "Матвей"
+
+
+def test_correction_can_target_a_specific_earlier_phrase(memory, tmp_path, monkeypatch):
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(side_effect=["первая", "вторая"]))
+    session = _session(memory, tmp_path)
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+    first_id = session.last_utterance_id
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    voice_app.apply_correction(session, "первая, исправленная", first_id)
+
+    lines = [json.loads(l) for l in (tmp_path / "ds" / "metadata.jsonl").read_text("utf-8").splitlines()]
+    assert lines[0]["corrected_text"] == "первая, исправленная"
+    assert lines[1]["corrected_text"] is None
+
+
+def test_speak_waits_for_real_playback_before_showing_speaking_when_the_voice_announces_it():
+    import voice_app
+
+    class _AnnouncingVoice:
+        announces_playback = True
+
+        async def speak(self, text):
+            pass
+
+    class _PlainVoice:
+        async def speak(self, text):
+            pass
+
+    for voice, expected in ((_AnnouncingVoice(), voice_app.THINKING), (_PlainVoice(), voice_app.SPEAKING)):
+        ui = _RecordingUI()
+        asyncio.run(voice_app.speak(voice, _PlainVoice(), "привет", ui=ui))
+        assert ui.events[0] == ("state", expected)
+
+
 # --- warm_up_in_background ---
 
 
