@@ -19,6 +19,7 @@ here.
 
 import asyncio
 import json
+from pathlib import Path
 
 import httpx
 
@@ -93,6 +94,58 @@ def play_wav_bytes(audio_bytes: bytes) -> None:
     sd.wait()
 
 
+async def ensure_profile(
+    *,
+    base_url: str,
+    profile: str,
+    reference_wav: str,
+    engine: str = "chatterbox",
+    language: str = "ru",
+) -> None:
+    """Creates the voice profile from reference_wav if the running Voicebox
+    doesn't have one by that name yet. The voice is defined by the WAV in
+    this repo's voice_reference/ folder, not only by whatever happens to be
+    in Voicebox's own database - so a fresh Voicebox install, or a different
+    data folder (Voicebox launched from inside the Claude desktop app gets a
+    sandboxed copy of its app-data, not the user's real one), still ends up
+    speaking with the right voice.
+
+    Voicebox requires a transcript of every sample: it's read from a .txt
+    file next to the WAV with the same name (reyzi_sample.wav ->
+    reyzi_sample.txt)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(f"{base_url}/profiles")
+        response.raise_for_status()
+        if any(p.get("name") == profile for p in response.json()):
+            return
+
+        if not reference_wav:
+            raise RuntimeError(
+                f"Voicebox has no profile named {profile!r}, and VOICEBOX_REFERENCE_WAV isn't set to create it from"
+            )
+        wav_path = Path(reference_wav)
+        text_path = wav_path.with_suffix(".txt")
+        if not wav_path.exists() or not text_path.exists():
+            raise RuntimeError(
+                f"Can't create Voicebox profile {profile!r}: need both {wav_path} and its transcript {text_path}"
+            )
+
+        response = await client.post(
+            f"{base_url}/profiles",
+            json={"name": profile, "language": language, "voice_type": "cloned", "default_engine": engine},
+        )
+        response.raise_for_status()
+        profile_id = response.json()["id"]
+
+        response = await client.post(
+            f"{base_url}/profiles/{profile_id}/samples",
+            files={"file": (wav_path.name, wav_path.read_bytes(), "audio/wav")},
+            data={"reference_text": text_path.read_text(encoding="utf-8").strip()},
+            timeout=120,
+        )
+        response.raise_for_status()
+
+
 class VoiceboxTTSProvider:
     def __init__(
         self,
@@ -101,13 +154,26 @@ class VoiceboxTTSProvider:
         base_url: str = DEFAULT_BASE_URL,
         engine: str = "chatterbox",
         language: str = "ru",
+        reference_wav: str = "",
     ):
         self._profile = profile
         self._base_url = base_url
         self._engine = engine
         self._language = language
+        self._reference_wav = reference_wav
+        self._profile_ready = False
 
     async def speak(self, text: str) -> None:
+        if not self._profile_ready:
+            await ensure_profile(
+                base_url=self._base_url,
+                profile=self._profile,
+                reference_wav=self._reference_wav,
+                engine=self._engine,
+                language=self._language,
+            )
+            self._profile_ready = True
+
         audio_bytes = await synthesize(
             text,
             base_url=self._base_url,

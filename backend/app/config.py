@@ -32,6 +32,7 @@ class Settings:
     voicebox_profile: str
     voicebox_engine: str
     voicebox_language: str
+    voicebox_reference_wav: str
     tts_enabled: bool
     voice_id_enabled: bool
     voice_id_threshold: float
@@ -63,6 +64,7 @@ def load_settings() -> Settings:
         voicebox_profile=os.environ.get("VOICEBOX_PROFILE", ""),
         voicebox_engine=os.environ.get("VOICEBOX_ENGINE", "chatterbox"),
         voicebox_language=os.environ.get("VOICEBOX_LANGUAGE", "ru"),
+        voicebox_reference_wav=os.environ.get("VOICEBOX_REFERENCE_WAV", ""),
         tts_enabled=os.environ.get("JARVIS_TTS_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
         voice_id_enabled=os.environ.get("VOICE_ID_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
         voice_id_threshold=float(os.environ.get("VOICE_ID_THRESHOLD", "0.75")),
