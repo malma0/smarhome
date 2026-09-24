@@ -20,6 +20,10 @@ backend/voices/
 # source - see README for how these were sourced/created)
 backend/voice_reference/
 
+# recorded utterances kept as speech-recognition training data (residents'
+# own voices - personal data, never leaves the machine)
+backend/dataset/
+
 # home assistant runtime state (not our mock config)
 homeassistant/config/.storage/
 homeassistant/config/.ha_run.lock
