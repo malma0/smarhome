@@ -294,8 +294,24 @@ def _redirect_output_if_windowless() -> None:
         print(f"\n--- Jarvis window started {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
 
 
+def _already_running() -> bool:
+    """One Jarvis at a time: autostart plus a manual start would mean two
+    loops on one microphone. A named Windows mutex lives as long as the
+    process that made it - no stale lock file after a crash."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    _already_running.handle = kernel32.CreateMutexW(None, False, "Local\\JarvisVoiceWindow")
+    return kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+
+
 def main() -> None:
     _redirect_output_if_windowless()
+    if _already_running():
+        print("Jarvis уже запущен - второе окно не открываю.")
+        return
     import webview
 
     from app.tts import playback
@@ -310,6 +326,7 @@ def main() -> None:
         height=820,
         min_size=(380, 600),
         background_color="#07090F",
+        minimized="--minimized" in sys.argv,  # autostart: in the taskbar, not in your face
     )
     ui.attach(window.evaluate_js)
     window.events.loaded += ui.mark_ready

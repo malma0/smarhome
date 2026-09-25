@@ -4,6 +4,25 @@ cd /d "%~dp0"
 
 set VOICEBOX_DIR=C:\Users\malma\AppData\Local\Voicebox
 set VOICEBOX_EXE=%VOICEBOX_DIR%\voicebox-server.exe
+set DOCKER_EXE=C:\Program Files\Docker\Docker\Docker Desktop.exe
+
+rem --- Docker Desktop runs Home Assistant (the house, the danger alarms).
+rem     Started here if it isn't running, so one autostart entry (see
+rem     tools\autostart.py) brings up everything. Home Assistant's container
+rem     starts with Docker by itself (restart: unless-stopped); Jarvis keeps
+rem     reconnecting until it answers, so nothing waits for it here.
+tasklist /FI "IMAGENAME eq Docker Desktop.exe" 2>NUL | find /I "Docker Desktop.exe" >NUL
+if not errorlevel 1 goto docker_done
+if not exist "%DOCKER_EXE%" goto docker_done
+echo Starting Docker Desktop (Home Assistant)...
+start "" "%DOCKER_EXE%"
+:docker_done
+
+rem --- Voicebox is only needed for spoken replies. With them switched off
+rem     (JARVIS_TTS_ENABLED=false in .env) it isn't started: ~3 GB of memory
+rem     and a High-priority process for nothing.
+findstr /I /R /C:"^JARVIS_TTS_ENABLED=false" "..\.env" >NUL 2>NUL
+if not errorlevel 1 goto voicebox_not_needed
 
 rem --- Voicebox (cloned-voice server) has to run as its own process, started
 rem     from its own install dir - otherwise it creates data files inside
@@ -30,6 +49,10 @@ goto run_jarvis
 
 :voicebox_not_found
 echo Voicebox not found at %VOICEBOX_EXE% - skipping, Jarvis will fall back to the offline voice.
+goto run_jarvis
+
+:voicebox_not_needed
+echo Spoken replies are off - not starting Voicebox.
 goto run_jarvis
 
 :wait_for_voicebox
@@ -63,8 +86,14 @@ powershell -NoProfile -Command "Get-Process voicebox-server -ErrorAction Silentl
 rem Default: the Jarvis window (jarvis_gui.py) via pythonw - no console left
 rem behind; its output goes to jarvis_gui.log. "start_jarvis_voice.bat
 rem terminal" runs the old terminal version (voice_app.py) instead.
+rem "autostart" (the sign-in shortcut) opens the window minimized.
 if /I "%~1"=="terminal" goto run_terminal
+if /I "%~1"=="autostart" goto run_minimized
 start "" ".venv\Scripts\pythonw.exe" jarvis_gui.py
+exit /b
+
+:run_minimized
+start "" ".venv\Scripts\pythonw.exe" jarvis_gui.py --minimized
 exit /b
 
 :run_terminal
