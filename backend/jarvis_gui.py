@@ -36,6 +36,16 @@ TOOL_LABELS = {
     "read_file": "Прочитал",
     "list_directory": "Посмотрел папку",
     "delete_file": "Удалил",
+    "get_home_status": "Посмотрел дом",
+    "control_devices": "Дом",
+}
+
+DEVICE_NAMES = {"light": "свет", "socket": "розетка", "ac": "кондиционер"}
+# (device, action) -> how its state reads: "Кухня: свет включён"
+DEVICE_STATES = {
+    ("light", "on"): "включён", ("light", "off"): "выключен",
+    ("socket", "on"): "включена", ("socket", "off"): "выключена",
+    ("ac", "on"): "включён", ("ac", "off"): "выключен",
 }
 
 
@@ -47,6 +57,18 @@ def summarize_action(action: dict) -> dict:
     label = TOOL_LABELS.get(tool, tool)
     if isinstance(result, dict) and result.get("error"):
         return {"ok": False, "summary": f"{label}: {result['error']}"[:140]}
+    if tool == "get_home_status":
+        return {"ok": True, "summary": label}
+    if tool == "control_devices":
+        done = result.get("done") or []
+        rooms = ", ".join(d["room"] for d in done)
+        device, action = tool_input.get("device", ""), tool_input.get("action", "")
+        summary = f"{rooms}: {DEVICE_NAMES.get(device, device)} {DEVICE_STATES.get((device, action), action)}"
+        if result.get("temperature") is not None:
+            summary += f", {result['temperature']:g} °C"
+        if result.get("brightness_pct") is not None:
+            summary += f", {result['brightness_pct']}%"
+        return {"ok": True, "summary": summary}
     if tool == "open_application":
         target = result.get("url") or result.get("opened") or tool_input.get("app", "")
         return {"ok": True, "summary": f"Открыл {target}"}

@@ -118,3 +118,21 @@ def test_action_summaries():
     ) == {"ok": True, "summary": "Записал hello.txt"}
     failed = summarize_action({"tool": "delete_file", "input": {"path": "a.txt"}, "result": {"error": "'a.txt' does not exist."}})
     assert failed["ok"] is False and "does not exist" in failed["summary"]
+
+
+def test_home_actions_read_as_the_new_state():
+    assert summarize_action(
+        {"tool": "control_devices", "input": {"room": "кухне", "device": "light", "action": "on", "brightness_pct": 40},
+         "result": {"done": [{"room": "Кухня", "device": "light", "action": "on"}], "brightness_pct": 40}}
+    ) == {"ok": True, "summary": "Кухня: свет включён, 40%"}
+    assert summarize_action(
+        {"tool": "control_devices", "input": {"room": "кабинет", "device": "ac", "action": "on", "temperature": 22},
+         "result": {"done": [{"room": "Кабинет", "device": "ac", "action": "on"}], "temperature": 22.0}}
+    ) == {"ok": True, "summary": "Кабинет: кондиционер включён, 22 °C"}
+    assert summarize_action(
+        {"tool": "control_devices", "input": {"room": "all", "device": "socket", "action": "off"},
+         "result": {"done": [{"room": "Зал", "device": "socket", "action": "off"},
+                             {"room": "Кухня", "device": "socket", "action": "off"}]}}
+    ) == {"ok": True, "summary": "Зал, Кухня: розетка выключена"}
+    assert summarize_action({"tool": "get_home_status", "input": {}, "result": {"rooms": {}}}) == {
+        "ok": True, "summary": "Посмотрел дом"}
