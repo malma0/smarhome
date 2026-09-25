@@ -265,7 +265,8 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
                 "humidity, CO2). Use it to answer questions about the house ('где жарче всего?', "
                 "'что включено?', 'душно ли в спальне?') and to learn which rooms exist. The house "
                 "changes all the time - call this for every such question instead of relying on an "
-                "earlier answer. CO2 above ~1000 ppm means stuffy - suggest airing the room."
+                "earlier answer. CO2 above ~1000 ppm means stuffy. Answer with the facts; don't advise "
+                "the resident to do things you can't do yourself (like airing a room)."
             ),
             parameters={
                 "type": "object",
