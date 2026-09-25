@@ -192,3 +192,16 @@ def test_computer_chips():
     assert chip("desktop", {"done": "lock"}) == "Заблокировала компьютер"
     assert chip("desktop", {"cpu_percent": 5}) == "Состояние компьютера"
     assert chip("search_web", {"searched": "борщ"}) == "Поиск: борщ"
+
+
+
+def test_more_computer_chips():
+    chip = lambda tool, result: summarize_action({"tool": tool, "input": {}, "result": result})["summary"]
+    assert chip("find_files", {"found": [{"path": "a"}, {"path": "b"}]}) == "Нашла файлов: 2"
+    assert chip("find_files", {"found": [], "searched": []}) == "Ничего не нашла"
+    assert chip("find_files", {"found": [{"path": "x"}], "opened": r"C:\\x\\отчёт.docx"}) == "Открыла отчёт.docx"
+    assert chip("type_text", {"typed": 5, "into": "Документ - Word"}) == "Напечатала в «Документ - Word»"
+    assert chip("screen", {"saved": r"C:\\p\\Jarvis 1.png"}) == "Скриншот: Jarvis 1.png"
+    assert chip("screen", {"screen": "..."}) == "Посмотрела на экран"
+    assert chip("power", {"scheduled": "restart", "in_seconds": 60}) == "Перезагрузка через минуту"
+    assert chip("power", {"cancelled": True}) == "Выключение отменено"

@@ -192,7 +192,7 @@ def build_default_agent() -> JarvisAgent:
     """Single wiring point for the production agent - main.py, chat_cli.py
     and voice_app.py all call this rather than constructing JarvisAgent
     themselves."""
-    from app.domains import computer, files, system
+    from app.domains import computer, file_search, files, system
 
     llm = _build_llm_provider()
     memory = MemoryStore(connect(settings.db_path))
@@ -200,6 +200,7 @@ def build_default_agent() -> JarvisAgent:
     computer.register(tools)  # phase 2: first domain, no Home Assistant needed
     system.register(tools)  # media keys, volume, lock / minimize, how the PC is doing
     files.register(tools)  # phase 2: file operations, unrestricted paths by user's choice
+    file_search.register(tools)  # "где мой отчёт за сентябрь?"
     if settings.home_assistant_token:
         from app.domains import home
 

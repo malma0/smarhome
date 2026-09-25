@@ -44,6 +44,10 @@ TOOL_LABELS = {
     "search_web": "Поиск",
     "media": "Медиа",
     "desktop": "Компьютер",
+    "find_files": "Нашла",
+    "type_text": "Напечатала",
+    "screen": "Экран",
+    "power": "Питание",
     "reminders": "Напоминания",
     "get_weather": "Погода",
 }
@@ -98,6 +102,22 @@ def summarize_action(action: dict) -> dict:
         names = {"lock": "Заблокировала компьютер", "minimize_all": "Свернула все окна",
                  "restore_windows": "Вернула окна"}
         return {"ok": True, "summary": names.get(result.get("done"), "Состояние компьютера")}
+    if tool == "find_files":
+        if result.get("opened"):
+            return {"ok": True, "summary": f"Открыла {Path(result['opened']).name}"}
+        found = result.get("found") or []
+        return {"ok": True, "summary": f"Нашла файлов: {len(found)}" if found else "Ничего не нашла"}
+    if tool == "type_text":
+        return {"ok": True, "summary": f"Напечатала в «{result.get('into', '')}»"}
+    if tool == "screen":
+        if result.get("saved"):
+            return {"ok": True, "summary": f"Скриншот: {Path(result['saved']).name}"}
+        return {"ok": True, "summary": "Посмотрела на экран"}
+    if tool == "power":
+        if result.get("cancelled"):
+            return {"ok": True, "summary": "Выключение отменено"}
+        word = "Выключение" if result.get("scheduled") == "shutdown" else "Перезагрузка"
+        return {"ok": True, "summary": f"{word} через минуту"}
     if tool == "reminders":
         if result.get("added"):
             added = result["added"]
