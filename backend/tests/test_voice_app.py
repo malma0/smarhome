@@ -1040,3 +1040,19 @@ def test_without_the_name_the_answer_runs_to_the_end(memory, tmp_path, monkeypat
     session.ui = _RecordingUI()
     asyncio.run(voice_app.run_hands_free(session, _Detector(), commands))
     assert finished == [1]  # "стоп" from the speakers alone doesn't cut it
+
+
+
+def test_the_daily_limit_is_told_apart_from_the_minute_one(memory, tmp_path, monkeypatch):
+    import httpx
+
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    session = _session(memory, tmp_path)
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    body = {"error": {"message": "Rate limit reached ... on tokens per day (TPD): Limit 200000, Used 198720"}}
+    response = httpx.Response(429, request=request, json=body, headers={"retry-after": "541"})
+    session.agent.chat = AsyncMock(side_effect=httpx.HTTPStatusError("429", request=request, response=response))
+    assert asyncio.run(voice_app._answer(session, "сделай скриншот")) == (
+        "Дневной лимит бесплатной модели исчерпан - снова смогу примерно через 9 мин.")

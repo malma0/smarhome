@@ -688,8 +688,16 @@ def apply_correction(session: VoiceSession, typed: str, utterance_id: str | None
 
 
 def _failure_reply(exc: Exception) -> str:
-    status = getattr(getattr(exc, "response", None), "status_code", None)
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
     if status == 429:
+        try:
+            per_day = "per day" in response.json()["error"]["message"]
+            minutes = max(1, round(float(response.headers.get("retry-after", "60")) / 60))
+        except Exception:  # noqa: BLE001 - an unexpected body: the generic answer
+            per_day, minutes = False, 1
+        if per_day:  # seen live: Groq's free 200 000 tokens a day ran out
+            return f"Дневной лимит бесплатной модели исчерпан - снова смогу примерно через {minutes} мин."
         return "Лимит бесплатной модели на эту минуту кончился - повтори через минуту."
     return f"Не получилось ответить ({type(exc).__name__}). Повтори, пожалуйста."
 
