@@ -48,3 +48,23 @@ def announce(audio: np.ndarray, sample_rate: int) -> None:
         listener(envelope(audio, sample_rate), ENVELOPE_FRAME_SECONDS)
     except Exception:  # noqa: BLE001 - a UI hiccup must never stop the voice
         pass
+
+
+def stop_all() -> None:
+    """Cut whatever reply is playing - "Джарвис, стоп". sounddevice (Voicebox,
+    Piper) and pygame (Edge, ElevenLabs); the offline SAPI fallback can't be
+    cut mid-phrase safely from another thread, so it finishes its sentence."""
+    try:
+        import sounddevice as sd
+
+        sd.stop()
+    except Exception:  # noqa: BLE001 - nothing playing or no audio device
+        pass
+    try:
+        import sys
+
+        pygame = sys.modules.get("pygame")  # only if a provider already loaded it
+        if pygame is not None and pygame.mixer.get_init():
+            pygame.mixer.music.stop()
+    except Exception:  # noqa: BLE001
+        pass

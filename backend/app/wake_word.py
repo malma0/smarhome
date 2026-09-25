@@ -109,6 +109,11 @@ class StreamingTranscript:
         self._collect(self._recognizer.FinalResult())
         return " ".join(self._segments)
 
+    def so_far(self) -> str:
+        """What's been heard of the phrase so far, while it's still going."""
+        partial = json.loads(self._recognizer.PartialResult()).get("partial", "").strip()
+        return " ".join([*self._segments, partial]).strip()
+
     def _collect(self, result_json: str) -> None:
         text = json.loads(result_json).get("text", "").strip()
         if text:

@@ -959,3 +959,84 @@ def test_stop_with_the_name_is_handled_here_not_by_the_model(memory, tmp_path):
     assert asyncio.run(voice_app._answer(session, "Джарвис, стоп!")) == ""
     assert stops == [1]
     session.agent.chat.assert_not_called()
+
+
+
+def _answering_listener(live_texts, commands):
+    """No finished phrases; while Jarvis answers, "heard so far" goes
+    through live_texts, then the loop is told to quit."""
+    class _Listener(_texts_listener([], commands)):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._live = list(live_texts)
+
+        @property
+        def live_text(self):
+            return self._live.pop(0) if self._live else ""
+
+    return _Listener
+
+
+class _Detector:
+    wake_words = ["джарвис", "джервис"]
+
+    def stream(self):
+        return None
+
+
+def _long_answer(finished, reply="Жили-были..."):
+    async def answer(*args, **kwargs):
+        await asyncio.sleep(10)
+        finished.append(1)
+        return {"response": reply, "actions": []}
+
+    return answer
+
+
+def test_the_name_over_an_answer_cuts_it_and_jarvis_listens(memory, tmp_path, monkeypatch):
+    import queue
+
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    cut, finished = [], []
+    monkeypatch.setattr(voice_app.playback, "stop_all", lambda: cut.append(1))
+    monkeypatch.setattr(voice_app, "_announcer", None)
+    commands = queue.Queue()
+    commands.put(("text", "расскажи длинную сказку"))
+    # measured on a mix: the reply and "Джарвис, стоп" heard as one phrase
+    monkeypatch.setattr(voice_app, "HandsFreeListener",
+                        _answering_listener(["жили были старик", "синего моря джарвис рик"], commands))
+    session = _session(memory, tmp_path)
+    session.agent.chat = _long_answer(finished)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, _Detector(), commands))
+
+    assert finished == [] and cut == [1]
+    assert ("info", "(перебили - слушаю)") in ui.events
+    assert ("state", "listening") in ui.events[-3:]
+
+
+def test_without_the_name_the_answer_runs_to_the_end(memory, tmp_path, monkeypatch):
+    import queue
+
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    finished = []
+    monkeypatch.setattr(voice_app, "_announcer", None)
+    commands = queue.Queue()
+    commands.put(("text", "привет"))
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _answering_listener(["стоп хватит"], commands))
+    session = _session(memory, tmp_path)
+
+    async def short_answer(*args, **kwargs):
+        await asyncio.sleep(0.3)
+        finished.append(1)
+        return {"response": "Привет!", "actions": []}
+
+    session.agent.chat = short_answer
+    session.ui = _RecordingUI()
+    asyncio.run(voice_app.run_hands_free(session, _Detector(), commands))
+    assert finished == [1]  # "стоп" from the speakers alone doesn't cut it

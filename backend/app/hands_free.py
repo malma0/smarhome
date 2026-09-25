@@ -39,6 +39,16 @@ def is_stop_phrase(text: str | None) -> bool:
     return 1 <= len(words) <= 3 and all(w in STOP_WORDS for w in words)
 
 
+def name_heard(text: str | None, wake_words) -> bool:
+    """The name anywhere in what's heard so far - over Jarvis's own reply it
+    interrupts, the way "Alexa" does over Alexa. Checked on the words as they
+    come: a reply never pauses long enough for "Джарвис, стоп" to be a phrase
+    of its own (measured: the reply and the command came out as one 12-second
+    phrase), and "стоп" itself drowned in the reply while the name didn't."""
+    words = "".join(c if c.isalnum() or c.isspace() else " " for c in (text or "").casefold()).split()
+    return any(w in words for w in wake_words)
+
+
 class HandsFreeState:
     def __init__(
         self,

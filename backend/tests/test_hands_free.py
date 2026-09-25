@@ -89,3 +89,15 @@ def test_stop_phrases():
         assert is_stop_phrase(text), text
     for text in ("", None, "стоп музыку включи", "не останавливайся", "включи свет", "хватит на сегодня работать"):
         assert not is_stop_phrase(text), text
+
+
+
+def test_the_name_heard_over_an_answer():
+    from app.hands_free import name_heard
+
+    wake = ["джарвис", "джервис"]
+    # as measured: the reply and the command came out as one long phrase
+    assert name_heard("у самого синего моря джарвис рик ловил не водам рыбу", wake)
+    assert name_heard("Джервис, включи свет", wake)
+    assert not name_heard("стоп хватит старик ловил рыбу", wake)
+    assert not name_heard(None, wake)

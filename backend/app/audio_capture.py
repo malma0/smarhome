@@ -254,14 +254,23 @@ class PhraseStreamer:
     spoken*: pre-roll and every following frame go in as they arrive, so the
     text is ready as soon as the phrase ends. Pure logic - no audio device."""
 
+    LIVE_TEXT_EVERY_FRAMES = 10  # ~0.3 s
+
     def __init__(self, segmenter: UtteranceSegmenter, transcriber_factory: Callable[[], Any] | None = None):
         self._segmenter = segmenter
         self._factory = transcriber_factory
         self._transcript = None
+        self._frames_since_live = 0
+        # What's been heard of the current phrase so far - read from other
+        # threads (a plain str assignment is atomic). For barge-in: "Джарвис"
+        # said over Jarvis's own reply, which never pauses long enough to end
+        # a phrase.
+        self.live_text = ""
 
     def reset(self) -> None:
         self._segmenter.reset()
         self._transcript = None
+        self.live_text = ""
 
     def feed(self, frame: np.ndarray) -> Phrase | None:
         was_in_phrase = self._segmenter.in_phrase
@@ -273,10 +282,15 @@ class PhraseStreamer:
                     self._transcript.feed(_pcm16(earlier))
             elif was_in_phrase and self._transcript is not None:
                 self._transcript.feed(_pcm16(frame))
+                self._frames_since_live += 1
+                if self._frames_since_live >= self.LIVE_TEXT_EVERY_FRAMES and hasattr(self._transcript, "so_far"):
+                    self._frames_since_live = 0
+                    self.live_text = self._transcript.so_far()  # same thread as feed: Vosk isn't thread-safe
         if frames is None:
             return None
         text = self._transcript.finish() if self._transcript is not None else None
         self._transcript = None
+        self.live_text = ""
         return Phrase(frames, text)
 
 
@@ -353,6 +367,11 @@ class HandsFreeListener:
     def unmute(self) -> None:
         _drain(self._frames)
         self._muted.clear()
+
+    @property
+    def live_text(self) -> str:
+        """The current phrase as heard so far (needs a transcriber_factory)."""
+        return self._streamer.live_text
 
     def hold(self) -> None:
         """Ignore what's heard while an alarm plays - its siren and voice

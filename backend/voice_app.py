@@ -55,10 +55,11 @@ from app.agent import build_default_agent
 from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech, speech_seconds
 from app.config import settings
 from app.dataset import UtteranceLog
-from app.hands_free import CUE, IGNORE, HandsFreeState, is_stop_phrase
+from app.hands_free import CUE, IGNORE, HandsFreeState, is_stop_phrase, name_heard
 from app.reminders import ReminderStore, local_now
 from app.http_client import shared_client
 from app.memory import MemoryStore
+from app.tts import playback
 from app.tts.base import TTSProvider
 from app.transcript_filter import is_hallucination
 from app.tts.text import text_for_speech
@@ -479,6 +480,9 @@ class VoiceSession:
     last_utterance_id: str | None = None
     # Set by run_hands_free: stops what's ringing/sounding; True if anything was.
     on_stop: Any = None
+    # The reply being spoken right now - if it says "Джарвис" itself, hearing
+    # the name doesn't count as being interrupted.
+    speaking_text: str = ""
 
 
 async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSession | None:
@@ -793,6 +797,7 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     response = await _answer(session, text)
     if utterance_id:
         session.utterances.set_response(utterance_id, response)
+    session.speaking_text = response
     if settings.tts_enabled and response:
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=ui)
 
@@ -804,6 +809,7 @@ async def handle_text(session: VoiceSession, text: str, echo: bool = True) -> No
     if echo:
         session.ui.user_said(text, voice=False)
     response = await _answer(session, text)
+    session.speaking_text = response
     if settings.tts_enabled and response:  # empty after "стоп"
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=session.ui)
 
@@ -880,6 +886,7 @@ async def run_hands_free(
     reminder_store = ReminderStore(memory.connection)
     ringing: dict[int, dict] = {}  # id -> {"text", "until", "next"}
     just_stopped = False
+    interrupted = False  # the name was heard over an answer (respond)
 
     def ring_due() -> None:
         now = time.monotonic()
@@ -914,12 +921,43 @@ async def run_hands_free(
     session.on_stop = stop_all
 
     async def respond(work) -> None:
-        listener.mute()  # don't hear our own reply as the next phrase
+        """Runs Jarvis's answer. Meanwhile the mic listens only for the name
+        (barge-in): "Джарвис" - "Джарвис, стоп", "Джарвис, включи свет" -
+        cuts the answer and Jarvis listens again; the command or a "стоп"
+        that follows is handled as usual. Everything else heard meanwhile -
+        above all Jarvis's own voice from the speakers - is dropped, never
+        taken as the next phrase. Without Vosk there's no local transcript to
+        check, so the mic is just muted."""
+        nonlocal interrupted
+        if detector is None:
+            listener.mute()
+        session.speaking_text = ""
+        task = asyncio.ensure_future(work)
         try:
-            await work
+            while detector is not None and not task.done():
+                await asyncio.sleep(0.1)
+                heard = listener.live_text
+                # a reply that says the name itself mustn't cut itself off
+                own = name_heard(session.speaking_text, detector.wake_words)
+                if not own and name_heard(heard, detector.wake_words):
+                    task.cancel()
+                    playback.stop_all()
+                    interrupted = True
+                    break
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         finally:
+            listener.mute()  # drops what was heard of our own voice
             await asyncio.sleep(0.3)  # let the room's echo of the reply die down
             listener.unmute()
+        if interrupted:
+            interrupted = False
+            ui.info("(перебили - слушаю)")
+            state.force_wake()
+            ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")
+            return
         nonlocal just_stopped
         if just_stopped:  # "стоп" - no follow-up listening after it
             just_stopped = False
