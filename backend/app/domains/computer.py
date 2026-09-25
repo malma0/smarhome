@@ -23,10 +23,14 @@ letting the generic lookup find one by accident - it's excluded on purpose
 deliberately later.
 """
 
+import asyncio
+import ctypes
 import json
 import os
 import subprocess
+import time
 
+from app.config import settings
 from app.tools.registry import Tool, ToolRegistry, TurnContext
 
 # Fast path: core Windows utilities, launched directly, no external calls.
@@ -203,6 +207,212 @@ async def _open_application(tool_input: dict, ctx: TurnContext) -> dict:
     return {"ok": True, "opened": match["Name"]}
 
 
+# --------------------------------------------------------------- closing apps
+#
+# "Закрой Steam": the app's windows get WM_CLOSE - the same as clicking the
+# cross, so an app with unsaved work asks about it itself. Many apps (Steam,
+# Discord) only hide into the tray on that; then the process is still
+# running, and quitting it for good - killing it - takes the resident's yes,
+# as does anything that didn't close on its own.
+
+WM_CLOSE = 0x0010
+CLOSE_WAIT_SECONDS = 3
+# The desktop and taskbar are explorer.exe windows too - never "closed".
+_SHELL_WINDOW_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
+# Windows' own processes - closing them breaks the session.
+_SYSTEM_EXES = {
+    "csrss.exe", "winlogon.exe", "dwm.exe", "lsass.exe", "services.exe", "svchost.exe", "sihost.exe",
+    "smss.exe", "wininit.exe", "fontdrvhost.exe", "ctfmon.exe", "searchhost.exe", "textinputhost.exe",
+    "startmenuexperiencehost.exe", "shellexperiencehost.exe", "lockapp.exe", "system",
+}
+# These run the house (Home Assistant, the danger alarms) - a yes first.
+_CONFIRM_EXES = {"docker desktop.exe": "Docker runs Home Assistant - the house and the danger alarms stop with it"}
+
+
+def _exe_of(pid: int) -> str:
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_ulong(len(buf))
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return os.path.basename(buf.value)
+        return ""
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def list_windows() -> list[dict]:
+    """Visible top-level app windows: hwnd, pid, exe, title."""
+    import win32gui
+    import win32process
+
+    found = []
+
+    def visit(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd) or win32gui.GetWindow(hwnd, 4):  # GW_OWNER: dialogs, popups
+            return
+        title = win32gui.GetWindowText(hwnd)
+        if not title or win32gui.GetClassName(hwnd) in _SHELL_WINDOW_CLASSES:
+            return
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        found.append({"hwnd": hwnd, "pid": pid, "exe": _exe_of(pid), "title": title})
+
+    win32gui.EnumWindows(visit, None)
+    return found
+
+
+def list_processes() -> list[dict]:
+    import win32process
+
+    return [{"pid": pid, "exe": exe} for pid in win32process.EnumProcesses() if pid and (exe := _exe_of(pid))]
+
+
+def _post_close(hwnd: int) -> None:
+    import win32gui
+
+    win32gui.PostMessage(hwnd, WM_CLOSE, 0, 0)
+
+
+def _window_open(hwnd: int) -> bool:
+    import win32gui
+
+    return bool(win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd))
+
+
+def _terminate(pid: int) -> None:
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+    if handle:
+        kernel32.TerminateProcess(handle, 1)
+        kernel32.CloseHandle(handle)
+
+
+def _own_pids() -> set[int]:
+    """Jarvis itself: this process and its launcher (a venv's pythonw starts
+    the real interpreter as its child)."""
+    return {os.getpid(), os.getppid()}
+
+
+def _wanted_exes(name: str) -> set[str]:
+    """'блокнот' -> {'notepad.exe'}, 'браузер' -> the default browser's exe."""
+    exes = set()
+    if name in KNOWN_APPS:
+        exes.add(KNOWN_APPS[name].lower())
+    if name in BROWSER_ALIASES and (browser := _default_browser_executable()):
+        exes.add(os.path.basename(browser).lower())
+    return exes
+
+
+def _matches(item: dict, name: str, exes: set[str], by_title: bool) -> bool:
+    exe = item["exe"].lower()
+    stem = exe.removesuffix(".exe")
+    if exe in exes or stem == name or (len(name) >= 3 and name in stem):
+        return True
+    return by_title and len(name) >= 3 and name in item.get("title", "").casefold()
+
+
+class AppCloser:
+    """The OS side is injectable - tests don't close real windows."""
+
+    def __init__(self, windows=list_windows, processes=list_processes, post_close=_post_close,
+                 window_open=_window_open, terminate=_terminate, own_pids=_own_pids, sleep=time.sleep):
+        self.windows, self.processes = windows, processes
+        self.post_close, self.window_open, self.terminate = post_close, window_open, terminate
+        self.own_pids, self.sleep = own_pids, sleep
+
+    def close(self, app: str, confirmed: bool) -> dict:
+        name = app.strip().casefold()
+        if name in ("jarvis", "джарвис", "джервис"):
+            return {"error": "That's me - I don't close myself."}
+        exes = _wanted_exes(name)
+        own = self.own_pids()
+        windows = [w for w in self.windows() if w["pid"] not in own]
+        by_exe = [w for w in windows if _matches(w, name, exes, by_title=False)]
+        targets = by_exe or [w for w in windows if _matches(w, name, exes, by_title=True)]
+        pids = {w["pid"] for w in targets}
+        exe_names = {w["exe"].lower() for w in targets}
+        if not targets:  # maybe it only lives in the tray
+            running = [p for p in self.processes() if p["pid"] not in own and _matches(p, name, exes, False)]
+            pids, exe_names = {p["pid"] for p in running}, {p["exe"].lower() for p in running}
+        if not pids:
+            return {"error": f"Nothing called '{app}' is running."}
+        if exe_names & _SYSTEM_EXES:
+            return {"error": f"'{app}' is part of Windows itself - not closed."}
+        for exe in exe_names & set(_CONFIRM_EXES):
+            if not confirmed:
+                return {"error": f"{_CONFIRM_EXES[exe]} - ask the resident, then retry with confirmed=true."}
+
+        if targets:
+            for window in targets:
+                self.post_close(window["hwnd"])
+            waited = 0.0
+            while waited < CLOSE_WAIT_SECONDS and any(self.window_open(w["hwnd"]) for w in targets):
+                self.sleep(0.2)
+                waited += 0.2
+        still_open = [w["title"] for w in targets if self.window_open(w["hwnd"])]
+        alive = {p["pid"] for p in self.processes() if p["pid"] in pids}
+        waited = 0.0
+        while alive and not still_open and targets and waited < CLOSE_WAIT_SECONDS:
+            # Seen live: Notepad's process outlives its window by a moment -
+            # that's not "hid in the tray".
+            self.sleep(0.2)
+            waited += 0.2
+            alive = {p["pid"] for p in self.processes() if p["pid"] in pids}
+        label = sorted(exe_names)[0].removesuffix(".exe")
+
+        if not still_open and not alive:
+            return {"closed": label}
+        if not confirmed:
+            if still_open:
+                return {"error": (f"'{label}' didn't close - it may be asking to save something. Ask the resident; "
+                                  "on yes retry with confirmed=true to force it (unsaved work is lost)."),
+                        "still_open": still_open}
+            return {"closed_windows": bool(targets), "still_running": label,
+                    "note": ("Its window is gone but it keeps running in the background (tray). To quit it "
+                             "completely, ask the resident and retry with confirmed=true.")}
+        for pid in alive:
+            self.terminate(pid)
+        return {"closed": label, "forced": True}
+
+
+_closer = AppCloser()
+
+
+async def _close_application(tool_input: dict, ctx: TurnContext) -> dict:
+    app = (tool_input.get("app") or "").strip()
+    if not app:
+        return {"error": "Which application?"}
+    return await asyncio.to_thread(_closer.close, app, bool(tool_input.get("confirmed")))
+
+
+# --------------------------------------------------------------- searching
+
+SEARCH_SITES = {
+    "youtube": "https://www.youtube.com/results?search_query={query}",
+    "wikipedia": "https://ru.wikipedia.org/w/index.php?search={query}",
+    "maps": "https://yandex.ru/maps/?text={query}",
+}
+
+
+def search_url(query: str, site: str = "web") -> str:
+    from urllib.parse import quote_plus
+
+    template = SEARCH_SITES.get(site) or settings.web_search_url
+    return template.replace("{query}", quote_plus(query))
+
+
+async def _search_web(tool_input: dict, ctx: TurnContext) -> dict:
+    query = (tool_input.get("query") or "").strip()
+    if not query:
+        return {"error": "Nothing to search for."}
+    url = search_url(query, tool_input.get("site") or "web")
+    os.startfile(url)  # the default browser, a new tab
+    return {"searched": query, "site": tool_input.get("site") or "web"}
+
+
 def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
@@ -235,5 +445,42 @@ def register(registry: ToolRegistry) -> None:
                 "required": ["app"],
             },
             handler=_open_application,
+        )
+    )
+    registry.register(
+        Tool(
+            name="close_application",
+            description=(
+                "Close an app by name ('закрой Steam', 'закрой блокнот') the way its close button does - it "
+                "asks about unsaved work itself. If it didn't close, or only hid into the tray, the result "
+                "says so: ask the resident, and on yes retry with confirmed=true to force it."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "app": {"type": "string"},
+                    "confirmed": {"type": ["boolean", "null"], "default": False},
+                },
+                "required": ["app"],
+            },
+            handler=_close_application,
+        )
+    )
+    registry.register(
+        Tool(
+            name="search_web",
+            description=(
+                "Search in the browser (a new tab): site 'web' (default), 'youtube', 'wikipedia' or 'maps'. "
+                "'найди в интернете рецепт борща', 'найди на ютубе котиков'."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "site": {"type": ["string", "null"], "enum": ["web", "youtube", "wikipedia", "maps", None]},
+                },
+                "required": ["query"],
+            },
+            handler=_search_web,
         )
     )

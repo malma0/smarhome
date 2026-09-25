@@ -22,10 +22,10 @@ def make_registry() -> ToolRegistry:
     return registry
 
 
-def test_registers_exactly_one_tool():
+def test_registers_open_close_and_search():
     registry = make_registry()
     names = [t.name for t in registry.definitions()]
-    assert names == ["open_application"]
+    assert names == ["open_application", "close_application", "search_web"]
 
 
 def test_opens_known_app_by_exact_name():
