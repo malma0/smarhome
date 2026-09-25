@@ -1,6 +1,8 @@
 """The computer itself, beyond opening apps (app.domains.computer): media
-keys, the volume, the desktop (lock, minimize everything, bring it back)
-and how the machine is doing (battery, CPU, memory, disks).
+keys, the volume, the desktop (lock, minimize everything, bring it back),
+how the machine is doing (battery, CPU, memory, disks), typing into the
+active window, the screen (a screenshot; "что у меня на экране?") and
+shutting down / restarting.
 
 Windows only, no extra installs: media keys are key presses (keybd_event),
 the volume is the Core Audio endpoint behind the tray's speaker icon
@@ -10,11 +12,20 @@ on a worker thread with COM initialized there, never on the voice loop.
 """
 
 import asyncio
+import base64
 import ctypes
+import os
 import shutil
+import struct
+import subprocess
 import time
+import zlib
 from ctypes import POINTER, byref, c_float, c_void_p, cast
 from ctypes.wintypes import BOOL, DWORD, UINT
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
 
 from app.tools.registry import Tool, ToolRegistry, TurnContext
 
@@ -248,6 +259,253 @@ async def desktop(tool_input: dict, ctx: TurnContext, *, actions=DESKTOP_ACTIONS
     return {"done": action}
 
 
+# --------------------------------------------------------------- typing (dictation)
+#
+# "Напиши в текущее окно: ..." - the text goes to whatever window is active,
+# character by character as Unicode, so the keyboard layout doesn't matter.
+# Never into a terminal: text plus Enter there runs as a command. Never into
+# Jarvis's own window: then the resident hasn't picked where to type yet.
+
+INPUT_KEYBOARD = 1
+KEYEVENTF_UNICODE = 0x0004
+VK_RETURN = 0x0D
+TERMINAL_EXES = {"cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe", "wt.exe", "bash.exe",
+                 "mintty.exe", "wsl.exe", "conhost.exe", "openconsole.exe", "putty.exe", "alacritty.exe",
+                 "wezterm-gui.exe", "git-bash.exe"}
+
+
+class _KeyboardInput(ctypes.Structure):
+    _fields_ = [("wVk", ctypes.c_ushort), ("wScan", ctypes.c_ushort), ("dwFlags", ctypes.c_ulong),
+                ("time", ctypes.c_ulong), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class _InputUnion(ctypes.Union):
+    _fields_ = [("ki", _KeyboardInput), ("padding", ctypes.c_byte * 32)]  # the union's biggest member (mouse)
+
+
+class _Input(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_ulong), ("u", _InputUnion)]
+
+
+def _key_events(text: str, press_enter: bool) -> list:
+    events = []
+    for ch in text.replace("\r\n", "\n"):
+        if ch == "\n":
+            codes = [(VK_RETURN, 0, 0)]
+        else:
+            data = ch.encode("utf-16-le")
+            codes = [(0, int.from_bytes(data[i:i + 2], "little"), KEYEVENTF_UNICODE) for i in range(0, len(data), 2)]
+        for vk, scan, flags in codes:
+            events.append((vk, scan, flags))
+            events.append((vk, scan, flags | KEYEVENTF_KEYUP))
+    if press_enter:
+        events += [(VK_RETURN, 0, 0), (VK_RETURN, 0, KEYEVENTF_KEYUP)]
+    return events
+
+
+def _send_keys(events: list) -> None:
+    inputs = (_Input * len(events))()
+    for i, (vk, scan, flags) in enumerate(events):
+        inputs[i].type = INPUT_KEYBOARD
+        inputs[i].u.ki = _KeyboardInput(vk, scan, flags, 0, 0)
+    ctypes.windll.user32.SendInput(len(events), inputs, ctypes.sizeof(_Input))
+
+
+def foreground_window() -> dict:
+    import win32gui
+    import win32process
+
+    from app.domains.computer import _exe_of
+
+    hwnd = win32gui.GetForegroundWindow()
+    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+    return {"pid": pid, "exe": _exe_of(pid), "title": win32gui.GetWindowText(hwnd)}
+
+
+def _own_pids() -> set[int]:
+    return {os.getpid(), os.getppid()}
+
+
+async def type_text(tool_input: dict, ctx: TurnContext, *, window=foreground_window, send=_send_keys,
+                    own_pids=_own_pids) -> dict:
+    text = tool_input.get("text") or ""
+    if not text.strip():
+        return {"error": "Nothing to type."}
+    active = window()
+    if active["pid"] in own_pids():
+        return {"error": ("My own window is the active one - the resident should click where the text goes "
+                          "first, then ask by voice.")}
+    if active["exe"].lower() in TERMINAL_EXES:
+        return {"error": "The active window is a terminal - typing there could run commands, so no."}
+    send(_key_events(text, bool(tool_input.get("press_enter"))))
+    return {"typed": len(text), "into": active["title"] or active["exe"]}
+
+
+# --------------------------------------------------------------- the screen
+#
+# A screenshot is saved to Pictures\Screenshots. "Что у меня на экране?"
+# sends a shrunk picture of the screen to a model that can see (VISION_MODEL
+# - qwen/qwen3.8-27b on Groq, the one on this key that takes images) - so it
+# leaves the computer, and only when the resident asks; it isn't kept.
+
+DESCRIBE_WIDTH = 1280
+VISION_TIMEOUT_SECONDS = 60
+# Per-monitor DPI awareness for this thread only: the real pixels of every
+# monitor, not a scaled-down part of them, and the rest of Jarvis untouched.
+_DPI_PER_MONITOR_V2 = ctypes.c_void_p(-4)
+
+
+def grab_screen() -> np.ndarray:
+    """The whole desktop (all monitors) as an RGB array - plain GDI, in this
+    process. (Asked of PowerShell instead, Windows Defender blocked it as
+    malicious - screen grabbing from a script is what malware does.)"""
+    import win32con
+    import win32gui
+    import win32ui
+
+    user32 = ctypes.windll.user32
+    previous = user32.SetThreadDpiAwarenessContext(_DPI_PER_MONITOR_V2)
+    try:
+        left, top = user32.GetSystemMetrics(76), user32.GetSystemMetrics(77)  # SM_X/YVIRTUALSCREEN
+        width, height = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
+        desktop = win32gui.GetDesktopWindow()
+        window_dc = win32gui.GetWindowDC(desktop)
+        source = win32ui.CreateDCFromHandle(window_dc)
+        memory = source.CreateCompatibleDC()
+        bitmap = win32ui.CreateBitmap()
+        try:
+            bitmap.CreateCompatibleBitmap(source, width, height)
+            memory.SelectObject(bitmap)
+            memory.BitBlt((0, 0), (width, height), source, (left, top), win32con.SRCCOPY)
+            bgra = np.frombuffer(bitmap.GetBitmapBits(True), dtype=np.uint8).reshape(height, width, 4)
+            return bgra[:, :, 2::-1].copy()  # BGRA -> RGB
+        finally:
+            win32gui.DeleteObject(bitmap.GetHandle())
+            memory.DeleteDC()
+            source.DeleteDC()
+            win32gui.ReleaseDC(desktop, window_dc)
+    finally:
+        if previous:
+            user32.SetThreadDpiAwarenessContext(previous)
+
+
+def shrink(rgb: np.ndarray, max_width: int) -> np.ndarray:
+    """Box-average down by a whole factor to at most max_width - text stays
+    readable, unlike skipping pixels."""
+    factor = -(-rgb.shape[1] // max_width)  # ceil
+    if factor <= 1:
+        return rgb
+    h, w = rgb.shape[0] // factor * factor, rgb.shape[1] // factor * factor
+    blocks = rgb[:h, :w].reshape(h // factor, factor, w // factor, factor, 3)
+    return blocks.mean(axis=(1, 3)).astype(np.uint8)
+
+
+def png_bytes(rgb: np.ndarray) -> bytes:
+    """A PNG from an RGB array - zlib and a few chunks, no imaging library."""
+    height, width = rgb.shape[:2]
+    rows = np.hstack([np.zeros((height, 1), dtype=np.uint8), rgb.reshape(height, width * 3)])  # filter 0
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)  # 8-bit RGB
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows.tobytes(), 6))
+            + chunk(b"IEND", b""))
+
+
+def capture_screen(path: Path, max_width: int = 0) -> Path:
+    """Saves the screen as PNG - full size, or shrunk to max_width for a model."""
+    rgb = grab_screen()
+    if max_width:
+        rgb = shrink(rgb, max_width)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png_bytes(rgb))
+    return path
+
+
+def screenshots_folder() -> Path:
+    return Path.home() / "Pictures" / "Screenshots"
+
+
+async def ask_vision_model(image: bytes, question: str) -> str:
+    from app.config import settings
+    from app.http_client import shared_client
+
+    response = await shared_client().post(
+        f"{settings.groq_base_url}/chat/completions",
+        headers={"Authorization": f"Bearer {settings.groq_api_key}"},
+        timeout=VISION_TIMEOUT_SECONDS,
+        json={
+            "model": settings.vision_model,
+            "max_tokens": 400,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": question},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(image).decode()}},
+            ]}],
+        },
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"the vision model answered {response.status_code}: {response.text[:200]}")
+    return (response.json()["choices"][0]["message"].get("content") or "").strip()
+
+
+async def screen(tool_input: dict, ctx: TurnContext, *, capture=capture_screen, vision=ask_vision_model,
+                 folder=screenshots_folder) -> dict:
+    action = tool_input.get("action") or "screenshot"
+    if action == "screenshot":
+        path = folder() / f"Jarvis {datetime.now():%Y-%m-%d %H-%M-%S}.png"
+        try:
+            await asyncio.to_thread(capture, path)
+        except Exception as exc:  # noqa: BLE001 - GDI/pywin32 errors come in many types
+            return {"error": f"Couldn't take the screenshot: {exc}"}
+        return {"saved": str(path)}
+    if action != "describe":
+        return {"error": f"Unknown action {action!r}."}
+    question = (tool_input.get("question") or "").strip() or (
+        "Опиши по-русски, коротко, что сейчас на экране: какие программы открыты и что в них видно.")
+    path = Path(os.environ.get("TEMP", ".")) / "jarvis_screen.png"
+    try:
+        await asyncio.to_thread(capture, path, DESCRIBE_WIDTH)
+        image = path.read_bytes()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"Couldn't see the screen: {exc}"}
+    finally:
+        path.unlink(missing_ok=True)  # the picture itself isn't kept
+    try:
+        return {"screen": await vision(image, question)}
+    except Exception as exc:  # noqa: BLE001 - network, rate limit, the model's own error
+        return {"error": f"The model that looks at pictures didn't answer: {exc}"}
+
+
+# --------------------------------------------------------------- power
+#
+# Shutting down or restarting always takes the resident's yes, and happens a
+# minute later - "отмени выключение" cancels it meanwhile.
+
+POWER_DELAY_SECONDS = 60
+
+
+def _run(args: list[str]) -> int:
+    return subprocess.run(args, capture_output=True, timeout=15, creationflags=0x08000000).returncode
+
+
+async def power(tool_input: dict, ctx: TurnContext, *, run=_run) -> dict:
+    action = tool_input.get("action")
+    if action == "cancel":
+        code = await asyncio.to_thread(run, ["shutdown", "/a"])
+        return {"cancelled": True} if code == 0 else {"error": "Nothing was scheduled to shut down."}
+    if action not in ("shutdown", "restart"):
+        return {"error": f"Unknown action {action!r}."}
+    if not tool_input.get("confirmed"):
+        return {"error": f"{action} closes everything - ask the resident, then retry with confirmed=true."}
+    flag = "/s" if action == "shutdown" else "/r"
+    note = "Jarvis: выключение через минуту" if action == "shutdown" else "Jarvis: перезагрузка через минуту"
+    code = await asyncio.to_thread(run, ["shutdown", flag, "/t", str(POWER_DELAY_SECONDS), "/c", note])
+    if code != 0:
+        return {"error": f"Windows refused ({code}) - maybe one is already scheduled."}
+    return {"scheduled": action, "in_seconds": POWER_DELAY_SECONDS, "cancel": "отмени выключение"}
+
+
 def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
@@ -283,5 +541,61 @@ def register(registry: ToolRegistry) -> None:
                 "required": ["action"],
             },
             handler=desktop,
+        )
+    )
+    registry.register(
+        Tool(
+            name="type_text",
+            description=(
+                "Type text into the active window, as if on the keyboard ('напиши в текущее окно ...'). "
+                "press_enter only when told to send it ('и отправь') - in a chat Enter sends the message. "
+                "Not into terminals, not into my own window."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "press_enter": {"type": ["boolean", "null"]},
+                },
+                "required": ["text"],
+            },
+            handler=type_text,
+        )
+    )
+    registry.register(
+        Tool(
+            name="screen",
+            description=(
+                "screenshot: save the screen to Pictures/Screenshots. describe: look at the screen and answer "
+                "'что у меня на экране?' (optional question) - a picture of it goes to an online model, so "
+                "only when asked about the screen."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["screenshot", "describe"]},
+                    "question": {"type": ["string", "null"]},
+                },
+                "required": ["action"],
+            },
+            handler=screen,
+        )
+    )
+    registry.register(
+        Tool(
+            name="power",
+            description=(
+                "shutdown / restart the computer - always ask first, then confirmed=true; it happens a minute "
+                "later. cancel: 'отмени выключение'."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["shutdown", "restart", "cancel"]},
+                    "confirmed": {"type": ["boolean", "null"]},
+                },
+                "required": ["action"],
+            },
+            handler=power,
         )
     )

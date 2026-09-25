@@ -170,4 +170,97 @@ def test_all_the_computer_tools_register():
     computer.register(registry)
     system.register(registry)
     assert [d.name for d in registry.definitions()] == [
-        "open_application", "close_application", "search_web", "media", "desktop"]
+        "open_application", "close_application", "search_web", "media", "desktop", "type_text", "screen", "power"]
+
+
+
+# --------------------------------------------------------------- typing
+
+
+def _typing(text, window, press_enter=False):
+    sent = []
+    result = _run(system.type_text({"text": text, "press_enter": press_enter}, TurnContext(), window=lambda: window,
+                                   send=sent.append, own_pids=lambda: {1}))
+    return result, sent
+
+
+def test_typing_goes_to_the_active_window_as_unicode():
+    result, sent = _typing("Привет!\nДа", {"pid": 5, "exe": "WINWORD.EXE", "title": "Документ1 - Word"}, press_enter=True)
+    assert result == {"typed": 10, "into": "Документ1 - Word"}
+    events = sent[0]
+    assert (0, ord("П"), system.KEYEVENTF_UNICODE) in events  # the letter itself, whatever the layout
+    assert events[-2:] == [(system.VK_RETURN, 0, 0), (system.VK_RETURN, 0, system.KEYEVENTF_KEYUP)]
+    assert len(events) == 2 * 10 + 2  # down+up per character (newline as Enter), then Enter
+
+
+def test_never_into_a_terminal_or_my_own_window():
+    result, sent = _typing("rm -rf", {"pid": 5, "exe": "WindowsTerminal.exe", "title": "PowerShell"})
+    assert "terminal" in result["error"] and sent == []
+    result, sent = _typing("привет", {"pid": 1, "exe": "pythonw.exe", "title": "Jarvis"})
+    assert "My own window" in result["error"] and sent == []
+
+
+# --------------------------------------------------------------- the screen
+
+
+def test_png_encoding_and_shrinking():
+    import zlib
+
+    import numpy as np
+
+    rgb = np.zeros((4, 6, 3), dtype=np.uint8)
+    rgb[:, :, 0] = 255
+    png = system.png_bytes(rgb)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and png[12:16] == b"IHDR"
+    idat = png[png.index(b"IDAT") + 4: png.index(b"IEND") - 8]
+    raw = zlib.decompress(idat)
+    assert len(raw) == 4 * (1 + 6 * 3) and raw[1:4] == b"\xff\x00\x00"
+    big = np.full((1200, 1920, 3), 100, dtype=np.uint8)
+    assert system.shrink(big, 1280).shape == (600, 960, 3)
+    assert system.shrink(big, 4000) is big
+
+
+def test_a_screenshot_is_saved_and_a_description_leaves_no_picture(tmp_path):
+    captured = []
+
+    def capture(path, max_width=0):
+        path.write_bytes(b"png")
+        captured.append((path, max_width))
+        return path
+
+    saved = _run(system.screen({"action": "screenshot"}, TurnContext(), capture=capture, folder=lambda: tmp_path))
+    assert saved["saved"].startswith(str(tmp_path)) and captured[0][1] == 0
+
+    async def vision(image, question):
+        assert image == b"png" and "экране" in question
+        return "Открыт браузер с YouTube."
+
+    described = _run(system.screen({"action": "describe"}, TurnContext(), capture=capture, vision=vision))
+    assert described == {"screen": "Открыт браузер с YouTube."}
+    assert captured[1][1] == system.DESCRIBE_WIDTH and not captured[1][0].exists()  # not kept
+
+    async def down(image, question):
+        raise RuntimeError("429")
+
+    assert "didn't answer" in _run(system.screen({"action": "describe"}, TurnContext(), capture=capture,
+                                                 vision=down))["error"]
+
+
+# --------------------------------------------------------------- power
+
+
+def test_shutdown_needs_a_yes_and_can_be_cancelled():
+    ran = []
+
+    def run(args):
+        ran.append(args)
+        return 0
+
+    assert "ask the resident" in _run(system.power({"action": "shutdown"}, TurnContext(), run=run))["error"]
+    assert ran == []
+    result = _run(system.power({"action": "restart", "confirmed": True}, TurnContext(), run=run))
+    assert result == {"scheduled": "restart", "in_seconds": 60, "cancel": "отмени выключение"}
+    assert ran[0][:4] == ["shutdown", "/r", "/t", "60"]
+    assert _run(system.power({"action": "cancel"}, TurnContext(), run=run)) == {"cancelled": True}
+    assert ran[-1] == ["shutdown", "/a"]
+    assert "Nothing was scheduled" in _run(system.power({"action": "cancel"}, TurnContext(), run=lambda a: 1116))["error"]
