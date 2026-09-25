@@ -63,6 +63,27 @@ def _drop_repeated_answer(text: str) -> str:
     return text
 
 
+# Three or more Latin words in a row whose sentence ends glued straight onto
+# a Russian capital - the leak's signature ("correct.Поставила"); a normal
+# sentence after an English title has a space ("Go On. Что дальше?").
+_LATIN_THOUGHT = re.compile(r"[A-Za-z][A-Za-z']*(?:[ ,:;'-]+[A-Za-z][A-Za-z']*){2,}[^.!?\n]*[.!?](?=[А-ЯЁ])")
+
+
+def _drop_leaked_reasoning(text: str) -> str:
+    """gpt-oss on Groq sometimes puts its own thinking into the answer, the
+    real answer glued on after it - seen live: "Поставила ставку?... Oops,
+    need correct.Поставила воспроизведение на паузу." and "Найдено ... We
+    need short answer: opened YouTube search.Открыла поиск на YouTube...".
+    Keep what comes after the last English thought, if that's Russian; an
+    answer that merely quotes an English title stays as it is."""
+    matches = list(_LATIN_THOUGHT.finditer(text))
+    if not matches:
+        return text
+    rest = text[matches[-1].end():].strip()
+    cyrillic = sum("а" <= c.lower() <= "я" or c.lower() == "ё" for c in rest)
+    return rest if rest and cyrillic >= len(rest) * 0.4 else text
+
+
 def _recover_rejected_tool_call(response: httpx.Response) -> LLMResponse | None:
     """Groq checks tool call arguments against the schema itself and turns
     a mismatch into a 400 - seen live: "где жарче всего?" came back as
@@ -177,7 +198,8 @@ class GroqProvider:
         message = choice["message"]
         content: list[ContentBlock] = []
         if message.get("content"):
-            content.append(ContentBlock(type="text", text=_drop_repeated_answer(message["content"])))
+            text = _drop_repeated_answer(_drop_leaked_reasoning(message["content"]))
+            content.append(ContentBlock(type="text", text=text))
 
         for call in message.get("tool_calls") or []:
             content.append(

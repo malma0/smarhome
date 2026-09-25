@@ -260,3 +260,22 @@ def test_an_answer_written_twice_is_kept_once():
         assert _drop_repeated_answer(doubled) == once
     for normal in ("Свет включён. Что-нибудь ещё?", "Готово.Да, всё выключено.", "Версия 2.0 вышла.", ""):
         assert _drop_repeated_answer(normal) == normal
+
+
+
+def test_the_models_leaked_thinking_is_cut_off():
+    from app.llm.groq import _drop_leaked_reasoning
+
+    seen_live = [
+        ("Поставила ставку?... \n\nOops, need correct.Поставила воспроизведение на паузу.",
+         "Поставила воспроизведение на паузу."),
+        ("Следующий трент? \n\nНад тихой тих...... \n\nThe assistant should respond properly.Перешла к следующему треку.",
+         "Перешла к следующему треку."),
+        ("Найдено     \n\n\n\nWe need short answer: opened YouTube search.Открыла поиск на YouTube — «как варить глинтвейн».",
+         "Открыла поиск на YouTube — «как варить глинтвейн»."),
+    ]
+    for leaked, clean in seen_live:
+        assert _drop_leaked_reasoning(leaked) == clean
+    for fine in ("Открыла Steam.", "Включила Never Gonna Give You Up.", "Громкость 40%.", "",
+                 "Сейчас играет The Show Must Go On. Что дальше?"):
+        assert _drop_leaked_reasoning(fine) == fine, fine
