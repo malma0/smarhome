@@ -10,7 +10,11 @@ travel as a JSON-encoded *string*, not a dict, and each tool_call is wrapped
 in a "type": "function" envelope - both translated here, not in agent.py.
 """
 
+import asyncio
+import difflib
 import json
+import re
+import uuid
 from typing import Any
 
 import httpx
@@ -23,6 +27,63 @@ _FINISH_REASON_MAP: dict[str, StopReason] = {
     "stop": "end_turn",
     "length": "max_tokens",
 }
+
+
+# Free tier: 8000 tokens a minute for openai/gpt-oss-120b (x-ratelimit-limit-tokens),
+# and a few house commands in a row can reach it. Groq says how long to wait;
+# a short wait beats a failed voice command, a long one isn't worth holding for.
+MAX_RATE_LIMIT_RETRIES = 2
+MAX_RATE_LIMIT_WAIT_SECONDS = 20
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """Seconds to wait before retrying a 429, or None to not retry."""
+    if response.status_code != 429:
+        return None
+    try:
+        wait = float(response.headers.get("retry-after", "1"))
+    except ValueError:
+        wait = 1.0
+    return wait if wait <= MAX_RATE_LIMIT_WAIT_SECONDS else None
+
+
+_GLUED_SENTENCE = re.compile(r"[.!?…](?=[A-ZА-ЯЁ])")
+
+
+def _drop_repeated_answer(text: str) -> str:
+    """gpt-oss on Groq sometimes writes its answer twice, the second copy
+    glued straight on: "…кухня, 25.5 °C.Самая тёплая комната сейчас — кухня,
+    25,5 °C." (seen live, 3 of 10 house commands). A sentence end followed
+    by a capital with no space, where both sides say nearly the same thing -
+    keep the second copy (it's the model's revision: "25,5" over "25.5")."""
+    for match in _GLUED_SENTENCE.finditer(text):
+        first, second = text[: match.end()], text[match.end() :]
+        if difflib.SequenceMatcher(None, first, second).ratio() > 0.75:
+            return second
+    return text
+
+
+def _recover_rejected_tool_call(response: httpx.Response) -> LLMResponse | None:
+    """Groq checks tool call arguments against the schema itself and turns
+    a mismatch into a 400 - seen live: "где жарче всего?" came back as
+    get_home_status with room: null against a string schema, and the whole
+    turn failed. The call it rejected is in the error ("failed_generation");
+    it's used as is - the tool handlers check their own input anyway."""
+    if response.status_code != 400:
+        return None
+    try:
+        error = response.json()["error"]
+        if error.get("code") != "tool_use_failed":
+            return None
+        call = json.loads(error["failed_generation"])
+        name, arguments = call["name"], call.get("arguments") or {}
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments)
+    except (ValueError, KeyError, TypeError):
+        return None
+    arguments = {k: v for k, v in arguments.items() if v is not None}
+    block = ContentBlock(type="tool_use", id=f"recovered_{uuid.uuid4().hex[:12]}", name=name, input=arguments)
+    return LLMResponse(content=[block], stop_reason="tool_use")
 
 
 class GroqProvider:
@@ -52,15 +113,24 @@ class GroqProvider:
         for message in messages:
             openai_messages.extend(self._translate_message(message))
 
-        response = await self._client.post(
-            f"{self._base_url}/chat/completions",
-            json={
-                "model": self._model,
-                "messages": openai_messages,
-                "tools": [self._to_openai_tool(t) for t in tools],
-                "temperature": self._temperature,
-            },
-        )
+        body = {
+            "model": self._model,
+            "messages": openai_messages,
+            "tools": [self._to_openai_tool(t) for t in tools],
+            "temperature": self._temperature,
+        }
+        if self._model.startswith("openai/gpt-oss"):
+            # Same tool calls, fewer tokens (measured 50 vs 78 per call) -
+            # which is what the free tier's per-minute budget runs out of.
+            body["reasoning_effort"] = "low"
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            response = await self._client.post(f"{self._base_url}/chat/completions", json=body)
+            wait = _retry_after(response)
+            if wait is None or attempt == MAX_RATE_LIMIT_RETRIES:
+                break
+            await asyncio.sleep(wait)
+        if recovered := _recover_rejected_tool_call(response):
+            return recovered
         response.raise_for_status()
         return self._parse_response(response.json())
 
@@ -107,7 +177,7 @@ class GroqProvider:
         message = choice["message"]
         content: list[ContentBlock] = []
         if message.get("content"):
-            content.append(ContentBlock(type="text", text=message["content"]))
+            content.append(ContentBlock(type="text", text=_drop_repeated_answer(message["content"])))
 
         for call in message.get("tool_calls") or []:
             content.append(
