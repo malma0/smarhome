@@ -2,13 +2,29 @@
 
 Each room gets real Home Assistant device types, so Jarvis talks to them
 exactly as it will to real hardware later:
-- light.<room>             - a lamp (on/off + brightness), template light
+- light.<room>              - a lamp (on/off + brightness), template light
 - switch.<room>_socket      - a socket, template switch
-- climate.<room>_ac         - an air conditioner, generic_thermostat in AC mode
+- climate.<room>_ac         - an air conditioner (cools), generic_thermostat
+- climate.<room>_heating    - heating (a radiator), generic_thermostat
+- fan.<room>_ventilation    - ventilation (in a real house: a supply unit,
+                              a breather or a window drive), template fan
 - sensor.<room>_temperature / _humidity / _co2
 Behind them sit input_boolean / input_number helpers: the "physics". The
 sensor helpers ("Симуляция: ...") are what you drag in the HA UI to pretend
 it got hot or stuffy; the power helpers are hidden.
+
+The house keeps its norms by itself - the resident's decision: Jarvis
+doesn't tell anyone a room is stuffy, it airs it. Per room:
+- input_number.<room>_temperature_norm - heating holds norm - 0.5 °C, the
+  AC norm + 0.5 °C (automation "Норма температуры")
+- input_number.<room>_co2_max - ventilation on above it, off 150 ppm under
+  it (automation "Норма CO2", every minute and on every change)
+Home Assistant enforces them, so they hold with Jarvis switched off too;
+Jarvis sets them ("держи в спальне 21", "сделай потеплее").
+
+"Физика" runs every minute: CO2 creeps up (people breathe), ventilation
+brings it down; rooms drift toward a cool autumn outside, heating and the AC
+push back - so the norms visibly work.
 
 Rooms become HA areas - Jarvis finds "свет на кухне" by asking Home
 Assistant what's in the Кухня area, not from a list in its own code. A real
@@ -48,20 +64,36 @@ START = {
     "corridor": (21.0, 42, 500),
     "kitchen": (25.5, 55, 800),
 }
+DEFAULT_TEMPERATURE_NORM = 22
+DEFAULT_CO2_MAX = 800
+NORM_BAND = 0.5  # heating holds norm - 0.5, the AC norm + 0.5
+CO2_HYSTERESIS = 150  # ventilation stops this far under the max
+
+# The physics, per minute.
+OUTSIDE = 19.0  # rooms drift toward it: a cool autumn
+DRIFT = 0.02  # share of the gap to OUTSIDE closed each minute
+HEATER_STEP = 0.4
+AC_STEP = 0.4
+CO2_BREATHING = 15
+CO2_VENTILATION = 90
 
 # Platforms whose entities this script owns (the rest - sun, backup,
 # person... - belong to Home Assistant itself and are left alone).
-OWNED_PLATFORMS = {"input_boolean", "input_number", "template", "generic_thermostat", "script"}
+OWNED_PLATFORMS = {"input_boolean", "input_number", "template", "generic_thermostat", "script", "automation"}
 
 
+def _toggle(entity: str, on: bool) -> list[dict]:
+    return [{"action": f"input_boolean.turn_{'on' if on else 'off'}", "target": {"entity_id": entity}}]
 
 
 def _yaml() -> str:
     input_boolean, input_number = {}, {}
-    lights, switches, sensors, climate = [], [], [], []
+    lights, switches, fans, sensors, climate, automations = [], [], [], [], [], []
+    physics = []
 
     for slug, name, full in ROOMS:
         temperature, humidity, co2 = START[slug]
+
         input_boolean[f"{slug}_light_power"] = {"name": f"{name}: питание света"}
         input_number[f"{slug}_light_brightness"] = {
             "name": f"{name}: яркость света", "min": 1, "max": 255, "step": 1, "initial": 255,
@@ -71,13 +103,13 @@ def _yaml() -> str:
             "unique_id": f"{slug}_light",
             "state": f"{{{{ is_state('input_boolean.{slug}_light_power', 'on') }}}}",
             "level": f"{{{{ states('input_number.{slug}_light_brightness') | int }}}}",
-            "turn_on": [{"action": "input_boolean.turn_on", "target": {"entity_id": f"input_boolean.{slug}_light_power"}}],
-            "turn_off": [{"action": "input_boolean.turn_off", "target": {"entity_id": f"input_boolean.{slug}_light_power"}}],
+            "turn_on": _toggle(f"input_boolean.{slug}_light_power", True),
+            "turn_off": _toggle(f"input_boolean.{slug}_light_power", False),
             "set_level": [
                 {"action": "input_number.set_value",
                  "target": {"entity_id": f"input_number.{slug}_light_brightness"},
                  "data": {"value": "{{ brightness }}"}},
-                {"action": "input_boolean.turn_on", "target": {"entity_id": f"input_boolean.{slug}_light_power"}},
+                *_toggle(f"input_boolean.{slug}_light_power", True),
             ],
         })
 
@@ -99,14 +131,48 @@ def _yaml() -> str:
                 "state_class": "measurement",
             })
 
+        # --- the norms and what keeps them ---
+        input_number[f"{slug}_temperature_norm"] = {
+            "name": f"{name}: норма температуры", "min": 16, "max": 28, "step": 0.5,
+            "initial": DEFAULT_TEMPERATURE_NORM, "unit_of_measurement": "°C", "mode": "box",
+        }
+        input_number[f"{slug}_co2_max"] = {
+            "name": f"{name}: норма CO2 (не выше)", "min": 600, "max": 1500, "step": 50,
+            "initial": DEFAULT_CO2_MAX, "unit_of_measurement": "ppm", "mode": "box",
+        }
+
+        input_boolean[f"{slug}_heater_power"] = {"name": f"{name}: нагрев отопления"}
+        climate.append({
+            "platform": "generic_thermostat",
+            "name": f"{name}: отопление",
+            "unique_id": f"{slug}_heating",
+            "heater": f"input_boolean.{slug}_heater_power",
+            "target_sensor": f"sensor.{slug}_temperature",
+            "min_temp": 5,
+            "max_temp": 30,
+            "target_temp": DEFAULT_TEMPERATURE_NORM - NORM_BAND,
+            "initial_hvac_mode": "heat",
+            "precision": 0.5,
+            "target_temp_step": 0.5,
+        })
+
+        input_boolean[f"{slug}_ventilation_power"] = {"name": f"{name}: мотор вентиляции"}
+        fans.append({
+            "name": f"{name}: вентиляция",
+            "unique_id": f"{slug}_ventilation",
+            "state": f"{{{{ is_state('input_boolean.{slug}_ventilation_power', 'on') }}}}",
+            "turn_on": _toggle(f"input_boolean.{slug}_ventilation_power", True),
+            "turn_off": _toggle(f"input_boolean.{slug}_ventilation_power", False),
+        })
+
         if full:
             input_boolean[f"{slug}_socket_power"] = {"name": f"{name}: питание розетки"}
             switches.append({
                 "name": f"{name}: розетка",
                 "unique_id": f"{slug}_socket",
                 "state": f"{{{{ is_state('input_boolean.{slug}_socket_power', 'on') }}}}",
-                "turn_on": [{"action": "input_boolean.turn_on", "target": {"entity_id": f"input_boolean.{slug}_socket_power"}}],
-                "turn_off": [{"action": "input_boolean.turn_off", "target": {"entity_id": f"input_boolean.{slug}_socket_power"}}],
+                "turn_on": _toggle(f"input_boolean.{slug}_socket_power", True),
+                "turn_off": _toggle(f"input_boolean.{slug}_socket_power", False),
             })
             input_boolean[f"{slug}_ac_compressor"] = {"name": f"{name}: компрессор кондиционера"}
             climate.append({
@@ -118,26 +184,96 @@ def _yaml() -> str:
                 "ac_mode": True,
                 "min_temp": 16,
                 "max_temp": 30,
-                "target_temp": 24,
-                "initial_hvac_mode": "off",
+                "target_temp": DEFAULT_TEMPERATURE_NORM + NORM_BAND,
+                "initial_hvac_mode": "cool",
                 "precision": 0.5,
                 "target_temp_step": 0.5,
             })
+
+        norm = f"states('input_number.{slug}_temperature_norm') | float({DEFAULT_TEMPERATURE_NORM})"
+        keep_temperature = [{
+            "action": "climate.set_temperature",
+            "target": {"entity_id": f"climate.{slug}_heating"},
+            "data": {"temperature": f"{{{{ {norm} - {NORM_BAND} }}}}"},
+        }]
+        if full:
+            keep_temperature.append({
+                "action": "climate.set_temperature",
+                "target": {"entity_id": f"climate.{slug}_ac"},
+                "data": {"temperature": f"{{{{ {norm} + {NORM_BAND} }}}}"},
+            })
+        automations.append({
+            "id": f"{slug}_temperature_norm",
+            "alias": f"{name}: норма температуры",
+            "mode": "restart",
+            "triggers": [
+                {"trigger": "state", "entity_id": f"input_number.{slug}_temperature_norm"},
+                {"trigger": "homeassistant", "event": "start"},
+            ],
+            "actions": keep_temperature,
+        })
+
+        co2_now = f"states('sensor.{slug}_co2') | float(0)"
+        co2_max = f"states('input_number.{slug}_co2_max') | float({DEFAULT_CO2_MAX})"
+        automations.append({
+            "id": f"{slug}_co2_norm",
+            "alias": f"{name}: норма CO2",
+            "mode": "restart",
+            "triggers": [
+                {"trigger": "time_pattern", "minutes": "/1"},
+                {"trigger": "state", "entity_id": [f"sensor.{slug}_co2", f"input_number.{slug}_co2_max"]},
+                {"trigger": "homeassistant", "event": "start"},
+            ],
+            "actions": [{
+                "choose": [
+                    {"conditions": [{"condition": "template", "value_template": f"{{{{ {co2_now} > {co2_max} }}}}"}],
+                     "sequence": [{"action": "fan.turn_on", "target": {"entity_id": f"fan.{slug}_ventilation"}}]},
+                    {"conditions": [{"condition": "template",
+                                     "value_template": f"{{{{ {co2_now} < {co2_max} - {CO2_HYSTERESIS} }}}}"}],
+                     "sequence": [{"action": "fan.turn_off", "target": {"entity_id": f"fan.{slug}_ventilation"}}]},
+                ],
+            }],
+        })
+
+        # --- the physics of this room, one step a minute ---
+        t = f"states('input_number.{slug}_temperature_sim') | float({temperature})"
+        heat = f"({HEATER_STEP} if is_state('input_boolean.{slug}_heater_power', 'on') else 0)"
+        cool = f"({AC_STEP} if is_state('input_boolean.{slug}_ac_compressor', 'on') else 0)" if full else "0"
+        physics.append({
+            "action": "input_number.set_value",
+            "target": {"entity_id": f"input_number.{slug}_temperature_sim"},
+            "data": {"value": f"{{{{ ([[{t} + ({OUTSIDE} - {t}) * {DRIFT} + {heat} - {cool}, 5] | max, 40] | min) | round(1) }}}}"},
+        })
+        c = f"states('input_number.{slug}_co2_sim') | float({co2})"
+        vent = f"({CO2_VENTILATION} if is_state('input_boolean.{slug}_ventilation_power', 'on') else 0)"
+        physics.append({
+            "action": "input_number.set_value",
+            "target": {"entity_id": f"input_number.{slug}_co2_sim"},
+            "data": {"value": f"{{{{ [[{c} + {CO2_BREATHING} - {vent}, 400] | max, 5000] | min }}}}"},
+        })
+
+    automations.append({
+        "id": "virtual_house_physics",
+        "alias": "Виртуальный дом: физика",
+        "triggers": [{"trigger": "time_pattern", "minutes": "/1"}],
+        "actions": physics,
+    })
 
     config = {
         "default_config": None,
         "http": {"server_port": 8123},
         "input_boolean": input_boolean,
         "input_number": input_number,
-        "template": [{"light": lights}, {"switch": switches}, {"sensor": sensors}],
+        "template": [{"light": lights}, {"switch": switches}, {"fan": fans}, {"sensor": sensors}],
         "climate": climate,
+        "automation": automations,
     }
     header = (
         "# GENERATED by homeassistant/virtual_house.py - edit ROOMS there, not this file.\n"
-        "# The virtual house: real HA device types (light/switch/climate/sensor) over\n"
-        "# helper entities, until real devices exist.\n\n"
+        "# The virtual house: real HA device types (light/switch/fan/climate/sensor) over\n"
+        "# helper entities, per-room norms the house keeps by itself, and a little physics.\n\n"
     )
-    body = yaml.safe_dump(config, allow_unicode=True, sort_keys=False, width=120)
+    body = yaml.safe_dump(config, allow_unicode=True, sort_keys=False, width=200)
     return header + body.replace("default_config: null", "default_config:")
 
 
@@ -151,6 +287,33 @@ def _token() -> str:
         if line.startswith("HOME_ASSISTANT_TOKEN="):
             return line.split("=", 1)[1].strip()
     raise SystemExit("HOME_ASSISTANT_TOKEN is not set in .env")
+
+
+def _wanted() -> dict[tuple[str, str], tuple[str | None, str, bool]]:
+    """(platform, unique_id) -> (entity id to give it or None, room slug, hidden)."""
+    wanted = {}
+    for slug, _, full in ROOMS:
+        wanted[("template", f"{slug}_light")] = (f"light.{slug}", slug, False)
+        wanted[("template", f"{slug}_ventilation")] = (f"fan.{slug}_ventilation", slug, False)
+        wanted[("generic_thermostat", f"{slug}_heating")] = (f"climate.{slug}_heating", slug, False)
+        for kind in ("temperature", "humidity", "co2"):
+            wanted[("template", f"{slug}_{kind}")] = (f"sensor.{slug}_{kind}", slug, False)
+            wanted[("input_number", f"{slug}_{kind}_sim")] = (None, slug, False)
+        wanted[("input_number", f"{slug}_temperature_norm")] = (None, slug, False)
+        wanted[("input_number", f"{slug}_co2_max")] = (None, slug, False)
+        wanted[("input_boolean", f"{slug}_light_power")] = (None, slug, True)
+        wanted[("input_number", f"{slug}_light_brightness")] = (None, slug, True)
+        wanted[("input_boolean", f"{slug}_heater_power")] = (None, slug, True)
+        wanted[("input_boolean", f"{slug}_ventilation_power")] = (None, slug, True)
+        wanted[("automation", f"{slug}_temperature_norm")] = (None, slug, False)
+        wanted[("automation", f"{slug}_co2_norm")] = (None, slug, False)
+        if full:
+            wanted[("template", f"{slug}_socket")] = (f"switch.{slug}_socket", slug, False)
+            wanted[("generic_thermostat", f"{slug}_ac")] = (f"climate.{slug}_ac", slug, False)
+            wanted[("input_boolean", f"{slug}_socket_power")] = (None, slug, True)
+            wanted[("input_boolean", f"{slug}_ac_compressor")] = (None, slug, True)
+    wanted[("automation", "virtual_house_physics")] = (None, None, False)
+    return wanted
 
 
 async def setup(url: str = "ws://localhost:8123/api/websocket") -> None:
@@ -190,20 +353,7 @@ async def setup(url: str = "ws://localhost:8123/api/websocket") -> None:
             area = areas.get(name) or await call(type="config/area_registry/create", name=name)
             area_id[slug] = area["area_id"]
 
-        # Entities: stable English ids, into their room, helpers hidden.
-        wanted = {}
-        for slug, _, full in ROOMS:
-            wanted[("template", f"{slug}_light")] = (f"light.{slug}", slug, False)
-            for kind in ("temperature", "humidity", "co2"):
-                wanted[("template", f"{slug}_{kind}")] = (f"sensor.{slug}_{kind}", slug, False)
-                wanted[("input_number", f"{slug}_{kind}_sim")] = (None, slug, False)
-            wanted[("input_boolean", f"{slug}_light_power")] = (None, slug, True)
-            wanted[("input_number", f"{slug}_light_brightness")] = (None, slug, True)
-            if full:
-                wanted[("template", f"{slug}_socket")] = (f"switch.{slug}_socket", slug, False)
-                wanted[("generic_thermostat", f"{slug}_ac")] = (f"climate.{slug}_ac", slug, False)
-                wanted[("input_boolean", f"{slug}_socket_power")] = (None, slug, True)
-                wanted[("input_boolean", f"{slug}_ac_compressor")] = (None, slug, True)
+        wanted = _wanted()
 
         # Stale ones first (from an older version of this file - the 4-room
         # prototype): they may hold the ids the new entities are renamed to.
@@ -222,7 +372,7 @@ async def setup(url: str = "ws://localhost:8123/api/websocket") -> None:
                 continue
             found.add(key)
             entity_id, slug, hidden = wanted[key]
-            changes = {"area_id": area_id[slug], "hidden_by": "user" if hidden else None}
+            changes = {"area_id": area_id.get(slug), "hidden_by": "user" if hidden else None}
             if entity_id and entry["entity_id"] != entity_id:
                 changes["new_entity_id"] = entity_id
             await call(type="config/entity_registry/update", entity_id=entry["entity_id"], **changes)
