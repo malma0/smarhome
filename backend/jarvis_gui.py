@@ -40,6 +40,10 @@ TOOL_LABELS = {
     "control_devices": "Дом",
     "set_room_norm": "Норма",
     "run_scenario": "Сценарий",
+    "close_application": "Закрыла",
+    "search_web": "Поиск",
+    "media": "Медиа",
+    "desktop": "Компьютер",
     "reminders": "Напоминания",
     "get_weather": "Погода",
 }
@@ -78,6 +82,22 @@ def summarize_action(action: dict) -> dict:
         if result.get("brightness_pct") is not None:
             summary += f", {result['brightness_pct']}%"
         return {"ok": True, "summary": summary}
+    if tool == "close_application":
+        if result.get("closed"):
+            return {"ok": True, "summary": f"Закрыла {result['closed']}" + (" (принудительно)" if result.get("forced") else "")}
+        return {"ok": True, "summary": f"{result.get('still_running', '')}: работает в фоне".strip()}
+    if tool == "search_web":
+        return {"ok": True, "summary": f"Поиск: {result.get('searched', '')}"}
+    if tool == "media":
+        if "volume" in result:
+            return {"ok": True, "summary": "Звук выключен" if result.get("muted") else f"Громкость {result['volume']}%"}
+        names = {"play_pause": "Пауза / воспроизведение", "next": "Следующий трек", "previous": "Предыдущий трек",
+                 "stop": "Стоп"}
+        return {"ok": True, "summary": names.get(result.get("done"), label)}
+    if tool == "desktop":
+        names = {"lock": "Заблокировала компьютер", "minimize_all": "Свернула все окна",
+                 "restore_windows": "Вернула окна"}
+        return {"ok": True, "summary": names.get(result.get("done"), "Состояние компьютера")}
     if tool == "reminders":
         if result.get("added"):
             added = result["added"]

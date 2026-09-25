@@ -179,3 +179,16 @@ def test_a_ring_reaches_the_window():
     ui.ring("Таймер на 10 минут", "reminder:1", True)
     assert ui.drain()
     assert _events(calls) == [{"type": "ring", "text": "Таймер на 10 минут", "key": "reminder:1", "active": True}]
+
+
+
+def test_computer_chips():
+    chip = lambda tool, result: summarize_action({"tool": tool, "input": {}, "result": result})["summary"]
+    assert chip("media", {"volume": 40, "muted": False}) == "Громкость 40%"
+    assert chip("media", {"volume": 40, "muted": True}) == "Звук выключен"
+    assert chip("media", {"done": "next"}) == "Следующий трек"
+    assert chip("close_application", {"closed": "steam", "forced": True}) == "Закрыла steam (принудительно)"
+    assert chip("close_application", {"still_running": "steam"}) == "steam: работает в фоне"
+    assert chip("desktop", {"done": "lock"}) == "Заблокировала компьютер"
+    assert chip("desktop", {"cpu_percent": 5}) == "Состояние компьютера"
+    assert chip("search_web", {"searched": "борщ"}) == "Поиск: борщ"
