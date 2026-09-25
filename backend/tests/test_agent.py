@@ -191,3 +191,42 @@ def test_the_model_is_told_the_current_local_time():
 
     now = datetime(2026, 9, 26, 7, 30, tzinfo=timezone(timedelta(hours=7)))
     assert current_time_note(now) == "Current local time: 2026-09-26 07:30, Saturday (UTC+0700)."
+
+
+
+def test_a_cancelled_turn_leaves_no_half_done_history(memory):
+    """"Джарвис, стоп" mid-answer: a tool call left without its result would
+    make the provider reject the next request."""
+    import asyncio
+
+    from app.agent import JarvisAgent
+    from app.llm.base import ContentBlock, LLMResponse
+    from app.tools.registry import Tool, ToolRegistry
+
+    started = asyncio.Event()
+
+    async def slow_tool(tool_input, ctx):
+        started.set()
+        await asyncio.sleep(10)
+        return {"ok": True}
+
+    tools = ToolRegistry()
+    tools.register(Tool(name="slow", description="", parameters={"type": "object"}, handler=slow_tool))
+    llm = AsyncMock()
+    llm.generate.side_effect = [
+        LLMResponse(content=[ContentBlock(type="tool_use", id="t1", name="slow", input={})], stop_reason="tool_use"),
+        LLMResponse(content=[ContentBlock(type="text", text="Готово.")], stop_reason="end_turn"),
+    ]
+    agent = JarvisAgent(llm=llm, tools=tools, memory=memory)
+
+    async def go():
+        task = asyncio.ensure_future(agent.chat("s", "r", "расскажи длинно"))
+        await started.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return agent._sessions["s"]
+
+    assert asyncio.run(go()) == []

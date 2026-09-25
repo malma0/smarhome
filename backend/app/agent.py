@@ -5,6 +5,7 @@ into the ToolRegistry from outside - build_default_agent() wires in
 app.domains.computer and files (phase 2) and app.domains.home (phase 3,
 Home Assistant - when HOME_ASSISTANT_TOKEN is set), see docs/TZ.md."""
 
+import asyncio
 from datetime import datetime
 
 from app.config import settings
@@ -88,6 +89,17 @@ class JarvisAgent:
         # same turn's reply, not just later ones - see persona.py.
         update_resident_gender(self.memory, resident_id, user_message)
         history = self._sessions.setdefault(session_id, [])
+        turn_start = len(history)
+        try:
+            return await self._turn(history, resident_id, user_message, spoken)
+        except asyncio.CancelledError:
+            # "Джарвис, стоп" mid-answer: the whole turn goes. Left half-done -
+            # a tool call without its result - the next request would be
+            # rejected by the provider.
+            del history[turn_start:]
+            raise
+
+    async def _turn(self, history: list[dict], resident_id: str, user_message: str, spoken: bool) -> dict:
         history.append({"role": "user", "content": user_message})
 
         system_prompt = self._build_system_prompt(resident_id, spoken=spoken)
