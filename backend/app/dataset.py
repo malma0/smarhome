@@ -37,10 +37,17 @@ class UtteranceLog:
         resident_id: str,
         transcript: str | None,
         response: str | None = None,
+        **extra,
     ) -> str:
         """transcript is None when transcription itself failed (a network
         error), "" when Whisper returned nothing - both still worth keeping,
-        the audio is real and can be corrected by hand."""
+        the audio is real and can be corrected by hand.
+
+        resident_id is who Jarvis thought was speaking; extra fields (see
+        voice_app.handle_phrase: speaker_how, speaker_score, voiceprint)
+        record how sure that was - the same phrases are the training data
+        for telling residents' voices apart, where a wrong label teaches
+        the wrong thing."""
         now = datetime.now(timezone.utc)
         utterance_id = f"{now:%Y%m%dT%H%M%S}_{uuid.uuid4().hex[:6]}"
         file_name = f"audio/{utterance_id}.wav"
@@ -57,6 +64,7 @@ class UtteranceLog:
             "transcript": transcript,
             "corrected_text": None,
             "response": response,
+            **extra,
         }
         with self._metadata.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -68,14 +76,20 @@ class UtteranceLog:
         return [json.loads(line) for line in self._metadata.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     def correct(self, utterance_id: str, corrected_text: str) -> bool:
-        return self._update(utterance_id, corrected_text=corrected_text)
+        return self.update(utterance_id, corrected_text=corrected_text)
 
     def set_response(self, utterance_id: str, response: str | None) -> bool:
         """The phrase is logged as soon as it's transcribed (so it can be
         corrected right away), the reply filled in once there is one."""
-        return self._update(utterance_id, response=response)
+        return self.update(utterance_id, response=response)
 
-    def _update(self, utterance_id: str, **fields) -> bool:
+    def get(self, utterance_id: str) -> dict | None:
+        return next((r for r in self._read_records() if r["id"] == utterance_id), None)
+
+    def audio(self, record: dict) -> bytes:
+        return (self._root / record["file_name"]).read_bytes()
+
+    def update(self, utterance_id: str, **fields) -> bool:
         """Rewrites the whole metadata file - fine at the scale of one
         household's recordings, and keeps the file a plain audiofolder
         metadata.jsonl rather than an append-only log of edits."""

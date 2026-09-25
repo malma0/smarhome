@@ -80,6 +80,22 @@ def test_response_can_be_filled_in_after_logging(tmp_path):
     assert record["transcript"] == "сколько времени"
 
 
+def test_speaker_details_are_kept_and_a_record_can_be_read_back_and_relabeled(tmp_path):
+    log = UtteranceLog(tmp_path)
+    wav = _wav(1.0)
+    utterance_id = log.log(
+        wav_bytes=wav, resident_id="Матвей", transcript="привет", speaker_how="last", speaker_score=0.39
+    )
+
+    record = log.get(utterance_id)
+    assert (record["speaker_how"], record["speaker_score"]) == ("last", 0.39)
+    assert log.audio(record) == wav
+
+    log.update(utterance_id, resident_id="Эля", speaker_how="corrected")
+    assert log.get(utterance_id)["resident_id"] == "Эля"
+    assert log.get("nope") is None
+
+
 def test_correct_unknown_id_returns_false_and_changes_nothing(tmp_path):
     log = UtteranceLog(tmp_path)
     log.log(wav_bytes=_wav(0.5), resident_id="default", transcript="привет")
