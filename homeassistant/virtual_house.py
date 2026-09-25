@@ -9,6 +9,9 @@ exactly as it will to real hardware later:
 - fan.<room>_ventilation    - ventilation (in a real house: a supply unit,
                               a breather or a window drive), template fan
 - sensor.<room>_temperature / _humidity / _co2
+- binary_sensor.<room>_smoke, and in the kitchen binary_sensor.kitchen_leak
+  and binary_sensor.kitchen_gas - the dangers
+- switch.water_valve / switch.gas_valve - main valves (on = open)
 Behind them sit input_boolean / input_number helpers: the "physics". The
 sensor helpers ("Симуляция: ...") are what you drag in the HA UI to pretend
 it got hot or stuffy; the power helpers are hidden.
@@ -21,6 +24,13 @@ doesn't tell anyone a room is stuffy, it airs it. Per room:
   it (automation "Норма CO2", every minute and on every change)
 Home Assistant enforces them, so they hold with Jarvis switched off too;
 Jarvis sets them ("держи в спальне 21", "сделай потеплее").
+
+Dangers get the house's own reflexes first (automations, instant, Jarvis or
+no Jarvis): a leak closes the water, gas closes the gas, smoke stops all
+ventilation (it feeds a fire and spreads smoke - the CO2 norm stays off
+while smoke is detected) and turns every light on to see the way out.
+Jarvis raises the alarm (app/danger.py). "Симуляция: дым, Кухня" and the
+like set them off from the HA UI.
 
 "Физика" runs every minute: CO2 creeps up (people breathe), ventilation
 brings it down; rooms drift toward a cool autumn outside, heating and the AC
@@ -45,6 +55,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "homeassistant" / "config" / "configuration.yaml"
+
+# Where the one-off danger sensors and the main valves are.
+LEAK_ROOM = GAS_ROOM = VALVE_ROOM = "kitchen"
 
 # (slug, name, has sockets and an AC) - preliminary, will change.
 ROOMS = [
@@ -89,7 +102,28 @@ def _toggle(entity: str, on: bool) -> list[dict]:
 def _yaml() -> str:
     input_boolean, input_number = {}, {}
     lights, switches, fans, sensors, climate, automations = [], [], [], [], [], []
+    binary_sensors = []
     physics = []
+    no_smoke = " and ".join(f"is_state('binary_sensor.{slug}_smoke', 'off')" for slug, _, _ in ROOMS)
+
+    def danger_sensor(slug: str, room: str, kind: str, label: str, device_class: str) -> None:
+        input_boolean[f"{slug}_{kind}_sim"] = {"name": f"Симуляция: {label}, {room}"}
+        binary_sensors.append({
+            "name": f"{room}: {label}",
+            "unique_id": f"{slug}_{kind}",
+            "state": f"{{{{ is_state('input_boolean.{slug}_{kind}_sim', 'on') }}}}",
+            "device_class": device_class,
+        })
+
+    for valve, label in (("water_valve", "кран воды"), ("gas_valve", "кран газа")):
+        input_boolean[f"{valve}_open"] = {"name": f"Главный {label}: открыт", "initial": True}
+        switches.append({
+            "name": f"Главный {label}",
+            "unique_id": valve,
+            "state": f"{{{{ is_state('input_boolean.{valve}_open', 'on') }}}}",
+            "turn_on": _toggle(f"input_boolean.{valve}_open", True),
+            "turn_off": _toggle(f"input_boolean.{valve}_open", False),
+        })
 
     for slug, name, full in ROOMS:
         temperature, humidity, co2 = START[slug]
@@ -130,6 +164,12 @@ def _yaml() -> str:
                 "device_class": device_class,
                 "state_class": "measurement",
             })
+
+        danger_sensor(slug, name, "smoke", "дым", "smoke")
+        if slug == LEAK_ROOM:
+            danger_sensor(slug, name, "leak", "протечка", "moisture")
+        if slug == GAS_ROOM:
+            danger_sensor(slug, name, "gas", "газ", "gas")
 
         # --- the norms and what keeps them ---
         input_number[f"{slug}_temperature_norm"] = {
@@ -224,6 +264,8 @@ def _yaml() -> str:
                 {"trigger": "state", "entity_id": [f"sensor.{slug}_co2", f"input_number.{slug}_co2_max"]},
                 {"trigger": "homeassistant", "event": "start"},
             ],
+            # Never during a fire: ventilation feeds it and spreads the smoke.
+            "conditions": [{"condition": "template", "value_template": f"{{{{ {no_smoke} }}}}"}],
             "actions": [{
                 "choose": [
                     {"conditions": [{"condition": "template", "value_template": f"{{{{ {co2_now} > {co2_max} }}}}"}],
@@ -252,6 +294,32 @@ def _yaml() -> str:
             "data": {"value": f"{{{{ [[{c} + {CO2_BREATHING} - {vent}, 400] | max, 5000] | min }}}}"},
         })
 
+    automations += [
+        {
+            "id": "danger_leak",
+            "alias": "Опасность: протечка - перекрыть воду",
+            "triggers": [{"trigger": "state", "entity_id": f"binary_sensor.{LEAK_ROOM}_leak", "to": "on"}],
+            "actions": [{"action": "switch.turn_off", "target": {"entity_id": "switch.water_valve"}}],
+        },
+        {
+            "id": "danger_gas",
+            "alias": "Опасность: газ - перекрыть газ",
+            "triggers": [{"trigger": "state", "entity_id": f"binary_sensor.{GAS_ROOM}_gas", "to": "on"}],
+            "actions": [{"action": "switch.turn_off", "target": {"entity_id": "switch.gas_valve"}}],
+        },
+        {
+            "id": "danger_smoke",
+            "alias": "Опасность: дым - вентиляцию стоп, свет везде",
+            "triggers": [{"trigger": "state", "entity_id": [f"binary_sensor.{slug}_smoke" for slug, _, _ in ROOMS],
+                          "to": "on"}],
+            "actions": [
+                {"action": "fan.turn_off", "target": {"entity_id": [f"fan.{slug}_ventilation" for slug, _, _ in ROOMS]}},
+                {"action": "light.turn_on", "target": {"entity_id": [f"light.{slug}" for slug, _, _ in ROOMS]},
+                 "data": {"brightness_pct": 100}},
+            ],
+        },
+    ]
+
     automations.append({
         "id": "virtual_house_physics",
         "alias": "Виртуальный дом: физика",
@@ -264,14 +332,16 @@ def _yaml() -> str:
         "http": {"server_port": 8123},
         "input_boolean": input_boolean,
         "input_number": input_number,
-        "template": [{"light": lights}, {"switch": switches}, {"fan": fans}, {"sensor": sensors}],
+        "template": [{"light": lights}, {"switch": switches}, {"fan": fans}, {"sensor": sensors},
+                     {"binary_sensor": binary_sensors}],
         "climate": climate,
         "automation": automations,
     }
     header = (
         "# GENERATED by homeassistant/virtual_house.py - edit ROOMS there, not this file.\n"
-        "# The virtual house: real HA device types (light/switch/fan/climate/sensor) over\n"
-        "# helper entities, per-room norms the house keeps by itself, and a little physics.\n\n"
+        "# The virtual house: real HA device types (light/switch/fan/climate/sensor/binary_sensor)\n"
+        "# over helper entities, per-room norms the house keeps by itself, danger reflexes,\n"
+        "# and a little physics.\n\n"
     )
     body = yaml.safe_dump(config, allow_unicode=True, sort_keys=False, width=200)
     return header + body.replace("default_config: null", "default_config:")
@@ -307,12 +377,25 @@ def _wanted() -> dict[tuple[str, str], tuple[str | None, str, bool]]:
         wanted[("input_boolean", f"{slug}_ventilation_power")] = (None, slug, True)
         wanted[("automation", f"{slug}_temperature_norm")] = (None, slug, False)
         wanted[("automation", f"{slug}_co2_norm")] = (None, slug, False)
+        wanted[("template", f"{slug}_smoke")] = (f"binary_sensor.{slug}_smoke", slug, False)
+        wanted[("input_boolean", f"{slug}_smoke_sim")] = (None, slug, False)
+        if slug == LEAK_ROOM:
+            wanted[("template", f"{slug}_leak")] = (f"binary_sensor.{slug}_leak", slug, False)
+            wanted[("input_boolean", f"{slug}_leak_sim")] = (None, slug, False)
+        if slug == GAS_ROOM:
+            wanted[("template", f"{slug}_gas")] = (f"binary_sensor.{slug}_gas", slug, False)
+            wanted[("input_boolean", f"{slug}_gas_sim")] = (None, slug, False)
         if full:
             wanted[("template", f"{slug}_socket")] = (f"switch.{slug}_socket", slug, False)
             wanted[("generic_thermostat", f"{slug}_ac")] = (f"climate.{slug}_ac", slug, False)
             wanted[("input_boolean", f"{slug}_socket_power")] = (None, slug, True)
             wanted[("input_boolean", f"{slug}_ac_compressor")] = (None, slug, True)
     wanted[("automation", "virtual_house_physics")] = (None, None, False)
+    for valve in ("water_valve", "gas_valve"):
+        wanted[("template", valve)] = (f"switch.{valve}", VALVE_ROOM, False)
+        wanted[("input_boolean", f"{valve}_open")] = (None, VALVE_ROOM, True)
+    for automation in ("danger_leak", "danger_gas", "danger_smoke"):
+        wanted[("automation", automation)] = (None, None, False)
     return wanted
 
 
