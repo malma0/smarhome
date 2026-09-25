@@ -280,6 +280,16 @@ def match_resident(
     return decide(rank_residents(embedding, enrolled), threshold)
 
 
+def match_resident_scored(
+    embedding: np.ndarray, enrolled: dict[str, list[np.ndarray]], threshold: float | None = None
+) -> tuple[str | None, bool, float | None]:
+    """match_resident plus the best score - kept with each phrase in the
+    dataset, so training data can be filtered by how sure the call was."""
+    ranked = rank_residents(embedding, enrolled)
+    resident, confident = decide(ranked, threshold)
+    return resident, confident, (round(ranked[0][1], 3) if ranked else None)
+
+
 def identify_resident(
     embedding: np.ndarray,
     enrolled: dict[str, list[np.ndarray]],
@@ -363,14 +373,34 @@ def sample_audio(root: Path | None = None) -> dict[str, list[Path]]:
     return {d.name: sorted(d.glob("*.wav")) for d in sorted(base.iterdir()) if d.is_dir() and any(d.glob("*.wav"))}
 
 
-def rebuild_profiles(memory: MemoryStore, root: Path | None = None, max_samples: int = MAX_ENROLLED_SAMPLES) -> dict[str, int]:
-    """Re-embeds every resident's saved recordings with the active model and
-    replaces their profile for it (latest max_samples). Returns resident ->
-    samples used."""
+def rebuild_profiles(
+    memory: MemoryStore,
+    root: Path | None = None,
+    max_samples: int = MAX_ENROLLED_SAMPLES,
+    only: set[str] | None = None,
+) -> dict[str, int]:
+    """Re-embeds residents' saved recordings with the active model and
+    replaces their profile for it (latest max_samples) - everyone, or just
+    the residents in `only`. A resident in `only` with no recordings left
+    gets their profile cleared. Returns resident -> samples used."""
+    audio = sample_audio(root)
+    targets = set(audio) if only is None else {_folder_name(r) for r in only}
     rebuilt = {}
-    for resident_id, paths in sample_audio(root).items():
+    for resident_id in sorted(targets):
+        paths = audio.get(resident_id, [])
         embeddings = [embed_wav_bytes(p.read_bytes()) for p in paths[-max_samples:]]
         memory.ensure_resident(resident_id)
         memory.set_preference(resident_id, _active.preference_key, _samples_to_json(embeddings))
         rebuilt[resident_id] = len(embeddings)
     return rebuilt
+
+
+def move_sample_audio(path: Path, resident_id: str, root: Path | None = None) -> Path:
+    """A sample saved under the wrong person (misidentified, then corrected)
+    moves to the right one's folder. Returns the new path."""
+    folder = (root or VOICEPRINTS_DIR) / _folder_name(resident_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / path.name
+    if target.exists():
+        target = folder / f"{path.stem}_{uuid.uuid4().hex[:6]}{path.suffix}"
+    return path.replace(target)
