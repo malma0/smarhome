@@ -35,6 +35,8 @@ class Settings:
     voicebox_reference_wav: str
     voicebox_russian_stress: bool
     voicebox_cleanup: bool
+    danger_alerts: bool
+    danger_alert_voice: str
     voicebox_tempo: float
     voicebox_ending_tempo: float | None
     ruaccent_model: str
@@ -81,6 +83,8 @@ def load_settings() -> Settings:
         voicebox_reference_wav=os.environ.get("VOICEBOX_REFERENCE_WAV", ""),
         voicebox_russian_stress=os.environ.get("VOICEBOX_RUSSIAN_STRESS", "true").strip().lower()
         not in ("false", "0", "no"),
+        danger_alerts=os.environ.get("DANGER_ALERTS", "true").strip().lower() not in ("false", "0", "no"),
+        danger_alert_voice=os.environ.get("DANGER_ALERT_VOICE", "sapi").strip().lower(),
         voicebox_cleanup=os.environ.get("VOICEBOX_CLEANUP", "false").strip().lower() in ("true", "1", "yes"),
         voicebox_tempo=float(os.environ.get("VOICEBOX_TEMPO", "") or 1.0),
         voicebox_ending_tempo=float(os.environ["VOICEBOX_ENDING_TEMPO"]) if os.environ.get("VOICEBOX_ENDING_TEMPO") else None,

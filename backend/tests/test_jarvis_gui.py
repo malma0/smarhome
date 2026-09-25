@@ -147,3 +147,11 @@ def test_norm_changes_read_as_the_new_norm():
         {"tool": "control_devices", "input": {"room": "кухня", "device": "ventilation", "action": "on"},
          "result": {"done": [{"room": "Кухня", "device": "ventilation", "action": "on"}]}}
     ) == {"ok": True, "summary": "Кухня: вентиляция включена"}
+
+
+def test_a_danger_reaches_the_window_with_its_key():
+    ui, calls = _ui()
+    ui.mark_ready()
+    ui.alert("Внимание! Дым: кухня!", "smoke:Кухня", True)
+    assert ui.drain()
+    assert _events(calls) == [{"type": "alert", "text": "Внимание! Дым: кухня!", "key": "smoke:Кухня", "active": True}]

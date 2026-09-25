@@ -524,6 +524,71 @@ def _warm_up_speaker_id() -> None:
         pass
 
 
+class AlarmVoice:
+    """Siren and a spoken message for danger alerts (app.danger), on a
+    thread of its own. The offline Windows voice, not the reply voice:
+    Voicebox takes ~25 s per phrase here, and an alarm can't wait - SAPI
+    speaks at once. Separate from JARVIS_TTS_ENABLED on purpose: replies can
+    be silent, a fire can't. DANGER_ALERT_VOICE=none leaves only the siren."""
+
+    def __init__(self, speak: bool = True):
+        self._speak = speak
+        self._queue: "queue.Queue" = queue.Queue()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def say(self, alert) -> None:
+        self._queue.put(alert)
+
+    def _run(self) -> None:
+        engine = None
+        while True:
+            alert = self._queue.get()
+            try:
+                if alert.active:
+                    _play_siren()
+                if self._speak:
+                    if engine is None:
+                        import pyttsx3
+
+                        engine = pyttsx3.init()  # owned by this thread - SAPI is COM, thread-bound
+                        from app.tts.sapi import pick_voice_id
+
+                        voice_id = pick_voice_id(engine.getProperty("voices"), "ru")
+                        if voice_id:
+                            engine.setProperty("voice", voice_id)
+                    engine.say(alert.text)
+                    engine.runAndWait()
+            except Exception as exc:  # noqa: BLE001 - the banner is already up; sound is extra
+                print(f"(тревога: звук не сработал - {exc!r})")
+
+
+def _play_siren(cycles: int = 3, rate: int = 22050) -> None:
+    import sounddevice as sd
+
+    t = np.arange(int(0.35 * rate)) / rate
+    fade = np.minimum(1, np.minimum(t, t[::-1]) / 0.01)  # no clicks
+    tones = [0.5 * np.sin(2 * np.pi * f * t) * fade for f in (880, 660)]
+    sd.play(np.concatenate(tones * cycles).astype(np.float32), samplerate=rate, blocking=True)
+
+
+def start_danger_watch(ui: VoiceUI):
+    """Starts app.danger's watcher on a thread of its own, reporting to the
+    UI and the alarm voice. None when there's no Home Assistant to watch."""
+    if not settings.danger_alerts or not settings.home_assistant_token:
+        return None
+    from app.danger import DangerWatcher
+
+    voice = AlarmVoice(speak=settings.danger_alert_voice != "none")
+
+    def on_alert(alert) -> None:
+        ui.alert(alert.text, alert.key, alert.active)
+        voice.say(alert)
+
+    watcher = DangerWatcher(on_alert)
+    threading.Thread(target=lambda: asyncio.run(watcher.run()), daemon=True).start()
+    return watcher
+
+
 def build_wake_detector(ui: VoiceUI) -> WakeWordDetector | None:
     try:
         return WakeWordDetector(settings.vosk_model_path, parse_wake_words(settings.wake_words))
@@ -861,6 +926,7 @@ async def main() -> None:
     session = await build_session(console, resident_id)
     if session is None:
         return
+    start_danger_watch(console)
 
     if settings.voice_mode == "wake":
         detector = build_wake_detector(console)

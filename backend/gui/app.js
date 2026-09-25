@@ -294,6 +294,25 @@ function addNote(text) {
   scrollDown();
 }
 
+// Dangers (app/danger.py): a red banner that stays until the sensor goes
+// quiet, plus the message in the chat.
+const alarmBanners = new Map();
+function onAlert(e) {
+  const old = alarmBanners.get(e.key);
+  if (old) { old.remove(); alarmBanners.delete(e.key); }
+  if (e.active) {
+    const banner = document.createElement("div");
+    banner.className = "alarm-banner";
+    banner.textContent = e.text;
+    $("alarms").appendChild(banner);
+    alarmBanners.set(e.key, banner);
+    addJarvis(e.text, []);
+    chat.lastElementChild.classList.add("alarm");
+  } else {
+    addNote(e.text);
+  }
+}
+
 let toastTimer = null;
 function toast(text) {
   const el = $("toast");
@@ -457,6 +476,7 @@ window.jarvis = {
       case "ask_name": askName(e.prompt, e.known); break;
       case "voices": voiceProfiles = e.profiles || []; if (!$("voicesModal").hidden && !enrollingName) renderVoices(); break;
       case "enroll": onEnroll(e); break;
+      case "alert": onAlert(e); break;
     }
   },
 };

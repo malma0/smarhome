@@ -64,6 +64,11 @@ class VoiceUI(Protocol):
         """Everyone with a voice profile: [{"name": ..., "samples": n}]."""
         ...
 
+    def alert(self, text: str, key: str, active: bool) -> None:
+        """A danger (app.danger): active=True raises it - shown until the
+        same key comes back with active=False."""
+        ...
+
     def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
         """Deliberate voice recording for one person. status: "started",
         "progress", "done", "partial" (timed out with some samples),
@@ -110,6 +115,9 @@ class ConsoleUI:
 
     def voices(self, profiles: list[dict]) -> None:
         pass
+
+    def alert(self, text: str, key: str, active: bool) -> None:
+        print(f"\n!!! {text} !!!\n" if active else f"({text})")
 
     def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
         messages = {

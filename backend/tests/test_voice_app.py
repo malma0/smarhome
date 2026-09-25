@@ -767,3 +767,16 @@ def test_declining_via_eof_falls_back_to_default(memory, monkeypatch):
     result = identify_or_enroll_speaker(memory, b"wav", "default", 0.75, prompt_for_name=_eof)
 
     assert result == "default"
+
+
+def test_no_danger_watch_without_home_assistant_or_when_switched_off(monkeypatch):
+    import dataclasses
+
+    import voice_app
+
+    monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, home_assistant_token=""))
+    assert voice_app.start_danger_watch(_RecordingUI()) is None
+    monkeypatch.setattr(
+        voice_app, "settings", dataclasses.replace(voice_app.settings, home_assistant_token="t", danger_alerts=False)
+    )
+    assert voice_app.start_danger_watch(_RecordingUI()) is None

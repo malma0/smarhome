@@ -42,7 +42,7 @@ TOOL_LABELS = {
 }
 
 DEVICE_NAMES = {"light": "свет", "socket": "розетка", "ac": "кондиционер", "heating": "отопление",
-                "ventilation": "вентиляция"}
+                "ventilation": "вентиляция", "water_valve": "кран воды", "gas_valve": "кран газа"}
 # (device, action) -> how its state reads: "Кухня: свет включён"
 DEVICE_STATES = {
     ("light", "on"): "включён", ("light", "off"): "выключен",
@@ -50,6 +50,8 @@ DEVICE_STATES = {
     ("ac", "on"): "включён", ("ac", "off"): "выключен",
     ("heating", "on"): "включено", ("heating", "off"): "выключено",
     ("ventilation", "on"): "включена", ("ventilation", "off"): "выключена",
+    ("water_valve", "on"): "открыт", ("water_valve", "off"): "закрыт",
+    ("gas_valve", "on"): "открыт", ("gas_valve", "off"): "закрыт",
 }
 
 
@@ -181,6 +183,9 @@ class WebviewUI:
     def voices(self, profiles: list[dict]) -> None:
         self._send({"type": "voices", "profiles": profiles})
 
+    def alert(self, text: str, key: str, active: bool) -> None:
+        self._send({"type": "alert", "text": text, "key": key, "active": active})
+
     def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
         self._send({"type": "enroll", "name": name, "collected": collected, "needed": needed, "status": status})
 
@@ -261,6 +266,7 @@ async def _voice_main(ui: WebviewUI, commands: "queue.Queue[tuple]") -> None:
             ui.push_stats()
         if session.resident_id != "default":
             ui.resident(session.resident_id)
+        voice_app.start_danger_watch(ui)
         detector = voice_app.build_wake_detector(ui) if settings.voice_mode == "wake" else None
         await voice_app.run_hands_free(session, detector, commands)
     except Exception as exc:  # noqa: BLE001 - show it instead of silently dying behind the window
