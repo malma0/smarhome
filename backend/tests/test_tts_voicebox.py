@@ -135,6 +135,34 @@ def test_speak_speeds_the_reply_up_when_asked(monkeypatch):
     assert abs(_wav_seconds(played[0]) - 2.0) < 0.05
 
 
+def test_the_last_sentence_can_have_its_own_speed(monkeypatch):
+    import io
+    import wave
+
+    import numpy as np
+
+    rate = 24000
+    t = np.arange(int(3.0 * rate)) / rate
+    tone = 0.3 * np.sin(2 * np.pi * 230 * t)
+    audio = np.concatenate([tone, np.zeros(int(0.2 * rate)), tone[: rate]])  # 3 s, pause, 1 s
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes((audio * 32767).astype(np.int16).tobytes())
+    transport, _ = _make_transport(audio_bytes=buffer.getvalue())
+    _use_transport(monkeypatch, transport)
+    played = []
+    monkeypatch.setattr("app.tts.voicebox.play_wav_bytes", lambda audio: played.append(audio))
+
+    provider = VoiceboxTTSProvider(profile="JarvisVoice", base_url="http://vb", tempo=1.2, ending_tempo=1.1)
+    # the last sentence is ~1/4 of the text, like ~1/4 of the audio
+    asyncio.run(provider.speak("Я включила свет на кухне и таймер. Что-нибудь ещё?"))
+
+    assert abs(_wav_seconds(played[0]) - (3.1 / 1.2 + 1.1 / 1.1)) < 0.03
+
+
 def test_a_failed_cleanup_still_plays_the_original(monkeypatch):
     transport, _ = _make_transport(audio_bytes=b"not-a-wav")
     _use_transport(monkeypatch, transport)

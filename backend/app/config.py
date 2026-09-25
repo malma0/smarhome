@@ -36,6 +36,7 @@ class Settings:
     voicebox_russian_stress: bool
     voicebox_cleanup: bool
     voicebox_tempo: float
+    voicebox_ending_tempo: float | None
     ruaccent_model: str
     tts_enabled: bool
     voice_id_enabled: bool
@@ -82,6 +83,7 @@ def load_settings() -> Settings:
         not in ("false", "0", "no"),
         voicebox_cleanup=os.environ.get("VOICEBOX_CLEANUP", "false").strip().lower() in ("true", "1", "yes"),
         voicebox_tempo=float(os.environ.get("VOICEBOX_TEMPO", "") or 1.0),
+        voicebox_ending_tempo=float(os.environ["VOICEBOX_ENDING_TEMPO"]) if os.environ.get("VOICEBOX_ENDING_TEMPO") else None,
         ruaccent_model=os.environ.get("RUACCENT_MODEL", "tiny2.1"),
         tts_enabled=os.environ.get("JARVIS_TTS_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
         voice_id_enabled=os.environ.get("VOICE_ID_ENABLED", "true").strip().lower() not in ("false", "0", "no"),

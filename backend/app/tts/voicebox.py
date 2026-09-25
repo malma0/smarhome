@@ -151,15 +151,17 @@ async def ensure_profile(
         response.raise_for_status()
 
 
-def _postprocess(audio_bytes: bytes, cleanup: bool, tempo: float) -> bytes:
+def _postprocess(
+    audio_bytes: bytes, cleanup: bool, tempo: float, ending_tempo: float = None, ending_share: float = 0.0
+) -> bytes:
     """app.tts.cleanup and app.tts.tempo, ~0.1 s each per reply."""
     from app.tts.cleanup import clean_speech, transform_wav_bytes
-    from app.tts.tempo import change_tempo
+    from app.tts.tempo import change_tempo_with_ending
 
     def transform(samples, rate):
         if cleanup:
             samples = clean_speech(samples, rate)
-        return change_tempo(samples, rate, tempo)
+        return change_tempo_with_ending(samples, rate, tempo, ending_tempo or tempo, ending_share)
 
     try:
         return transform_wav_bytes(audio_bytes, transform)
@@ -182,6 +184,7 @@ class VoiceboxTTSProvider:
         stresser=None,
         cleanup: bool = False,
         tempo: float = 1.0,
+        ending_tempo: float | None = None,
     ):
         self._profile = profile
         self._base_url = base_url
@@ -198,6 +201,8 @@ class VoiceboxTTSProvider:
         self._cleanup = cleanup
         # app.tts.tempo: >1 speeds replies up without raising the pitch.
         self._tempo = tempo
+        # The reply's last sentence at its own speed (None: same as tempo).
+        self._ending_tempo = ending_tempo or tempo
 
     async def _prepare_text(self, text: str) -> str:
         if self._stresser is None:
@@ -246,6 +251,10 @@ class VoiceboxTTSProvider:
             engine=self._engine,
             language=self._language,
         )
-        if self._cleanup or self._tempo != 1.0:
-            audio_bytes = await asyncio.to_thread(_postprocess, audio_bytes, self._cleanup, self._tempo)
+        if self._cleanup or self._tempo != 1.0 or self._ending_tempo != 1.0:
+            from app.tts.tempo import last_sentence_share
+
+            audio_bytes = await asyncio.to_thread(
+                _postprocess, audio_bytes, self._cleanup, self._tempo, self._ending_tempo, last_sentence_share(text)
+            )
         await asyncio.to_thread(play_wav_bytes, audio_bytes)
