@@ -165,3 +165,19 @@ def test_reply_with_gender_hedge_notation_is_resolved_before_returning(memory):
 
     assert "(" not in result["response"]
     assert result["response"] == "Спасибо, что спросил!"
+
+
+def test_only_the_latest_turns_are_sent_and_never_mid_turn():
+    from app.agent import recent_turns
+
+    history = []
+    for n in range(4):
+        history += [
+            {"role": "user", "content": f"turn {n}"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": f"t{n}", "name": "x", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"t{n}", "content": "{}"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+        ]
+    sent = recent_turns(history, 2)
+    assert sent[0] == {"role": "user", "content": "turn 2"} and len(sent) == 8
+    assert recent_turns(history, 10) is history

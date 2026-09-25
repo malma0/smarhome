@@ -2,8 +2,8 @@
 nothing about Home Assistant, rooms, or Claude specifically - only the
 LLMProvider/ToolRegistry/MemoryStore interfaces. Domain tools are registered
 into the ToolRegistry from outside - build_default_agent() wires in
-app.domains.computer (phase 2); Home Assistant domains follow in phase 3+,
-see docs/TZ.md."""
+app.domains.computer and files (phase 2) and app.domains.home (phase 3,
+Home Assistant - when HOME_ASSISTANT_TOKEN is set), see docs/TZ.md."""
 
 from app.config import settings
 from app.db import connect
@@ -23,6 +23,11 @@ from app.persona import (
 from app.tools.registry import ToolRegistry, TurnContext
 
 MAX_TOOL_ITERATIONS = 8
+# Only the latest turns go to the model (the session keeps everything). A
+# voice session is one long conversation; sent whole, every request grew
+# until Groq's free 8000 tokens a minute ran out after a few house commands,
+# and replies waited 10-88 s on its rate limit.
+MAX_HISTORY_TURNS = 6
 
 GENERAL_ASSISTANT_PREAMBLE = (
     "You are Jarvis, the voice-controlled AI running inside a private home. Residents can "
@@ -86,7 +91,9 @@ class JarvisAgent:
         final_text = None
 
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = await self.llm.generate(system=system_prompt, messages=history, tools=tool_defs)
+            response = await self.llm.generate(
+                system=system_prompt, messages=recent_turns(history, MAX_HISTORY_TURNS), tools=tool_defs
+            )
             history.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
 
             if response.stop_reason != "tool_use":
@@ -126,6 +133,16 @@ class JarvisAgent:
         return {"response": final_text, "actions": actions}
 
 
+def recent_turns(history: list[dict], max_turns: int) -> list[dict]:
+    """The tail of the history starting at the max_turns-th last thing the
+    resident said - never mid-turn, so a tool result is never sent without
+    the tool call it answers."""
+    starts = [i for i, m in enumerate(history) if m["role"] == "user" and isinstance(m["content"], str)]
+    if len(starts) <= max_turns:
+        return history
+    return history[starts[-max_turns]:]
+
+
 def _build_llm_provider() -> LLMProvider:
     if settings.llm_provider == "claude":
         return ClaudeProvider(api_key=settings.anthropic_api_key, model=settings.anthropic_model)
@@ -158,4 +175,8 @@ def build_default_agent() -> JarvisAgent:
     tools = ToolRegistry()
     computer.register(tools)  # phase 2: first domain, no Home Assistant needed
     files.register(tools)  # phase 2: file operations, unrestricted paths by user's choice
+    if settings.home_assistant_token:
+        from app.domains import home
+
+        home.register(tools)  # phase 3: the house, through Home Assistant
     return JarvisAgent(llm=llm, tools=tools, memory=memory)
