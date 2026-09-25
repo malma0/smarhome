@@ -13,6 +13,11 @@ class MemoryStore:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
 
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """For other stores in the same database (app.reminders)."""
+        return self._conn
+
     def get_persona_mode(self) -> str:
         row = self._conn.execute("SELECT persona_mode FROM house_settings WHERE id = 1").fetchone()
         return row["persona_mode"]
