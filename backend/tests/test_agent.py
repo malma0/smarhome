@@ -181,3 +181,13 @@ def test_only_the_latest_turns_are_sent_and_never_mid_turn():
     sent = recent_turns(history, 2)
     assert sent[0] == {"role": "user", "content": "turn 2"} and len(sent) == 8
     assert recent_turns(history, 10) is history
+
+
+
+def test_the_model_is_told_the_current_local_time():
+    from datetime import datetime, timedelta, timezone
+
+    from app.agent import current_time_note
+
+    now = datetime(2026, 9, 26, 7, 30, tzinfo=timezone(timedelta(hours=7)))
+    assert current_time_note(now) == "Current local time: 2026-09-26 07:30, Saturday (UTC+0700)."

@@ -5,6 +5,8 @@ into the ToolRegistry from outside - build_default_agent() wires in
 app.domains.computer and files (phase 2) and app.domains.home (phase 3,
 Home Assistant - when HOME_ASSISTANT_TOKEN is set), see docs/TZ.md."""
 
+from datetime import datetime
+
 from app.config import settings
 from app.db import connect
 from app.llm.base import LLMProvider
@@ -74,7 +76,7 @@ class JarvisAgent:
         mode = self.memory.get_persona_mode()
         persona_prompt = build_persona_prompt(mode, self.memory, resident_id)
         gender_note = gender_prompt_note(get_resident_gender(self.memory, resident_id))
-        prompt = f"{GENERAL_ASSISTANT_PREAMBLE}\n\n{persona_prompt}\n\n{gender_note}"
+        prompt = f"{GENERAL_ASSISTANT_PREAMBLE}\n\n{current_time_note()}\n\n{persona_prompt}\n\n{gender_note}"
         if spoken:
             prompt += f"\n\n{SPOKEN_REPLY_RULES}"
         return prompt
@@ -137,6 +139,12 @@ class JarvisAgent:
         return {"response": final_text, "actions": actions}
 
 
+def current_time_note(now: datetime | None = None) -> str:
+    """'Напомни в 8', 'какой сегодня день' - the model has no clock of its own."""
+    now = now or datetime.now().astimezone()
+    return f"Current local time: {now:%Y-%m-%d %H:%M}, {now:%A} (UTC{now:%z})."
+
+
 def recent_turns(history: list[dict], max_turns: int) -> list[dict]:
     """The tail of the history starting at the max_turns-th last thing the
     resident said - never mid-turn, so a tool result is never sent without
@@ -183,4 +191,9 @@ def build_default_agent() -> JarvisAgent:
         from app.domains import home
 
         home.register(tools)  # phase 3: the house, through Home Assistant
+    from app import reminders
+    from app.domains import weather
+
+    reminders.register(tools, reminders.ReminderStore(memory.connection))
+    weather.register(tools, settings.weather_city)
     return JarvisAgent(llm=llm, tools=tools, memory=memory)
