@@ -111,8 +111,8 @@ async def ensure_profile(
     doesn't have one by that name yet. The voice is defined by the WAV in
     this repo's voice_reference/ folder, not only by whatever happens to be
     in Voicebox's own database - so a fresh Voicebox install, or a different
-    data folder (Voicebox launched from inside the Claude desktop app gets a
-    sandboxed copy of its app-data, not the user's real one), still ends up
+    data folder (Voicebox launched from inside a sandboxed app gets its own
+    copy of its app-data, not the user's real one), still ends up
     speaking with the right voice.
 
     Voicebox requires a transcript of every sample: it's read from a .txt

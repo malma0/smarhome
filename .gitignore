@@ -1,7 +1,7 @@
 # secrets - never commit
 .env
 
-# Claude Code local config - must never show up in this repo
+# Local tool config - must never show up in this repo
 .claude/
 
 # python
