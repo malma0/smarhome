@@ -12,7 +12,9 @@ Device types, in the words the model uses:
 - ac          -> HA climate that can cool (air conditioner)
 - heating     -> HA climate that only heats (radiator)
 - ventilation -> HA fan
-Sensors (temperature, humidity, CO2) are read-only, via get_home_status.
+- water_valve / gas_valve -> HA switch.*water_valve / *gas_valve (on = open)
+Sensors (temperature, humidity, CO2) and danger sensors (smoke, leak, gas,
+CO - raised by app.danger on their own) are read-only, via get_home_status.
 
 Norms (the resident's decision): each room has a temperature norm and a CO2
 maximum, and the house keeps them by itself - heating, AC and ventilation
@@ -35,7 +37,12 @@ import json
 from app.ha_client import HomeAssistantClient, HomeAssistantError
 from app.tools.registry import Tool, ToolRegistry, TurnContext
 
-DEVICE_TYPES = ("light", "socket", "ac", "heating", "ventilation")
+DEVICE_TYPES = ("light", "socket", "ac", "heating", "ventilation", "water_valve", "gas_valve")
+VALVE_TYPES = {"water_valve", "gas_valve"}  # one per house - found wherever they are
+# The danger that makes opening a valve risky: water with a leak on needs a
+# yes; gas with gas detected is refused outright, and a yes is needed anyway.
+VALVE_DANGERS = {"water_valve": ("moisture",), "gas_valve": ("gas", "carbon_monoxide")}
+DANGER_CLASSES = ("smoke", "moisture", "gas", "carbon_monoxide")
 CLIMATE_TYPES = {"ac", "heating"}
 GUARDED_TYPES = {"socket", "ac", "heating"}  # a second room in one turn needs confirmation
 NORM_SUFFIXES = {"_temperature_norm": "temperature", "_co2_max": "co2_max"}
@@ -48,7 +55,8 @@ NO_ROOM = "Без комнаты"
 
 _AREAS_TEMPLATE = (
     "{% set ns = namespace(items=[]) %}"
-    "{% for s in states if s.domain in ['light', 'switch', 'climate', 'fan', 'sensor', 'input_number'] "
+    "{% for s in states if s.domain in ['light', 'switch', 'climate', 'fan', 'sensor', 'binary_sensor', "
+    "'input_number'] "
     "and not is_hidden_entity(s.entity_id) %}"
     "{% set ns.items = ns.items + [[s.entity_id, area_name(s.entity_id)]] %}"
     "{% endfor %}{{ ns.items | tojson }}"
@@ -75,6 +83,11 @@ async def _house(client: HomeAssistantClient) -> dict[str, list[dict]]:
             device.update(type="norm", kind=norm, value=state["state"], unit=attrs.get("unit_of_measurement"),
                           min=attrs.get("min"), max=attrs.get("max"))
             del device["state"]
+        elif domain == "binary_sensor":
+            if attrs.get("device_class") not in DANGER_CLASSES:
+                continue
+            device["type"] = "danger"
+            device["kind"] = attrs["device_class"]
         elif domain == "sensor":
             device["type"] = "sensor"
             device["kind"] = attrs.get("device_class")
@@ -83,6 +96,8 @@ async def _house(client: HomeAssistantClient) -> dict[str, list[dict]]:
             del device["state"]
         elif domain == "climate":
             device["type"] = "ac" if "cool" in (attrs.get("hvac_modes") or []) else "heating"
+        elif domain == "switch" and entity_id.endswith(("water_valve", "gas_valve")):
+            device["type"] = "water_valve" if entity_id.endswith("water_valve") else "gas_valve"
         else:
             device["type"] = {"light": "light", "switch": "socket", "fan": "ventilation"}[domain]
         if domain == "light" and state["state"] == "on" and attrs.get("brightness") is not None:
@@ -107,6 +122,12 @@ def _compact(devices: list[dict]) -> dict:
         if device["type"] == "norm":
             value = f"{float(device['value']):g} {device.get('unit') or ''}".strip()
             room.setdefault("norm", {})[device["kind"]] = value
+            continue
+        if device["type"] == "danger":
+            room.setdefault("danger_sensors", {})[device["kind"]] = "DETECTED" if device["state"] == "on" else "clear"
+            continue
+        if device["type"] in VALVE_TYPES:
+            room[device["type"]] = "open" if device["state"] == "on" else "closed"
             continue
         if device["type"] == "sensor":
             key, value = device.get("kind") or "sensor", f"{device['value']} {device.get('unit') or ''}".strip()
@@ -184,6 +205,8 @@ async def _call(client, device: dict, device_type: str, action: str, brightness_
         await client.call_service("switch", "turn_off" if action == "off" else "turn_on", entity_id)
     elif device_type == "ventilation":
         await client.call_service("fan", "turn_off" if action == "off" else "turn_on", entity_id)
+    elif device_type in VALVE_TYPES:
+        await client.call_service("switch", "turn_off" if action == "off" else "turn_on", entity_id)
     elif action == "off":
         await client.call_service("climate", "set_hvac_mode", entity_id, {"hvac_mode": "off"})
     else:
@@ -229,7 +252,7 @@ def make_handlers(client: HomeAssistantClient):
         except HomeAssistantError as exc:
             return {"error": f"Home Assistant is unreachable: {exc}"}
         asked = (tool_input.get("room") or "").strip()
-        if asked.casefold() in EVERYWHERE:
+        if asked.casefold() in EVERYWHERE or device_type in VALVE_TYPES:
             targets = [r for r, devices in rooms.items() if any(d.get("type") == device_type for d in devices)]
         else:
             room = match_room(asked, list(rooms))
@@ -251,6 +274,18 @@ def make_handlers(client: HomeAssistantClient):
                         # The house would allow it (confirmed) - the unit itself can't.
                         name = "AC" if device_type == "ac" else device_type
                         return {"error": f"The {name} in {room} can only be set to {low:g}-{high:g} °C."}
+
+        if device_type in VALVE_TYPES and action == "on":
+            detected = [
+                (r, d["kind"]) for r, ds in rooms.items() for d in ds
+                if d.get("type") == "danger" and d["kind"] in VALVE_DANGERS[device_type] and d["state"] == "on"
+            ]
+            if detected and device_type == "gas_valve":
+                return {"error": "Gas is still detected - the gas stays closed, even if confirmed.", "detected": detected}
+            if (detected or device_type == "gas_valve") and not confirmed:
+                reason = "a leak is still detected" if detected else "opening the gas always needs a yes"
+                return {"error": f"Opening the {device_type}: {reason} - ask the resident to confirm, "
+                                 "then retry with confirmed=true."}
 
         if device_type in GUARDED_TYPES and not confirmed:
             touched = {k.split(":", 1)[1] for k in ctx.touched if k.startswith(f"{device_type}:")}
@@ -334,7 +369,8 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
                 "What's in the house right now, room by room: lights (on/off, brightness), sockets, "
                 "AC, heating, ventilation, sensors (temperature, humidity, CO2) and the room's norms - the "
                 "temperature and CO2 maximum the house keeps by itself (heating, AC and ventilation run "
-                "on their own to hold them; nobody needs to be told). Use it to answer questions about the house ('где жарче всего?', "
+                "on their own to hold them; nobody needs to be told), danger sensors (smoke, leak, gas) "
+                "and the main water and gas valves. Use it to answer questions about the house ('где жарче всего?', "
                 "'что включено?', 'душно ли в спальне?') and to learn which rooms exist. The house "
                 "changes all the time - call this for every such question instead of relying on an "
                 "earlier answer. Answer with the facts; don't advise the resident to do things you can't do "
@@ -358,12 +394,14 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
             name="control_devices",
             description=(
                 "Turn a device type on or off in a room right now: light (optionally with brightness_pct), "
-                "socket, ventilation ('проветри' - it's also run automatically for the CO2 norm), ac (cools, "
+                "socket, water_valve / gas_valve (the main valves - 'on' opens, room doesn't matter), "
+                "ventilation ('проветри' - it's also run automatically for the CO2 norm), ac (cools, "
                 "optionally to temperature) or heating (heats, optionally to temperature). For 'warmer' / "
                 "'cooler' use set_room_norm instead - heating and AC follow the norm. room is the room's name in "
                 "any form ('кухня', 'на кухне'), or 'all' for the whole house ('выключи везде свет' is "
                 "one call). For a few specific rooms, call once per room. Sockets, ACs and heating in a "
-                "second room, and temperatures outside 16-28 °C, need the resident's confirmation - when the "
+                "second room, opening the gas or opening the water during a leak, and temperatures "
+                "outside 16-28 °C, need the resident's confirmation - when the "
                 "result says so, ask, and on a yes retry with confirmed=true. Always try the command: "
                 "never tell the resident a room or device doesn't exist unless this tool said so."
             ),

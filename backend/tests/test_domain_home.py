@@ -37,6 +37,11 @@ class FakeHA:
             _state("input_number.kitchen_temperature_norm", "22.0", unit_of_measurement="°C", min=16, max=28),
             _state("input_number.kitchen_co2_max", "800.0", unit_of_measurement="ppm", min=600, max=1500),
             _state("input_number.kitchen_co2_sim", "640.0", unit_of_measurement="ppm"),
+            _state("binary_sensor.kitchen_leak", "off", device_class="moisture"),
+            _state("binary_sensor.kitchen_gas", "off", device_class="gas"),
+            _state("binary_sensor.kitchen_door", "off", device_class="door"),
+            _state("switch.water_valve", "on"),
+            _state("switch.gas_valve", "on"),
             _state("light.corridor", "off", friendly_name="Коридор: свет"),
             _state("sensor.sun_next_dawn", "2026-09-26T00:00:00", friendly_name="Next dawn"),
             _state("input_boolean.kitchen_light_power", "off"),
@@ -49,6 +54,8 @@ class FakeHA:
             "climate.kitchen_heating": "Кухня", "fan.kitchen_ventilation": "Кухня",
             "input_number.kitchen_temperature_norm": "Кухня", "input_number.kitchen_co2_max": "Кухня",
             "input_number.kitchen_co2_sim": "Кухня",
+            "binary_sensor.kitchen_leak": "Кухня", "binary_sensor.kitchen_gas": "Кухня",
+            "binary_sensor.kitchen_door": "Кухня", "switch.water_valve": "Кухня", "switch.gas_valve": "Кухня",
         }
 
     def _check(self):
@@ -92,6 +99,8 @@ def test_status_groups_the_house_by_room_compactly_without_helpers_or_ha_sensors
         "light": "off", "socket": "off", "ac": "off", "temperature": "25.5 °C",
         "heating": "heat to 21.5 °C, heating now", "ventilation": "off",
         "norm": {"temperature": "22 °C", "co2_max": "800 ppm"},  # the simulation knob isn't shown
+        "danger_sensors": {"moisture": "clear", "gas": "clear"},  # the door isn't a danger
+        "water_valve": "open", "gas_valve": "open",  # valves aren't sockets
     }
     assert rooms["Спальня"]["light"] == "on 50%"
 
@@ -234,3 +243,35 @@ def test_nulls_from_the_model_mean_not_given():
     assert set(_run(status, room=None)["rooms"]) == {"Кухня", "Спальня", "Коридор"}
     result = _run(control, room="кухня", device="light", action="on", brightness_pct=None, temperature=None, confirmed=None)
     assert "done" in result and ha.calls == [("light", "turn_on", "light.kitchen", None)]
+
+
+
+def _set(ha, entity_id, state):
+    for st in ha.states:
+        if st["entity_id"] == entity_id:
+            st["state"] = state
+
+
+def test_valves_are_found_whatever_room_is_named():
+    ha = FakeHA()
+    _, control, _ = make_handlers(ha)
+    assert "done" in _run(control, room="прихожая", device="water_valve", action="off")
+    assert ha.calls == [("switch", "turn_off", "switch.water_valve", None)]
+
+
+def test_water_during_a_leak_needs_a_yes():
+    ha = FakeHA()
+    _set(ha, "binary_sensor.kitchen_leak", "on")
+    _, control, _ = make_handlers(ha)
+    assert "leak is still detected" in _run(control, room="all", device="water_valve", action="on")["error"]
+    assert "done" in _run(control, room="all", device="water_valve", action="on", confirmed=True)
+
+
+def test_gas_always_needs_a_yes_and_never_opens_while_detected():
+    ha = FakeHA()
+    _, control, _ = make_handlers(ha)
+    assert "always needs a yes" in _run(control, room="all", device="gas_valve", action="on")["error"]
+    _set(ha, "binary_sensor.kitchen_gas", "on")
+    result = _run(control, room="all", device="gas_valve", action="on", confirmed=True)
+    assert "stays closed" in result["error"] and ha.calls == []
+    assert "done" in _run(control, room="all", device="gas_valve", action="off")  # closing: always fine
