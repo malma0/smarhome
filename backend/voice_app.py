@@ -393,6 +393,8 @@ def build_tts_provider() -> TTSProvider:
             engine=settings.voicebox_engine,
             language=settings.voicebox_language,
             reference_wav=settings.voicebox_reference_wav,
+            cleanup=settings.voicebox_cleanup,
+            tempo=settings.voicebox_tempo,
         )
     raise ValueError(
         f"Unsupported TTS_PROVIDER {settings.tts_provider!r}. Valid: elevenlabs, piper, edge, sapi, voicebox"

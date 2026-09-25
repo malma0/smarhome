@@ -151,6 +151,23 @@ async def ensure_profile(
         response.raise_for_status()
 
 
+def _postprocess(audio_bytes: bytes, cleanup: bool, tempo: float) -> bytes:
+    """app.tts.cleanup and app.tts.tempo, ~0.1 s each per reply."""
+    from app.tts.cleanup import clean_speech, transform_wav_bytes
+    from app.tts.tempo import change_tempo
+
+    def transform(samples, rate):
+        if cleanup:
+            samples = clean_speech(samples, rate)
+        return change_tempo(samples, rate, tempo)
+
+    try:
+        return transform_wav_bytes(audio_bytes, transform)
+    except Exception as exc:  # noqa: BLE001 - unprocessed speech beats no speech
+        print(f"(обработка голоса не сработала: {exc})")
+        return audio_bytes
+
+
 class VoiceboxTTSProvider:
     announces_playback = True  # see app.tts.playback
 
@@ -163,6 +180,8 @@ class VoiceboxTTSProvider:
         language: str = "ru",
         reference_wav: str = "",
         stresser=None,
+        cleanup: bool = False,
+        tempo: float = 1.0,
     ):
         self._profile = profile
         self._base_url = base_url
@@ -174,6 +193,11 @@ class VoiceboxTTSProvider:
         # adds the stress marks Chatterbox was trained on but Voicebox's
         # bundle never adds - see that module for the full story.
         self._stresser = stresser if language == "ru" else None
+        # app.tts.cleanup: hum, hiss and breaths the clone copied from its
+        # reference clip, removed before playback (~0.1 s per reply).
+        self._cleanup = cleanup
+        # app.tts.tempo: >1 speeds replies up without raising the pitch.
+        self._tempo = tempo
 
     async def _prepare_text(self, text: str) -> str:
         if self._stresser is None:
@@ -222,4 +246,6 @@ class VoiceboxTTSProvider:
             engine=self._engine,
             language=self._language,
         )
+        if self._cleanup or self._tempo != 1.0:
+            audio_bytes = await asyncio.to_thread(_postprocess, audio_bytes, self._cleanup, self._tempo)
         await asyncio.to_thread(play_wav_bytes, audio_bytes)

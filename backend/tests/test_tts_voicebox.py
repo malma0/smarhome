@@ -99,6 +99,54 @@ def test_speak_plays_the_returned_audio_bytes(monkeypatch):
     assert played == [b"the-wav-bytes"]
 
 
+def _tone_wav(seconds: float, rate: int = 24000) -> bytes:
+    import io
+    import wave
+
+    import numpy as np
+
+    t = np.arange(int(seconds * rate)) / rate
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes((0.3 * np.sin(2 * np.pi * 230 * t) * 32767).astype(np.int16).tobytes())
+    return out.getvalue()
+
+
+def _wav_seconds(audio: bytes) -> float:
+    import io
+    import wave
+
+    with wave.open(io.BytesIO(audio), "rb") as wf:
+        return wf.getnframes() / wf.getframerate()
+
+
+def test_speak_speeds_the_reply_up_when_asked(monkeypatch):
+    transport, _ = _make_transport(audio_bytes=_tone_wav(2.4))
+    _use_transport(monkeypatch, transport)
+    played = []
+    monkeypatch.setattr("app.tts.voicebox.play_wav_bytes", lambda audio: played.append(audio))
+
+    provider = VoiceboxTTSProvider(profile="JarvisVoice", base_url="http://127.0.0.1:8000", tempo=1.2)
+    asyncio.run(provider.speak("привет"))
+
+    assert abs(_wav_seconds(played[0]) - 2.0) < 0.05
+
+
+def test_a_failed_cleanup_still_plays_the_original(monkeypatch):
+    transport, _ = _make_transport(audio_bytes=b"not-a-wav")
+    _use_transport(monkeypatch, transport)
+    played = []
+    monkeypatch.setattr("app.tts.voicebox.play_wav_bytes", lambda audio: played.append(audio))
+
+    provider = VoiceboxTTSProvider(profile="JarvisVoice", base_url="http://127.0.0.1:8000", cleanup=True)
+    asyncio.run(provider.speak("привет"))
+
+    assert played == [b"not-a-wav"]
+
+
 # --- ensure_profile: the voice is defined by the WAV in voice_reference/,
 # not only by whatever Voicebox's own database happens to contain ---
 
