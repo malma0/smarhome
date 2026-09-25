@@ -55,7 +55,8 @@ from app.agent import build_default_agent
 from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech, speech_seconds
 from app.config import settings
 from app.dataset import UtteranceLog
-from app.hands_free import CUE, IGNORE, HandsFreeState
+from app.hands_free import CUE, IGNORE, HandsFreeState, is_stop_phrase
+from app.reminders import ReminderStore, local_now
 from app.http_client import shared_client
 from app.memory import MemoryStore
 from app.tts.base import TTSProvider
@@ -155,6 +156,11 @@ def record_until_enter(recorder: MicRecorder) -> list[np.ndarray]:
 # lets those through while keeping other voices (up to 0.56) out. Too little
 # voice to tell who it is.
 MIN_SPEECH_FOR_VOICE_ID = 1.5
+
+# A timer or reminder chimes again every few seconds until "стоп" - or gives
+# up after a minute (it stays in the chat).
+RING_EVERY_SECONDS = 6
+RING_SECONDS = 60
 
 
 def _existing_resident(memory: MemoryStore, typed: str) -> str:
@@ -471,6 +477,8 @@ class VoiceSession:
     ui: VoiceUI = field(default_factory=ConsoleUI)
     session_id: str = "voice-session"
     last_utterance_id: str | None = None
+    # Set by run_hands_free: stops what's ringing/sounding; True if anything was.
+    on_stop: Any = None
 
 
 async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSession | None:
@@ -525,34 +533,61 @@ def _warm_up_speaker_id() -> None:
         pass
 
 
-class AlarmVoice:
-    """Siren and a spoken message for danger alerts (app.danger), on a
-    thread of its own. The offline Windows voice, not the reply voice:
-    Voicebox takes ~25 s per phrase here, and an alarm can't wait - SAPI
-    speaks at once. Separate from JARVIS_TTS_ENABLED on purpose: replies can
-    be silent, a fire can't. DANGER_ALERT_VOICE=none leaves only the siren."""
+class Announcer:
+    """What Jarvis says unasked - danger alarms (app.danger), timers and
+    reminders (app.reminders): a sound, then the text, on a thread of its
+    own. The offline Windows voice, not the reply voice: Voicebox takes
+    ~25 s per phrase here, and an alarm or a timer can't wait - SAPI speaks
+    at once. Separate from JARVIS_TTS_ENABLED on purpose: replies can be
+    silent, a fire or the oven can't. DANGER_ALERT_VOICE=none leaves only
+    the sounds. stop() ("стоп") cuts the sound and drops what's queued."""
 
     def __init__(self, speak: bool = True):
         self._speak = speak
         self._queue: "queue.Queue" = queue.Queue()
+        self._generation = 0  # bumped by stop(): anything queued before is dropped
+        self._playing = False
         threading.Thread(target=self._run, daemon=True).start()
 
     listeners: "weakref.WeakSet" = weakref.WeakSet()  # microphones to hold while it sounds
 
-    def say(self, alert) -> None:
-        self._queue.put(alert)
+    def say(self, text: str | None, sound: str | None = None) -> None:
+        """sound: "siren", "chime" or None."""
+        self._queue.put((self._generation, text, sound))
+
+    def say_alert(self, alert) -> None:
+        self.say(alert.text, "siren" if alert.active else None)
+
+    @property
+    def busy(self) -> bool:
+        return self._playing or not self._queue.empty()
+
+    def stop(self) -> None:
+        self._generation += 1
+        _drain_queue(self._queue)
+        try:
+            import sounddevice as sd
+
+            sd.stop()
+        except Exception:  # noqa: BLE001 - nothing playing, or no audio device
+            pass
 
     def _run(self) -> None:
         engine = None
         while True:
-            alert = self._queue.get()
-            held = list(AlarmVoice.listeners)
+            generation, text, sound = self._queue.get()
+            if generation != self._generation:
+                continue  # stopped while it waited
+            self._playing = True
+            held = list(Announcer.listeners)
             for listener in held:
                 listener.hold()
             try:
-                if alert.active:
+                if sound == "siren":
                     _play_siren()
-                if self._speak:
+                elif sound == "chime":
+                    _play_chime()
+                if self._speak and text and generation == self._generation:
                     if engine is None:
                         import pyttsx3
 
@@ -562,14 +597,45 @@ class AlarmVoice:
                         voice_id = pick_voice_id(engine.getProperty("voices"), "ru")
                         if voice_id:
                             engine.setProperty("voice", voice_id)
-                    engine.say(alert.text)
+                    engine.say(text)
                     engine.runAndWait()
             except Exception as exc:  # noqa: BLE001 - the banner is already up; sound is extra
-                print(f"(тревога: звук не сработал - {exc!r})")
+                print(f"(объявление: звук не сработал - {exc!r})")
             finally:
                 time.sleep(0.3)  # the room's echo
                 for listener in held:
                     listener.release()
+                self._playing = False
+
+
+AlarmVoice = Announcer  # its first job was the danger alarm
+
+_announcer: Announcer | None = None
+
+
+def announcer() -> Announcer:
+    """The one announcer, started on first use."""
+    global _announcer
+    if _announcer is None:
+        _announcer = Announcer(speak=settings.danger_alert_voice != "none")
+    return _announcer
+
+
+def _drain_queue(q: "queue.Queue") -> None:
+    while True:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            return
+
+
+def _play_chime(rate: int = 22050) -> None:
+    """Two soft bell-like notes - a timer, not an alarm."""
+    import sounddevice as sd
+
+    t = np.arange(int(0.45 * rate)) / rate
+    notes = [0.35 * np.sin(2 * np.pi * f * t) * np.exp(-t * 6) for f in (1318.5, 1046.5)]
+    sd.play(np.concatenate(notes).astype(np.float32), samplerate=rate, blocking=True)
 
 
 def _play_siren(cycles: int = 3, rate: int = 22050) -> None:
@@ -588,11 +654,9 @@ def start_danger_watch(ui: VoiceUI):
         return None
     from app.danger import DangerWatcher
 
-    voice = AlarmVoice(speak=settings.danger_alert_voice != "none")
-
     def on_alert(alert) -> None:
         ui.alert(alert.text, alert.key, alert.active)
-        voice.say(alert)
+        announcer().say_alert(alert)
 
     watcher = DangerWatcher(on_alert)
     threading.Thread(target=lambda: asyncio.run(watcher.run()), daemon=True).start()
@@ -627,6 +691,11 @@ def _failure_reply(exc: Exception) -> str:
 
 
 async def _answer(session: VoiceSession, text: str) -> str:
+    if is_stop_phrase(text) and session.on_stop is not None:
+        # "Джарвис, стоп" - handled here, not by the model (no tokens, no wait).
+        session.on_stop()
+        session.ui.info("(остановила)")
+        return ""
     session.ui.state(THINKING, "Думаю...")
     try:
         result = await session.agent.chat(session.session_id, session.resident_id, text, spoken=settings.tts_enabled)
@@ -724,7 +793,7 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     response = await _answer(session, text)
     if utterance_id:
         session.utterances.set_response(utterance_id, response)
-    if settings.tts_enabled:
+    if settings.tts_enabled and response:
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=ui)
 
 
@@ -735,7 +804,7 @@ async def handle_text(session: VoiceSession, text: str, echo: bool = True) -> No
     if echo:
         session.ui.user_said(text, voice=False)
     response = await _answer(session, text)
-    if settings.tts_enabled:
+    if settings.tts_enabled and response:  # empty after "стоп"
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=session.ui)
 
 
@@ -804,7 +873,45 @@ async def run_hands_free(
         # app.wake_word.StreamingTranscript.
         transcriber_factory=detector.stream if detector else None,
     )
-    AlarmVoice.listeners.add(listener)
+    Announcer.listeners.add(listener)
+
+    # Timers and reminders (app.reminders): checked between phrases, on this
+    # thread - the SQLite connection belongs to it.
+    reminder_store = ReminderStore(memory.connection)
+    ringing: dict[int, dict] = {}  # id -> {"text", "until", "next"}
+    just_stopped = False
+
+    def ring_due() -> None:
+        now = time.monotonic()
+        for item in reminder_store.due(local_now()):
+            reminder_store.mark_done(item["id"])
+            ringing[item["id"]] = {"text": item["text"], "until": now + RING_SECONDS, "next": now + RING_EVERY_SECONDS}
+            ui.ring(item["text"], f"reminder:{item['id']}", True)
+            announcer().say(item["text"], "chime")
+        for reminder_id, ring in list(ringing.items()):
+            if now >= ring["until"]:  # nobody said stop - give up, keep it in the chat
+                del ringing[reminder_id]
+                ui.ring(ring["text"], f"reminder:{reminder_id}", False)
+            elif now >= ring["next"]:
+                ring["next"] = now + RING_EVERY_SECONDS
+                announcer().say(None, "chime")
+
+    def stop_all() -> bool:
+        """"Стоп": silence whatever sounds, stop listening. True if anything was going on."""
+        nonlocal just_stopped
+        sounding = _announcer is not None and _announcer.busy
+        stopped = bool(ringing) or sounding or state.is_awake()
+        for reminder_id, ring in ringing.items():
+            ui.ring(ring["text"], f"reminder:{reminder_id}", False)
+        ringing.clear()
+        if _announcer is not None:
+            _announcer.stop()
+        state.sleep()
+        just_stopped = True
+        idle()
+        return stopped
+
+    session.on_stop = stop_all
 
     async def respond(work) -> None:
         listener.mute()  # don't hear our own reply as the next phrase
@@ -813,6 +920,11 @@ async def run_hands_free(
         finally:
             await asyncio.sleep(0.3)  # let the room's echo of the reply die down
             listener.unmute()
+        nonlocal just_stopped
+        if just_stopped:  # "стоп" - no follow-up listening after it
+            just_stopped = False
+            idle()
+            return
         if mic_on:
             state.after_reply()
             ui.state(LISTENING, f"Слушаю ещё {settings.follow_up_seconds:.0f} с - можно без имени")
@@ -851,6 +963,8 @@ async def run_hands_free(
                         apply_correction(session, text, utterance_id)
                     if ask:
                         await respond(handle_text(session, text, echo=False))
+                elif kind == "stop":
+                    stop_all()
                 elif kind == "wake":
                     await listen_now()
                 elif kind == "toggle_mic":
@@ -864,6 +978,7 @@ async def run_hands_free(
                 elif kind == "text":
                     await respond(handle_text(session, command[1]))
 
+            ring_due()
             if enrolling and time.monotonic() > enrolling["deadline"]:
                 finish_enrollment("partial" if enrolling["got"] else "failed")
 
@@ -884,6 +999,13 @@ async def run_hands_free(
                         finish_enrollment("done")
                     else:
                         ui.enrollment(enrolling["name"], enrolling["got"], ENROLL_SAMPLES_NEEDED, "progress")
+                continue
+
+            # "Стоп" while something rings or Jarvis listens needs no name -
+            # heard locally, never sent anywhere.
+            something_on = ringing or (_announcer is not None and _announcer.busy) or state.is_awake()
+            if something_on and is_stop_phrase(phrase.text):
+                stop_all()
                 continue
 
             wake_class = None

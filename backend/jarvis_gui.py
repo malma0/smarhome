@@ -40,6 +40,8 @@ TOOL_LABELS = {
     "control_devices": "Дом",
     "set_room_norm": "Норма",
     "run_scenario": "Сценарий",
+    "reminders": "Напоминания",
+    "get_weather": "Погода",
 }
 
 DEVICE_NAMES = {"light": "свет", "socket": "розетка", "ac": "кондиционер", "heating": "отопление",
@@ -76,6 +78,16 @@ def summarize_action(action: dict) -> dict:
         if result.get("brightness_pct") is not None:
             summary += f", {result['brightness_pct']}%"
         return {"ok": True, "summary": summary}
+    if tool == "reminders":
+        if result.get("added"):
+            added = result["added"]
+            what = added["text"] if added["kind"] == "timer" else f"Напомню в {added['at'][-5:]}"
+            return {"ok": True, "summary": what}
+        if result.get("cancelled"):
+            return {"ok": True, "summary": "Отменила: " + ", ".join(r["text"] for r in result["cancelled"])}
+        return {"ok": True, "summary": "Посмотрела напоминания"}
+    if tool == "get_weather":
+        return {"ok": True, "summary": f"Погода: {result.get('place', '')}".strip()}
     if tool == "run_scenario":
         if result.get("ran"):
             return {"ok": True, "summary": f"Сценарий «{result['ran']}»"}
@@ -191,6 +203,9 @@ class WebviewUI:
     def alert(self, text: str, key: str, active: bool) -> None:
         self._send({"type": "alert", "text": text, "key": key, "active": active})
 
+    def ring(self, text: str, key: str, active: bool) -> None:
+        self._send({"type": "ring", "text": text, "key": key, "active": active})
+
     def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
         self._send({"type": "enroll", "name": name, "collected": collected, "needed": needed, "status": status})
 
@@ -237,6 +252,10 @@ class JsApi:
 
     def wake(self) -> None:
         self._commands.put(("wake",))
+
+    def stop(self) -> None:
+        """"Стоп" on a ringing timer's banner."""
+        self._commands.put(("stop",))
 
     def toggle_mic(self) -> None:
         """The orb: switches the microphone off, or back on and listening."""

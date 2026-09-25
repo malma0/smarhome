@@ -23,6 +23,22 @@ CUE = "cue"
 PROCESS = "process"
 
 
+# "Стоп" and friends: said alone (or with the name), they stop whatever is
+# sounding - a timer, a reminder, an alarm's siren - and end listening.
+# Handled locally, never sent to the model.
+STOP_WORDS = {
+    "стоп", "стой", "хватит", "тихо", "замолчи", "молчи", "замолкни", "отмена", "отменить",
+    "перестань", "довольно", "выключись", "отключись", "все", "всё",
+}
+_NOT_WORDS = {"джарвис", "джервис", "пожалуйста"}
+
+
+def is_stop_phrase(text: str | None) -> bool:
+    words = "".join(c if c.isalnum() or c.isspace() else " " for c in (text or "").casefold()).split()
+    words = [w for w in words if w not in _NOT_WORDS]
+    return 1 <= len(words) <= 3 and all(w in STOP_WORDS for w in words)
+
+
 class HandsFreeState:
     def __init__(
         self,

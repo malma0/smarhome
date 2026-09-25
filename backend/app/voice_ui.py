@@ -70,6 +70,11 @@ class VoiceUI(Protocol):
         same key comes back with active=False."""
         ...
 
+    def ring(self, text: str, key: str, active: bool) -> None:
+        """A timer or reminder going off (active=True) until stopped or it
+        gives up (active=False)."""
+        ...
+
     def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
         """Deliberate voice recording for one person. status: "started",
         "progress", "done", "partial" (timed out with some samples),
@@ -119,6 +124,10 @@ class ConsoleUI:
 
     def alert(self, text: str, key: str, active: bool) -> None:
         print(f"\n!!! {text} !!!\n" if active else f"({text})")
+
+    def ring(self, text: str, key: str, active: bool) -> None:
+        if active:
+            print(f"\n>>> {text} (скажи «стоп») <<<\n")
 
     def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
         messages = {

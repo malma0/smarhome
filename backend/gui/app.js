@@ -318,6 +318,26 @@ function onAlert(e) {
   }
 }
 
+// Timers and reminders going off: a banner with "Стоп" until stopped.
+const ringBanners = new Map();
+function onRing(e) {
+  const old = ringBanners.get(e.key);
+  if (old) { old.remove(); ringBanners.delete(e.key); }
+  if (!e.active) return;
+  const banner = document.createElement("div");
+  banner.className = "ring-banner";
+  const text = document.createElement("span");
+  text.textContent = e.text;
+  const stop = document.createElement("button");
+  stop.type = "button";
+  stop.textContent = "Стоп";
+  stop.onclick = () => call("stop");
+  banner.append(text, stop);
+  $("alarms").appendChild(banner);
+  ringBanners.set(e.key, banner);
+  addNote(e.text);
+}
+
 let toastTimer = null;
 function toast(text) {
   const el = $("toast");
@@ -482,6 +502,7 @@ window.jarvis = {
       case "voices": voiceProfiles = e.profiles || []; if (!$("voicesModal").hidden && !enrollingName) renderVoices(); break;
       case "enroll": onEnroll(e); break;
       case "alert": onAlert(e); break;
+      case "ring": onRing(e); break;
     }
   },
 };

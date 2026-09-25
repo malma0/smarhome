@@ -162,3 +162,20 @@ def test_a_scenario_reads_as_its_name():
     assert summarize_action(
         {"tool": "run_scenario", "input": {"name": "я ухожу"}, "result": {"ran": "Я ушёл", "does": "..."}}
     ) == {"ok": True, "summary": "Сценарий «Я ушёл»"}
+
+
+
+def test_timers_reminders_and_weather_chips():
+    added = {"id": 1, "kind": "timer", "text": "Таймер на 10 минут", "at": "2026-09-26 07:40", "in": "10 минут"}
+    assert summarize_action({"tool": "reminders", "input": {}, "result": {"added": added}})["summary"] == "Таймер на 10 минут"
+    reminder = dict(added, kind="reminder", text="позвонить маме")
+    assert summarize_action({"tool": "reminders", "input": {}, "result": {"added": reminder}})["summary"] == "Напомню в 07:40"
+    assert summarize_action({"tool": "get_weather", "input": {}, "result": {"place": "Новосибирск"}})["summary"] == "Погода: Новосибирск"
+
+
+def test_a_ring_reaches_the_window():
+    ui, calls = _ui()
+    ui.mark_ready()
+    ui.ring("Таймер на 10 минут", "reminder:1", True)
+    assert ui.drain()
+    assert _events(calls) == [{"type": "ring", "text": "Таймер на 10 минут", "key": "reminder:1", "active": True}]

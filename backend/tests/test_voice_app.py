@@ -233,6 +233,12 @@ class _RecordingUI:
     def voices(self, profiles):
         self.events.append(("voices", tuple(p["name"] for p in profiles)))
 
+    def ring(self, text, key, active):
+        self.events.append(("ring", text, active))
+
+    def alert(self, text, key, active):
+        self.events.append(("alert", text, active))
+
     def enrollment(self, name, collected, needed, status):
         self.events.append(("enroll", name, collected, status))
 
@@ -832,3 +838,124 @@ def test_typing_while_the_mic_is_off_keeps_it_off(memory, tmp_path, monkeypatch)
 
     asyncio.run(voice_app.run_hands_free(session, None, commands))
     assert listener.log == ["pause"] and ui.events[-1] == ("state", "muted")
+
+
+
+class _FakeAnnouncer:
+    def __init__(self):
+        self.said, self.stopped, self.busy = [], 0, False
+
+    def say(self, text, sound=None):
+        self.said.append((text, sound))
+
+    def stop(self):
+        self.stopped += 1
+
+
+def _texts_listener(texts, commands):
+    """A listener whose phrases carry a local transcript, like Vosk's."""
+    from app.audio_capture import Phrase
+
+    class _Listener:
+        def __init__(self, sample_rate, on_level=None, transcriber_factory=None):
+            self._phrases = [Phrase([_seconds(1)], t) for t in texts]
+
+        def next_phrase(self, timeout):
+            if self._phrases:
+                return self._phrases.pop(0)
+            commands.put(("quit",))
+            return None
+
+        def mute(self): pass
+        def unmute(self): pass
+        def close(self): pass
+        def pause(self): pass
+        def resume(self): pass
+
+    return _Listener
+
+
+def test_a_due_timer_rings_until_stop_is_said_without_the_name(memory, tmp_path, monkeypatch):
+    import queue
+    from datetime import timedelta
+
+    import voice_app
+    from app.reminders import ReminderStore, local_now
+
+    fake = _FakeAnnouncer()
+    monkeypatch.setattr(voice_app, "announcer", lambda: fake)
+    monkeypatch.setattr(voice_app, "_announcer", fake)
+    ReminderStore(memory.connection).add("timer", "Таймер на 10 минут", local_now() - timedelta(seconds=1))
+    commands = queue.Queue()
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _texts_listener(["стоп"], commands))
+    handled = Mock()
+    monkeypatch.setattr(voice_app, "handle_phrase", handled)
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+
+    rings = [e for e in ui.events if e[0] == "ring"]
+    assert rings == [("ring", "Таймер на 10 минут", True), ("ring", "Таймер на 10 минут", False)]
+    assert fake.said[0] == ("Таймер на 10 минут", "chime") and fake.stopped == 1
+    handled.assert_not_called()  # "стоп" never went to Whisper or the model
+    assert ReminderStore(memory.connection).pending() == []
+
+
+def test_stop_from_the_banner_button(memory, tmp_path, monkeypatch):
+    import queue
+    from datetime import timedelta
+
+    import voice_app
+    from app.reminders import ReminderStore, local_now
+
+    fake = _FakeAnnouncer()
+    monkeypatch.setattr(voice_app, "announcer", lambda: fake)
+    monkeypatch.setattr(voice_app, "_announcer", fake)
+    ReminderStore(memory.connection).add("reminder", "позвонить маме", local_now() - timedelta(seconds=1))
+    commands = queue.Queue()
+
+    class _Listener(_texts_listener([], commands)):
+        calls = 0
+
+        def next_phrase(self, timeout):
+            _Listener.calls += 1
+            commands.put(("stop",) if _Listener.calls == 1 else ("quit",))
+            return None
+
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _Listener)
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+
+    assert [e for e in ui.events if e[0] == "ring"] == [("ring", "позвонить маме", True), ("ring", "позвонить маме", False)]
+
+
+def test_stop_said_to_nothing_is_just_another_phrase(memory, tmp_path, monkeypatch):
+    """Asleep, nothing ringing: "стоп" without the name is ignored like any phrase."""
+    import queue
+
+    import voice_app
+
+    fake = _FakeAnnouncer()
+    monkeypatch.setattr(voice_app, "_announcer", None)
+    monkeypatch.setattr(voice_app, "announcer", lambda: fake)
+    commands = queue.Queue()
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _texts_listener(["стоп"], commands))
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+    assert fake.stopped == 0
+
+
+def test_stop_with_the_name_is_handled_here_not_by_the_model(memory, tmp_path):
+    import voice_app
+
+    session = _session(memory, tmp_path)
+    stops = []
+    session.on_stop = lambda: stops.append(1) or True
+    assert asyncio.run(voice_app._answer(session, "Джарвис, стоп!")) == ""
+    assert stops == [1]
+    session.agent.chat.assert_not_called()

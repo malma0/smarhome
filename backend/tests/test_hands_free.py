@@ -79,3 +79,13 @@ def test_falls_asleep_after_the_follow_up_window():
     clock.now += 10.1
     assert not state.is_awake()
     assert state.on_phrase(NONE) == IGNORE
+
+
+
+def test_stop_phrases():
+    from app.hands_free import is_stop_phrase
+
+    for text in ("стоп", "Стоп.", "Джарвис, стоп!", "хватит", "тихо", "замолчи", "стоп стоп", "всё, хватит"):
+        assert is_stop_phrase(text), text
+    for text in ("", None, "стоп музыку включи", "не останавливайся", "включи свет", "хватит на сегодня работать"):
+        assert not is_stop_phrase(text), text
