@@ -140,6 +140,22 @@ def test_a_phrase_is_transcribed_answered_and_logged(memory, tmp_path, monkeypat
     assert record["response"] == "Включаю."
 
 
+def test_a_whisper_hallucination_on_noise_is_not_answered_or_logged(memory, tmp_path, monkeypatch):
+    """Seen live: room noise came back from Whisper as "Продолжение
+    следует..." and Jarvis replied to it."""
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value="Продолжение следует..."))
+    session = _session(memory, tmp_path)
+
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    session.agent.chat.assert_not_called()
+    assert session.utterances.stats()["utterances"] == 0
+
+
 def test_correction_applies_to_the_last_phrase(memory, tmp_path, monkeypatch):
     import voice_app
 

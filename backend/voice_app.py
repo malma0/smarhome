@@ -58,6 +58,7 @@ from app.hands_free import CUE, IGNORE, HandsFreeState
 from app.http_client import shared_client
 from app.memory import MemoryStore
 from app.tts.base import TTSProvider
+from app.transcript_filter import is_hallucination
 from app.tts.text import text_for_speech
 from app.voice_ui import LISTENING, SLEEPING, SPEAKING, THINKING, ConsoleUI, VoiceUI
 from app.wake_word import WakeWordDetector, classify, parse_wake_words
@@ -573,6 +574,14 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
         text = await transcribe(wav_bytes, settings.groq_api_key, settings.groq_base_url, prompt=prompt)
     except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
         ui.info(f"Ошибка распознавания: {exc}")
+
+    if text and is_hallucination(text):
+        # Noise that got past the voice detector - not answered, and kept out
+        # of the dataset, where a made-up transcript would be training data.
+        if embedding_task is not None:
+            embedding_task.cancel()
+        ui.info(f"(похоже на шум - Whisper «услышал» «{text}», не отвечаю)")
+        return
 
     decision: SpeakerDecision | None = None
     if embedding_task is not None:
