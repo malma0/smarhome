@@ -155,3 +155,10 @@ def test_a_danger_reaches_the_window_with_its_key():
     ui.alert("Внимание! Дым: кухня!", "smoke:Кухня", True)
     assert ui.drain()
     assert _events(calls) == [{"type": "alert", "text": "Внимание! Дым: кухня!", "key": "smoke:Кухня", "active": True}]
+
+
+
+def test_a_scenario_reads_as_its_name():
+    assert summarize_action(
+        {"tool": "run_scenario", "input": {"name": "я ухожу"}, "result": {"ran": "Я ушёл", "does": "..."}}
+    ) == {"ok": True, "summary": "Сценарий «Я ушёл»"}

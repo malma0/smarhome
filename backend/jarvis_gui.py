@@ -39,6 +39,7 @@ TOOL_LABELS = {
     "get_home_status": "Посмотрел дом",
     "control_devices": "Дом",
     "set_room_norm": "Норма",
+    "run_scenario": "Сценарий",
 }
 
 DEVICE_NAMES = {"light": "свет", "socket": "розетка", "ac": "кондиционер", "heating": "отопление",
@@ -75,6 +76,10 @@ def summarize_action(action: dict) -> dict:
         if result.get("brightness_pct") is not None:
             summary += f", {result['brightness_pct']}%"
         return {"ok": True, "summary": summary}
+    if tool == "run_scenario":
+        if result.get("ran"):
+            return {"ok": True, "summary": f"Сценарий «{result['ran']}»"}
+        return {"ok": True, "summary": "Посмотрела сценарии"}
     if tool == "set_room_norm":
         parts = []
         for item in result.get("done") or []:

@@ -52,6 +52,11 @@ class HomeAssistantClient:
         exposes areas (which room an entity is in)."""
         return (await self._request("POST", "/api/template", json={"template": template})).text
 
+    async def get_script_config(self, object_id: str) -> dict[str, Any]:
+        """A script's own definition (alias, description, sequence) - the
+        description is where a scenario keeps the phrases that start it."""
+        return (await self._request("GET", f"/api/config/script/config/{object_id}")).json()
+
     async def call_service(
         self,
         domain: str,

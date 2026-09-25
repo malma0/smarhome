@@ -24,6 +24,11 @@ Jarvis reads the norms and changes them (set_room_norm: "сделай потеп
 "держи в спальне 21"). They're HA number helpers in the room's area, found
 by name: input_number.*_temperature_norm and input_number.*_co2_max.
 
+Scenarios ("Я ушёл", "Спокойной ночи"...) are Home Assistant scripts - the
+resident edits them in HA's own script editor. run_scenario finds one by its
+name or by the phrases listed in its description ("Фразы: я ушёл, я
+ухожу, ..."), runs it and passes on what it does.
+
 Safety, in code (docs/TZ.md §7), not only in the prompt:
 - AC temperature: 16-28 °C goes through, 5-35 °C only with the resident's
   confirmation, outside 5-35 °C never - not even confirmed.
@@ -148,6 +153,35 @@ def _compact(devices: list[dict]) -> dict:
         else:
             room[key] = value
     return room
+
+
+def _words(text: str) -> str:
+    text = text.casefold().replace("ё", "е")
+    text = "".join(c if c.isalnum() or c.isspace() else " " for c in text)
+    return " ".join(w for w in text.split() if w not in ("джарвис", "джервис"))
+
+
+def _scenario_phrases(description: str) -> list[str]:
+    """'Фразы: я ушёл, я ухожу. Гасит свет...' -> ['я ушёл', 'я ухожу']."""
+    head, found, rest = description.partition("Фразы:")
+    if not found:
+        return []
+    return [p.strip() for p in rest.split(".", 1)[0].split(",") if p.strip()]
+
+
+def _scenario_does(description: str) -> str:
+    """The description without its phrase list - what the scenario does."""
+    head, found, rest = description.partition("Фразы:")
+    return (head + (rest.split(".", 1)[1] if found and "." in rest else "")).strip() if found else description.strip()
+
+
+def match_scenario(asked: str, scenarios: list[dict]) -> dict | None:
+    """By name or any of its phrases, ignoring case, punctuation and 'Джарвис'."""
+    wanted = _words(asked)
+    for scenario in scenarios:
+        if wanted in {_words(scenario["name"]), *(_words(p) for p in scenario["phrases"])}:
+            return scenario
+    return None
 
 
 def _stem(word: str) -> str:
@@ -357,11 +391,42 @@ def make_handlers(client: HomeAssistantClient):
             return {"error": f"Home Assistant refused: {exc}", "done": done}
         return {"done": done}
 
-    return get_home_status, control_devices, set_room_norm
+    async def run_scenario(tool_input: dict, ctx: TurnContext) -> dict:
+        try:
+            scripts = [s for s in await client.get_states() if s["entity_id"].startswith("script.")]
+            scenarios = []
+            for state in scripts:
+                object_id = state["entity_id"].split(".", 1)[1]
+                try:
+                    description = (await client.get_script_config(object_id)).get("description") or ""
+                except HomeAssistantError:
+                    description = ""  # a script defined outside scripts.yaml has no editable config
+                scenarios.append({
+                    "id": object_id,
+                    "name": state["attributes"].get("friendly_name", object_id),
+                    "phrases": _scenario_phrases(description),
+                    "does": _scenario_does(description),
+                })
+        except HomeAssistantError as exc:
+            return {"error": f"Home Assistant is unreachable: {exc}"}
+        listing = [{"name": s["name"], "phrases": s["phrases"]} for s in scenarios]
+        asked = (tool_input.get("name") or "").strip()
+        if not asked:
+            return {"scenarios": listing}
+        scenario = match_scenario(asked, scenarios)
+        if scenario is None:
+            return {"error": f"No scenario called '{asked}'.", "scenarios": listing}
+        try:
+            await client.call_service("script", scenario["id"])  # waits until it has run
+        except HomeAssistantError as exc:
+            return {"error": f"Home Assistant refused: {exc}"}
+        return {"ran": scenario["name"], "does": scenario["does"]}
+
+    return get_home_status, control_devices, set_room_norm, run_scenario
 
 
 def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) -> None:
-    get_home_status, control_devices, set_room_norm = make_handlers(client or HomeAssistantClient())
+    get_home_status, control_devices, set_room_norm, run_scenario = make_handlers(client or HomeAssistantClient())
     registry.register(
         Tool(
             name="get_home_status",
@@ -442,5 +507,21 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
                 "required": ["room"],
             },
             handler=set_room_norm,
+        )
+    )
+    registry.register(
+        Tool(
+            name="run_scenario",
+            description=(
+                "Run one of the resident's scenarios - several actions at once, set up in Home Assistant: "
+                "e.g. 'Я ушёл', 'Я дома', 'Спокойной ночи', 'Доброе утро'. name is the phrase the resident "
+                "said ('я ухожу', 'ложусь спать') - it's matched against each scenario's name and phrases. "
+                "Without a name: lists the scenarios. Afterwards say briefly what it did (from 'does')."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"name": {"type": ["string", "null"]}},
+            },
+            handler=run_scenario,
         )
     )
