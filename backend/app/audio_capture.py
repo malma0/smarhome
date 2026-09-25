@@ -306,6 +306,7 @@ class HandsFreeListener:
         self._phrases: queue.Queue[Phrase] = queue.Queue()
         self._streamer = PhraseStreamer(UtteranceSegmenter(make_vad(sample_rate)), transcriber_factory)
         self._muted = threading.Event()
+        self._held = threading.Event()  # an alarm is sounding (hold/release)
         self._stop = threading.Event()
         self._stream = sd.InputStream(
             samplerate=sample_rate, channels=1, dtype="int16", blocksize=frame_len, callback=self._callback
@@ -326,7 +327,7 @@ class HandsFreeListener:
                 frame = self._frames.get(timeout=0.2)
             except queue.Empty:
                 continue
-            if self._muted.is_set():
+            if self._muted.is_set() or self._held.is_set():
                 self._streamer.reset()
                 continue
             if self._on_level is not None:
@@ -352,6 +353,17 @@ class HandsFreeListener:
     def unmute(self) -> None:
         _drain(self._frames)
         self._muted.clear()
+
+    def hold(self) -> None:
+        """Ignore what's heard while an alarm plays - its siren and voice
+        aren't the resident's command. Separate from mute(): a reply ending
+        mid-alarm must not start listening again."""
+        self._held.set()
+        _drain(self._phrases)
+
+    def release(self) -> None:
+        _drain(self._frames)
+        self._held.clear()
 
     def pause(self) -> None:
         """The microphone really off - the audio stream stops, so Windows'

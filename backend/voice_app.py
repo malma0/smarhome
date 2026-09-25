@@ -43,6 +43,7 @@ import queue
 import threading
 import time
 import wave
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -536,6 +537,8 @@ class AlarmVoice:
         self._queue: "queue.Queue" = queue.Queue()
         threading.Thread(target=self._run, daemon=True).start()
 
+    listeners: "weakref.WeakSet" = weakref.WeakSet()  # microphones to hold while it sounds
+
     def say(self, alert) -> None:
         self._queue.put(alert)
 
@@ -543,6 +546,9 @@ class AlarmVoice:
         engine = None
         while True:
             alert = self._queue.get()
+            held = list(AlarmVoice.listeners)
+            for listener in held:
+                listener.hold()
             try:
                 if alert.active:
                     _play_siren()
@@ -560,6 +566,10 @@ class AlarmVoice:
                     engine.runAndWait()
             except Exception as exc:  # noqa: BLE001 - the banner is already up; sound is extra
                 print(f"(тревога: звук не сработал - {exc!r})")
+            finally:
+                time.sleep(0.3)  # the room's echo
+                for listener in held:
+                    listener.release()
 
 
 def _play_siren(cycles: int = 3, rate: int = 22050) -> None:
@@ -794,6 +804,7 @@ async def run_hands_free(
         # app.wake_word.StreamingTranscript.
         transcriber_factory=detector.stream if detector else None,
     )
+    AlarmVoice.listeners.add(listener)
 
     async def respond(work) -> None:
         listener.mute()  # don't hear our own reply as the next phrase
