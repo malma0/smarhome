@@ -544,9 +544,22 @@ def apply_correction(session: VoiceSession, typed: str, utterance_id: str | None
         session.ui.info("(исправлять нечего - в этом сеансе ещё не было ни одной фразы)")
 
 
+def _failure_reply(exc: Exception) -> str:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 429:
+        return "Лимит бесплатной модели на эту минуту кончился - повтори через минуту."
+    return f"Не получилось ответить ({type(exc).__name__}). Повтори, пожалуйста."
+
+
 async def _answer(session: VoiceSession, text: str) -> str:
     session.ui.state(THINKING, "Думаю...")
-    result = await session.agent.chat(session.session_id, session.resident_id, text, spoken=settings.tts_enabled)
+    try:
+        result = await session.agent.chat(session.session_id, session.resident_id, text, spoken=settings.tts_enabled)
+    except Exception as exc:  # noqa: BLE001 - the model failing (rate limit, network) mustn't end the session
+        reply = _failure_reply(exc)
+        session.ui.info(f"(ошибка модели: {exc!r})")
+        session.ui.jarvis_said(reply, [])
+        return reply
     session.ui.jarvis_said(result["response"], result["actions"])
     return result["response"]
 

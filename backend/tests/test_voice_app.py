@@ -156,6 +156,24 @@ def test_a_whisper_hallucination_on_noise_is_not_answered_or_logged(memory, tmp_
     assert session.utterances.stats()["utterances"] == 0
 
 
+def test_a_failing_model_gets_a_spoken_apology_not_a_crash(memory, tmp_path, monkeypatch):
+    import httpx
+
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    session = _session(memory, tmp_path)
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    rate_limited = httpx.HTTPStatusError("429", request=request, response=httpx.Response(429, request=request))
+    session.agent.chat = AsyncMock(side_effect=rate_limited)
+
+    reply = asyncio.run(voice_app._answer(session, "включи свет"))
+    assert "Лимит" in reply
+
+    session.agent.chat = AsyncMock(side_effect=httpx.ConnectError("offline"))
+    assert "Не получилось ответить (ConnectError)" in asyncio.run(voice_app._answer(session, "включи свет"))
+
+
 def test_correction_applies_to_the_last_phrase(memory, tmp_path, monkeypatch):
     import voice_app
 
