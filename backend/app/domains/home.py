@@ -431,16 +431,12 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
         Tool(
             name="get_home_status",
             description=(
-                "What's in the house right now, room by room: lights (on/off, brightness), sockets, "
-                "AC, heating, ventilation, sensors (temperature, humidity, CO2) and the room's norms - the "
-                "temperature and CO2 maximum the house keeps by itself (heating, AC and ventilation run "
-                "on their own to hold them; nobody needs to be told), danger sensors (smoke, leak, gas) "
-                "and the main water and gas valves. Use it to answer questions about the house ('где жарче всего?', "
-                "'что включено?', 'душно ли в спальне?') and to learn which rooms exist. The house "
-                "changes all the time - call this for every such question instead of relying on an "
-                "earlier answer. Answer with the facts; don't advise the resident to do things you can't do "
-                "yourself (like airing a room). When the resident says it's stuffy, hot or cold, they're "
-                "right whatever the sensors say - fix it (ventilation on, or set_room_norm), don't argue."
+                "The house now, room by room: lights, sockets, AC, heating, ventilation, sensors "
+                "(temperature, humidity, CO2), danger sensors, main valves, and each room's norms "
+                "(temperature, CO2 max) the house keeps by itself. Call it for every question about the house "
+                "- it changes. Answer with facts; don't advise what you can't do yourself (like airing a "
+                "room). If the resident says it's stuffy, hot or cold, they're right - fix it (ventilation "
+                "on, or set_room_norm), don't argue."
             ),
             parameters={
                 "type": "object",
@@ -458,17 +454,13 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
         Tool(
             name="control_devices",
             description=(
-                "Turn a device type on or off in a room right now: light (optionally with brightness_pct), "
-                "socket, water_valve / gas_valve (the main valves - 'on' opens, room doesn't matter), "
-                "ventilation ('проветри' - it's also run automatically for the CO2 norm), ac (cools, "
-                "optionally to temperature) or heating (heats, optionally to temperature). For 'warmer' / "
-                "'cooler' use set_room_norm instead - heating and AC follow the norm. room is the room's name in "
-                "any form ('кухня', 'на кухне'), or 'all' for the whole house ('выключи везде свет' is "
-                "one call). For a few specific rooms, call once per room. Sockets, ACs and heating in a "
-                "second room, opening the gas or opening the water during a leak, and temperatures "
-                "outside 16-28 °C, need the resident's confirmation - when the "
-                "result says so, ask, and on a yes retry with confirmed=true. Always try the command: "
-                "never tell the resident a room or device doesn't exist unless this tool said so."
+                "Turn a device type on/off in a room: light (brightness_pct), socket, ventilation, ac (cools, "
+                "optional temperature), heating (optional temperature), water_valve/gas_valve (on = open, "
+                "room ignored). room in any form ('на кухне') or 'all' - the whole house in one call. "
+                "'Warmer'/'cooler' is set_room_norm, not this. Needs the resident's yes, then retry with "
+                "confirmed=true: sockets/AC/heating in a second room, temperatures outside 16-28 °C, gas, "
+                "water during a leak. Always try - never say a room or device is missing unless this tool "
+                "says so."
             ),
             parameters={
                 "type": "object",
@@ -491,11 +483,9 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
         Tool(
             name="set_room_norm",
             description=(
-                "Change what the house keeps a room at: temperature (°C, 16-28) and/or co2_max (ppm, "
-                "600-1500). Heating, AC and ventilation then hold it on their own. 'Сделай потеплее' / "
-                "'прохладнее' without a number means the current norm (get_home_status) plus or minus "
-                "1 °C; 'держи в спальне 21' sets 21. room is its name in any form, or 'all'. Say what "
-                "the new norm is, briefly."
+                "What the house keeps a room at: temperature (16-28 °C) and/or co2_max (600-1500 ppm) - "
+                "heating, AC and ventilation follow. 'Потеплее'/'прохладнее' = the current norm "
+                "(get_home_status) ±1; 'держи 21' = 21. room in any form or 'all'."
             ),
             parameters={
                 "type": "object",
@@ -513,10 +503,8 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
         Tool(
             name="run_scenario",
             description=(
-                "Run one of the resident's scenarios - several actions at once, set up in Home Assistant: "
-                "e.g. 'Я ушёл', 'Я дома', 'Спокойной ночи', 'Доброе утро'. name is the phrase the resident "
-                "said ('я ухожу', 'ложусь спать') - it's matched against each scenario's name and phrases. "
-                "Without a name: lists the scenarios. Afterwards say briefly what it did (from 'does')."
+                "Run the resident's scenario ('Я ушёл', 'Я дома', 'Спокойной ночи', 'Доброе утро'...) by the "
+                "phrase they said; no name lists them. Then say briefly what it did ('does')."
             ),
             parameters={
                 "type": "object",

@@ -61,22 +61,10 @@ _BLOCKED_APP_KEYWORDS = (
 )
 
 TOOL_DESCRIPTION = (
-    "Open a desktop application by name - a core Windows utility (notepad, "
-    "calculator, paint, file explorer), the default web browser, or the "
-    "name of any other installed application (e.g. 'Steam', 'Discord', "
-    "'Blender') - looked up among what's actually installed on this "
-    "machine. There is no shell/terminal access and no way to run arbitrary "
-    "commands, regardless of what name is requested. If nothing matching "
-    "is installed, say so rather than guessing at a substitute. When app is "
-    "'browser' and the user named a site (e.g. 'open YouTube'), pass its "
-    "address as url - otherwise the browser just opens to whatever its own "
-    "home/new-tab page is, same as clicking its icon. When the user wants to "
-    "see or write text in an app like notepad (e.g. 'open notepad and write "
-    "hello world'), first write the content with write_file, then call this "
-    "tool with that same path as file - this opens the app already showing "
-    "that content, instead of a blank window unrelated to what you wrote. "
-    "file only works for the built-in utilities (notepad, paint, etc.), not "
-    "for other installed applications looked up by name."
+    "Open an app by name: notepad, calculator, paint, explorer, the default browser, or any installed "
+    "app ('Steam', 'Discord'). Never a shell or terminal. Nothing installed by that name - say so, don't "
+    "substitute. browser + url opens a site ('открой YouTube'). To show text in notepad: write_file "
+    "first, then pass that path as file (built-in utilities only)."
 )
 
 
