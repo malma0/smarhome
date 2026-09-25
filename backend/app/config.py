@@ -36,6 +36,7 @@ class Settings:
     voicebox_russian_stress: bool
     voicebox_cleanup: bool
     danger_alerts: bool
+    weather_city: str
     danger_alert_voice: str
     voicebox_tempo: float
     voicebox_ending_tempo: float | None
@@ -83,6 +84,7 @@ def load_settings() -> Settings:
         voicebox_reference_wav=os.environ.get("VOICEBOX_REFERENCE_WAV", ""),
         voicebox_russian_stress=os.environ.get("VOICEBOX_RUSSIAN_STRESS", "true").strip().lower()
         not in ("false", "0", "no"),
+        weather_city=os.environ.get("WEATHER_CITY", "").strip(),
         danger_alerts=os.environ.get("DANGER_ALERTS", "true").strip().lower() not in ("false", "0", "no"),
         danger_alert_voice=os.environ.get("DANGER_ALERT_VOICE", "sapi").strip().lower(),
         voicebox_cleanup=os.environ.get("VOICEBOX_CLEANUP", "false").strip().lower() in ("true", "1", "yes"),
