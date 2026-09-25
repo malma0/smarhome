@@ -158,7 +158,7 @@ function hideEmpty() {
 
 // A voice phrase can always be corrected, right from the moment it shows up
 // - including one Jarvis couldn't make out at all (empty text).
-function addUser(text, voice, utteranceId) {
+function addUser(text, voice, utteranceId, speaker, speakerSure) {
   hideEmpty();
   const msg = document.createElement("div");
   msg.className = "msg user" + (voice && !text ? " unheard" : "");
@@ -166,6 +166,7 @@ function addUser(text, voice, utteranceId) {
   msg.querySelector(".bubble").textContent = text || "Не разобрал, что ты сказал";
   msg.querySelector(".how").textContent = voice ? "голосом" : "текстом";
   chat.appendChild(msg);
+  if (voice) addSpeakerLabel(msg, utteranceId, speaker, speakerSure !== false);
   if (voice) {
     const btn = document.createElement("button");
     btn.className = "edit-btn";
@@ -174,6 +175,51 @@ function addUser(text, voice, utteranceId) {
     btn.onclick = () => startEdit(msg, utteranceId || null);
     msg.querySelector(".meta").appendChild(btn);
   }
+  scrollDown();
+}
+
+// Who said it: "Матвей", or "Матвей?" when Jarvis only guessed. Clicking
+// fixes it - the label goes into the voice training data, so a wrong one
+// would teach the wrong thing.
+function addSpeakerLabel(msg, utteranceId, speaker, sure) {
+  const who = document.createElement(utteranceId ? "button" : "span");
+  who.className = "who" + (speaker && sure ? "" : " unsure");
+  who.textContent = speaker ? (sure ? speaker : `${speaker}?`) : "кто говорил?";
+  if (utteranceId) {
+    who.type = "button";
+    who.title = "Кто это сказал? Нажми, чтобы исправить - это пойдёт в данные для обучения голосов.";
+    who.onclick = () => pickSpeaker(msg, utteranceId, who);
+  }
+  msg.querySelector(".meta").appendChild(who);
+}
+
+function pickSpeaker(msg, utteranceId, who) {
+  if (msg.querySelector(".pick-speaker")) return;
+  const box = document.createElement("div");
+  box.className = "pick-speaker";
+  const names = voiceProfiles.map((p) => p.name);
+  if (!names.length) {
+    box.innerHTML = `<span class="pick-hint">Сначала запиши голоса - нажми на имя вверху.</span>`;
+  }
+  for (const name of names) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = `Это ${name}`;
+    btn.onclick = () => {
+      call("set_speaker", utteranceId, name);
+      who.textContent = name;
+      who.classList.remove("unsure");
+      box.remove();
+    };
+    box.appendChild(btn);
+  }
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "cancel";
+  cancel.textContent = "Отмена";
+  cancel.onclick = () => box.remove();
+  box.appendChild(cancel);
+  msg.appendChild(box);
   scrollDown();
 }
 
@@ -398,7 +444,7 @@ window.jarvis = {
         pyDetail = e.detail || "";
         shownVisual = null;  // refresh caption on next frame
         break;
-      case "user": addUser(e.text, e.voice, e.id); break;
+      case "user": addUser(e.text, e.voice, e.id, e.speaker, e.speaker_sure); break;
       case "jarvis": addJarvis(e.text, e.actions); break;
       case "note": addNote(e.text); break;
       case "info": toast(e.text); break;
@@ -460,6 +506,7 @@ function demoCall(method, ...args) {
       }, 4500),
     ];
   }
+  if (method === "set_speaker") toast(`Исправлено: голос - «${args[1]}».`);
   if (method === "cancel_enroll") {
     demoEnrollTimers.forEach(clearTimeout);
     jarvis.event({ type: "enroll", name: "", collected: 0, needed: 3, status: "cancelled" });
@@ -491,7 +538,7 @@ function runDemo() {
   for (let i = 0; i < 26; i++) step(90, { type: "mic", level: 0.15 + 0.8 * Math.abs(Math.sin(i * 0.9) * Math.sin(i * 0.37)) });
   step(200, { type: "state", state: "thinking", detail: "Распознаю..." });
   step(900, { type: "resident", name: "Матвей" });
-  step(0, { type: "user", text: "Джарвис, открой блокнот и запиши привет мир", voice: true, id: "demo-1" });
+  step(0, { type: "user", text: "Джарвис, открой блокнот и запиши привет мир", voice: true, id: "demo-1", speaker: "Матвей", speaker_sure: true });
   step(300, { type: "state", state: "thinking", detail: "Думаю..." });
   step(1400, { type: "jarvis", text: "Готово: открыл блокнот, там уже написано «привет мир».",
                actions: [{ ok: true, summary: "Записал hello.txt" }, { ok: true, summary: "Открыл notepad" }] });
@@ -501,14 +548,14 @@ function runDemo() {
   step(1800, { type: "envelope", levels: env, frame_seconds: 0.05 });
   step(3600, { type: "state", state: "listening", detail: "Слушаю ещё 10 с - можно без имени" });
   step(1500, { type: "state", state: "thinking", detail: "Распознаю..." });
-  step(700, { type: "user", text: "", voice: true, id: "demo-2" });  // a phrase Jarvis couldn't make out
+  step(700, { type: "user", text: "", voice: true, id: "demo-2", speaker: "Матвей", speaker_sure: false });  // couldn't make it out
   step(0, { type: "state", state: "listening", detail: "Слушаю ещё 10 с - можно без имени" });
   step(4000, { type: "state", state: "sleeping", detail: "Скажи «Джарвис»" });
   for (const [ms, e] of steps) later(ms, e);
 }
 
 if (DEMO) {
-  jarvis.event({ type: "voices", profiles: [{ name: "Матвей", samples: 5 }] });
+  jarvis.event({ type: "voices", profiles: [{ name: "Матвей", samples: 5 }, { name: "Эля", samples: 3 }] });
   jarvis.event({ type: "resident", name: "default" });
   jarvis.event({ type: "stats", minutes: 3.2, utterances: 40 });
   jarvis.event({ type: "state", state: "sleeping", detail: "Скажи «Джарвис»" });

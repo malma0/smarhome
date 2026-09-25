@@ -44,6 +44,7 @@ import threading
 import time
 import wave
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -163,18 +164,44 @@ def _existing_resident(memory: MemoryStore, typed: str) -> str:
     return name
 
 
-def _learn(memory: MemoryStore, resident_id: str, embedding, wav_bytes: bytes) -> None:
+def _learn(memory: MemoryStore, resident_id: str, embedding, wav_bytes: bytes) -> Path | None:
     """Adds a sample to the profile and keeps its audio (see
     speaker_id.save_sample_audio - the data for rebuilding profiles with a
-    better model and for training a household-specific one)."""
+    better model and for training a household-specific one). Returns where
+    the audio went, or None if saving it failed."""
     speaker_id.enroll_resident(memory, resident_id, embedding)
     try:
-        speaker_id.save_sample_audio(resident_id, wav_bytes)
+        return speaker_id.save_sample_audio(resident_id, wav_bytes)
     except OSError:
-        pass  # the profile itself is updated; losing one training clip isn't worth failing over
+        return None  # the profile itself is updated; losing one training clip isn't worth failing over
 
 
-def identify_or_enroll_speaker(
+# How a phrase's speaker was decided - stored with it in the dataset, since
+# the same phrases are training data for telling voices apart and a wrong
+# label would teach the wrong thing.
+CONFIDENT = "confident"  # cleared the model's threshold
+CLOSER = "closer"  # clearly nearer one enrolled voice than the rest (see speaker_id.decide)
+LAST = "last"  # nothing decisive on a short phrase: assumed whoever spoke last
+ASKED = "asked"  # the person said who they are
+UNKNOWN = "unknown"  # not recognized and not named, or voice ID unavailable
+CORRECTED = "corrected"  # fixed by hand afterwards ("Кто говорил?")
+SURE = {CONFIDENT, ASKED, CORRECTED}
+
+
+@dataclass
+class SpeakerDecision:
+    resident: str
+    how: str
+    score: float | None = None
+    voiceprint: Path | None = None  # set when this phrase became a profile sample
+
+
+def identify_or_enroll_speaker(*args, **kwargs) -> str:
+    """identify_speaker, returning just who it was."""
+    return identify_speaker(*args, **kwargs).resident
+
+
+def identify_speaker(
     memory: MemoryStore,
     wav_bytes: bytes,
     default_resident_id: str,
@@ -183,7 +210,7 @@ def identify_or_enroll_speaker(
     ui: VoiceUI | None = None,
     speech_seconds: float | None = None,
     embedding=None,
-) -> str:
+) -> SpeakerDecision:
     """Voice-based resident ID (app.speaker_id) layered on top of the
     manually-typed session default: tries to recognize the speaker from
     this recording alone, and if nobody enrolled matches, offers to enroll
@@ -213,20 +240,19 @@ def identify_or_enroll_speaker(
             embedding = speaker_id.embed_wav_bytes(wav_bytes)
         except Exception as exc:  # noqa: BLE001 - e.g. the model isn't installed
             ui.info(f"(распознавание голоса недоступно: {exc})")
-            return default_resident_id
+            return SpeakerDecision(default_resident_id, UNKNOWN)
 
     enrolled = speaker_id.load_enrolled_voiceprints(memory)
-    match, confident = speaker_id.match_resident(embedding, enrolled, threshold=threshold)
+    match, confident, score = speaker_id.match_resident_scored(embedding, enrolled, threshold=threshold)
     if match:
         # Only a confident match on enough speech teaches the profile - a
         # short clip, or a "clearly closer than the other person" call, is
         # good enough to know who's talking but would be a noisy sample.
-        if confident and not short:
-            _learn(memory, match, embedding, wav_bytes)
+        voiceprint = _learn(memory, match, embedding, wav_bytes) if confident and not short else None
         ui.resident(match)
-        return match
+        return SpeakerDecision(match, CONFIDENT if confident else CLOSER, score, voiceprint)
     if short:
-        return default_resident_id
+        return SpeakerDecision(default_resident_id, LAST if default_resident_id != "default" else UNKNOWN, score)
 
     prompt = "Не узнал голос — как вас зовут? (Enter, чтобы не запоминать) "
     known = sorted(enrolled)
@@ -235,17 +261,58 @@ def identify_or_enroll_speaker(
     except (EOFError, KeyboardInterrupt):
         answer = ""
     if not answer.strip():
-        return default_resident_id
+        return SpeakerDecision(default_resident_id, UNKNOWN, score)
 
     name = _existing_resident(memory, answer)
-    _learn(memory, name, embedding, wav_bytes)
+    voiceprint = _learn(memory, name, embedding, wav_bytes)
     report_voices(memory, ui)
     if name in enrolled:
         ui.info(f"Добавил эту запись в голос «{name}» - дальше буду узнавать увереннее.")
     else:
         ui.info(f"Запомнил ваш голос как «{name}».")
     ui.resident(name)
-    return name
+    return SpeakerDecision(name, ASKED, score, voiceprint)
+
+
+def reassign_speaker(session: "VoiceSession", utterance_id: str, name: str) -> bool:
+    """'Кто говорил?' - fixes a phrase's speaker label in the dataset. If the
+    phrase had become a sample in the wrong person's profile, its audio
+    moves to the right person and both profiles are rebuilt from their
+    saved audio; if it hadn't but has enough speech, it becomes a sample of
+    the right person now. Whoever it really was is also the current
+    speaker from here on."""
+    if session.utterances is None:
+        return False
+    record = session.utterances.get(utterance_id)
+    if record is None:
+        return False
+    memory, ui = session.agent.memory, session.ui
+    name = _existing_resident(memory, name)
+    previous = record.get("resident_id")
+    audio = session.utterances.audio(record)
+    fields = {"resident_id": name, "speaker_how": CORRECTED, "speaker_corrected_from": previous}
+
+    old_print = record.get("voiceprint")
+    if old_print and Path(old_print).exists() and previous != name:
+        fields["voiceprint"] = str(speaker_id.move_sample_audio(Path(old_print), name))
+        speaker_id.rebuild_profiles(memory, only={previous, name})
+    elif not old_print and _wav_speech_seconds(audio) >= MIN_SPEECH_FOR_VOICE_ID:
+        saved = _learn(memory, name, speaker_id.embed_wav_bytes(audio), audio)
+        fields["voiceprint"] = str(saved) if saved else None
+
+    session.utterances.update(utterance_id, **fields)
+    session.resident_id = name
+    ui.resident(name)
+    report_voices(memory, ui)
+    ui.info(f"Исправлено: голос - «{name}».")
+    return True
+
+
+def _wav_speech_seconds(wav_bytes: bytes) -> float:
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+        samples = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+        rate = wf.getframerate()
+    return speech_seconds([samples.reshape(-1, 1)], rate)
 
 
 # Deliberate voice enrollment ("Записать голос" in the window): the person
@@ -507,14 +574,15 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
         ui.info(f"Ошибка распознавания: {exc}")
 
+    decision: SpeakerDecision | None = None
     if embedding_task is not None:
         try:
             embedding = await embedding_task
-        except Exception:  # noqa: BLE001 - identify_or_enroll_speaker retries and reports it
+        except Exception:  # noqa: BLE001 - identify_speaker retries and reports it
             embedding = None
         # Identification itself (database, maybe a question) stays on this
         # thread - the SQLite connection belongs to it.
-        session.resident_id = identify_or_enroll_speaker(
+        decision = identify_speaker(
             session.agent.memory,
             wav_bytes,
             session.resident_id,
@@ -524,6 +592,7 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
             speech_seconds=speech_seconds(frames, SAMPLE_RATE),
             embedding=embedding,
         )
+        session.resident_id = decision.resident
 
     # Logged right away - before answering - so the phrase can be corrected
     # the moment it's shown, and even when transcription failed or came back
@@ -531,11 +600,24 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     # correction turns it into a usable training example.
     utterance_id: str | None = None
     if session.utterances:
+        speaker_fields = {}
+        if decision is not None:
+            speaker_fields = {
+                "speaker_how": decision.how,
+                "speaker_score": decision.score,
+                "voiceprint": str(decision.voiceprint) if decision.voiceprint else None,
+            }
         utterance_id = session.utterances.log(
-            wav_bytes=wav_bytes, resident_id=session.resident_id, transcript=text
+            wav_bytes=wav_bytes, resident_id=session.resident_id, transcript=text, **speaker_fields
         )
         session.last_utterance_id = utterance_id
-    ui.user_said(text or "", voice=True, utterance_id=utterance_id)
+    ui.user_said(
+        text or "",
+        voice=True,
+        utterance_id=utterance_id,
+        speaker=session.resident_id,
+        speaker_sure=decision is None or decision.how in SURE,
+    )
     if not text:
         return
 
@@ -572,7 +654,8 @@ async def run_hands_free(
     """The hands-free loop, shared by the terminal and the window. Besides
     the mic it takes commands from a queue, from whichever front end:
     ("text", message), ("correct", text, utterance_id | None, ask),
-    ("wake",), ("enroll", name), ("enroll_cancel",), ("quit",).
+    ("wake",), ("enroll", name), ("enroll_cancel",),
+    ("speaker", utterance_id, name), ("quit",).
     A correction is saved to the dataset and, with ask=True, also sent to
     Jarvis as what was really said - Jarvis answered the misheard version.
     While enrolling a voice, every phrase goes to that person's voice
@@ -636,6 +719,8 @@ async def run_hands_free(
                 elif kind == "enroll_cancel":
                     if enrolling:
                         finish_enrollment("cancelled")
+                elif kind == "speaker":
+                    reassign_speaker(session, command[1], command[2])
                 elif kind == "correct":
                     _, text, utterance_id, ask = command
                     if session.utterances is not None and (utterance_id or session.last_utterance_id):

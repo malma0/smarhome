@@ -23,11 +23,21 @@ SPEAKING = "speaking"
 class VoiceUI(Protocol):
     def state(self, state: str, detail: str = "") -> None: ...
 
-    def user_said(self, text: str, voice: bool, utterance_id: str | None = None) -> None:
+    def user_said(
+        self,
+        text: str,
+        voice: bool,
+        utterance_id: str | None = None,
+        speaker: str | None = None,
+        speaker_sure: bool = True,
+    ) -> None:
         """text is "" when a spoken phrase couldn't be made out at all -
         still shown, so it can be corrected. utterance_id: where the phrase
         is stored in the training dataset (None for typed messages or with
-        the dataset off) - lets a front end offer "correct this" right away."""
+        the dataset off) - lets a front end offer "correct this" right away.
+        speaker: who Jarvis thinks said it (voice phrases); speaker_sure is
+        False for a guess (closer to one person, or "whoever spoke last") -
+        a front end can offer "who was it?" to fix the label."""
         ...
 
     def jarvis_said(self, text: str, actions: list[dict]) -> None: ...
@@ -69,8 +79,16 @@ class ConsoleUI:
         if detail:
             print(detail)
 
-    def user_said(self, text: str, voice: bool, utterance_id: str | None = None) -> None:
-        print(f"you> {text}" if text else "(не удалось разобрать речь - если я ошибся, впиши, что ты сказал)")
+    def user_said(
+        self,
+        text: str,
+        voice: bool,
+        utterance_id: str | None = None,
+        speaker: str | None = None,
+        speaker_sure: bool = True,
+    ) -> None:
+        who = f"{speaker}{'' if speaker_sure else '?'}" if speaker and speaker != "default" else "you"
+        print(f"{who}> {text}" if text else "(не удалось разобрать речь - если я ошибся, впиши, что ты сказал)")
 
     def jarvis_said(self, text: str, actions: list[dict]) -> None:
         print(f"jarvis> {text}")

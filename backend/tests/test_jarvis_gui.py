@@ -54,14 +54,23 @@ def test_a_saved_voice_phrase_carries_its_id_and_refreshes_the_stats():
     ui, calls = _ui()
     ui.stats_source = lambda: {"utterances": 41, "minutes": 3.4, "corrected": 2}
     ui.mark_ready()
-    ui.user_said("включи свет", voice=True, utterance_id="abc")
+    ui.user_said("включи свет", voice=True, utterance_id="abc", speaker="Матвей", speaker_sure=False)
     ui.user_said("который час", voice=False)  # typed - nothing saved, no stats refresh
     ui.drain()
     assert _events(calls) == [
-        {"type": "user", "text": "включи свет", "voice": True, "id": "abc"},
+        {"type": "user", "text": "включи свет", "voice": True, "id": "abc", "speaker": "Матвей", "speaker_sure": False},
         {"type": "stats", "minutes": 3.4, "utterances": 41},
-        {"type": "user", "text": "который час", "voice": False, "id": None},
+        {"type": "user", "text": "который час", "voice": False, "id": None, "speaker": None, "speaker_sure": True},
     ]
+
+
+def test_the_page_can_fix_who_said_a_phrase():
+    commands = queue.Queue()
+    ui, _ = _ui()
+    api = JsApi(commands, ui)
+    api.set_speaker("utt-1", " Эля ")
+    api.set_speaker("", "Эля")  # no phrase id - ignored
+    assert [commands.get_nowait() for _ in range(commands.qsize())] == [("speaker", "utt-1", "Эля")]
 
 
 def test_ask_name_blocks_until_the_page_answers():

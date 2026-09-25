@@ -108,8 +108,24 @@ class WebviewUI:
     def state(self, state: str, detail: str = "") -> None:
         self._send({"type": "state", "state": state, "detail": detail})
 
-    def user_said(self, text: str, voice: bool, utterance_id: str | None = None) -> None:
-        self._send({"type": "user", "text": text, "voice": voice, "id": utterance_id})
+    def user_said(
+        self,
+        text: str,
+        voice: bool,
+        utterance_id: str | None = None,
+        speaker: str | None = None,
+        speaker_sure: bool = True,
+    ) -> None:
+        self._send(
+            {
+                "type": "user",
+                "text": text,
+                "voice": voice,
+                "id": utterance_id,
+                "speaker": speaker if speaker != "default" else None,
+                "speaker_sure": speaker_sure,
+            }
+        )
         if utterance_id:
             self.push_stats()
 
@@ -177,6 +193,12 @@ class JsApi:
 
     def wake(self) -> None:
         self._commands.put(("wake",))
+
+    def set_speaker(self, utterance_id: str, name: str) -> None:
+        """'Кто говорил?' on a phrase - fixes its speaker label."""
+        name = (name or "").strip()
+        if utterance_id and name:
+            self._commands.put(("speaker", utterance_id, name))
 
     def start_enroll(self, name: str) -> None:
         name = (name or "").strip()
