@@ -707,6 +707,14 @@ def _fake_listener_factory(phrases, commands):
         def unmute(self): pass
         def close(self): pass
 
+        def pause(self):
+            log.append("pause")
+
+        def resume(self):
+            log.append("resume")
+
+    log = []
+    _FakeListener.log = log
     return _FakeListener
 
 
@@ -780,3 +788,47 @@ def test_no_danger_watch_without_home_assistant_or_when_switched_off(monkeypatch
         voice_app, "settings", dataclasses.replace(voice_app.settings, home_assistant_token="t", danger_alerts=False)
     )
     assert voice_app.start_danger_watch(_RecordingUI()) is None
+
+
+def test_the_orb_switches_the_mic_off_and_back_on_listening(memory, tmp_path, monkeypatch):
+    import queue
+
+    import voice_app
+
+    monkeypatch.setattr(voice_app, "_play_listening_cue", lambda: None)
+    commands = queue.Queue()
+    commands.put(("toggle_mic",))
+    listener = _fake_listener_factory([], commands)
+    monkeypatch.setattr(voice_app, "HandsFreeListener", listener)
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+    assert listener.log == ["pause"] and ui.events[-1] == ("state", "muted")
+
+    commands = queue.Queue()
+    for command in (("toggle_mic",), ("toggle_mic",)):
+        commands.put(command)
+    listener = _fake_listener_factory([], commands)
+    monkeypatch.setattr(voice_app, "HandsFreeListener", listener)
+    session.ui = ui = _RecordingUI()
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+    assert listener.log == ["pause", "resume"] and ui.events[-1] == ("state", "listening")
+
+
+def test_typing_while_the_mic_is_off_keeps_it_off(memory, tmp_path, monkeypatch):
+    import queue
+
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    commands = queue.Queue()
+    commands.put(("toggle_mic",))
+    commands.put(("text", "включи свет"))
+    listener = _fake_listener_factory([], commands)
+    monkeypatch.setattr(voice_app, "HandsFreeListener", listener)
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+    assert listener.log == ["pause"] and ui.events[-1] == ("state", "muted")

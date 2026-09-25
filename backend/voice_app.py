@@ -60,7 +60,7 @@ from app.memory import MemoryStore
 from app.tts.base import TTSProvider
 from app.transcript_filter import is_hallucination
 from app.tts.text import text_for_speech
-from app.voice_ui import LISTENING, SLEEPING, SPEAKING, THINKING, ConsoleUI, VoiceUI
+from app.voice_ui import LISTENING, MUTED, SLEEPING, SPEAKING, THINKING, ConsoleUI, VoiceUI
 from app.wake_word import WakeWordDetector, classify, parse_wake_words
 
 SAMPLE_RATE = 16000
@@ -744,7 +744,7 @@ async def run_hands_free(
     """The hands-free loop, shared by the terminal and the window. Besides
     the mic it takes commands from a queue, from whichever front end:
     ("text", message), ("correct", text, utterance_id | None, ask),
-    ("wake",), ("enroll", name), ("enroll_cancel",),
+    ("wake",), ("toggle_mic",), ("enroll", name), ("enroll_cancel",),
     ("speaker", utterance_id, name), ("quit",).
     A correction is saved to the dataset and, with ask=True, also sent to
     Jarvis as what was really said - Jarvis answered the misheard version.
@@ -759,6 +759,23 @@ async def run_hands_free(
     asleep_hint = f"Скажи «{wake_word}»" if detector else "Нажми на кружок, чтобы говорить"
     state = HandsFreeState(settings.wake_listen_seconds, settings.follow_up_seconds)
     enrolling: dict | None = None  # {"name", "got", "deadline"} while recording a voice
+    mic_on = True  # the orb switches it: off = the stream really stops
+
+    def idle() -> None:
+        if mic_on:
+            ui.state(SLEEPING, asleep_hint)
+        else:
+            ui.state(MUTED, "Микрофон выключен - нажми на кружок, чтобы говорить")
+
+    async def listen_now() -> None:
+        """Mic on (if it was off) and straight into listening, no name needed."""
+        nonlocal mic_on
+        if not mic_on:
+            listener.resume()
+            mic_on = True
+        state.force_wake()
+        await asyncio.to_thread(_play_listening_cue)
+        ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")
 
     def finish_enrollment(status: str) -> None:
         nonlocal enrolling
@@ -769,7 +786,7 @@ async def run_hands_free(
         if got:
             session.resident_id = name  # whoever just enrolled is most likely the one talking
             ui.resident(name)
-        ui.state(SLEEPING, asleep_hint)
+        idle()
     listener = HandsFreeListener(
         SAMPLE_RATE,
         on_level=ui.mic_level,
@@ -785,10 +802,13 @@ async def run_hands_free(
         finally:
             await asyncio.sleep(0.3)  # let the room's echo of the reply die down
             listener.unmute()
-        state.after_reply()
-        ui.state(LISTENING, f"Слушаю ещё {settings.follow_up_seconds:.0f} с - можно без имени")
+        if mic_on:
+            state.after_reply()
+            ui.state(LISTENING, f"Слушаю ещё {settings.follow_up_seconds:.0f} с - можно без имени")
+        else:
+            idle()  # typed while the mic is off - it stays off
 
-    ui.state(SLEEPING, asleep_hint)
+    idle()
     report_voices(memory, ui)
     try:
         while True:
@@ -803,6 +823,9 @@ async def run_hands_free(
                 if kind == "enroll":
                     name = _existing_resident(memory, command[1]) if command[1].strip() else ""
                     if name:
+                        if not mic_on:
+                            listener.resume()
+                            mic_on = True
                         enrolling = {"name": name, "got": 0, "deadline": time.monotonic() + ENROLL_TIMEOUT_SECONDS}
                         ui.enrollment(name, 0, ENROLL_SAMPLES_NEEDED, "started")
                         ui.state(LISTENING, "Читай фразы с экрана вслух")
@@ -818,9 +841,15 @@ async def run_hands_free(
                     if ask:
                         await respond(handle_text(session, text, echo=False))
                 elif kind == "wake":
-                    state.force_wake()
-                    await asyncio.to_thread(_play_listening_cue)
-                    ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")
+                    await listen_now()
+                elif kind == "toggle_mic":
+                    if mic_on:
+                        listener.pause()
+                        mic_on = False
+                        state.sleep()
+                        idle()
+                    else:
+                        await listen_now()
                 elif kind == "text":
                     await respond(handle_text(session, command[1]))
 
@@ -831,7 +860,7 @@ async def run_hands_free(
             phrase = await asyncio.to_thread(listener.next_phrase, 0.3)
             if phrase is None:
                 if was_awake and not state.is_awake() and not enrolling:
-                    ui.state(SLEEPING, asleep_hint)
+                    idle()
                 continue
 
             if enrolling:

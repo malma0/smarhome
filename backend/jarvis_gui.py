@@ -238,6 +238,10 @@ class JsApi:
     def wake(self) -> None:
         self._commands.put(("wake",))
 
+    def toggle_mic(self) -> None:
+        """The orb: switches the microphone off, or back on and listening."""
+        self._commands.put(("toggle_mic",))
+
     def set_speaker(self, utterance_id: str, name: str) -> None:
         """'Кто говорил?' on a phrase - fixes its speaker label."""
         name = (name or "").strip()

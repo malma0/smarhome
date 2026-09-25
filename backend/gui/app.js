@@ -12,6 +12,7 @@ const STATES = {
   listening: { label: "Слушает",  caption: "Слушаю…",          color: [34, 211, 238],  amp0: 0.030, ampK: 0.30, speed: 1.00, glow: 0.60 },
   thinking:  { label: "Думает",   caption: "Думаю…",           color: [139, 92, 246],  amp0: 0.050, ampK: 0.08, speed: 2.40, glow: 0.55 },
   speaking:  { label: "Говорит",  caption: "Говорит…",         color: [232, 90, 200],  amp0: 0.040, ampK: 0.34, speed: 1.40, glow: 0.80 },
+  muted:     { label: "Микрофон выключен", caption: "Микрофон выключен - нажми, чтобы говорить", color: [84, 90, 108], amp0: 0.008, ampK: 0, speed: 0.12, glow: 0.10 },
 };
 
 let pyState = "sleeping";       // what Python last reported
@@ -53,6 +54,7 @@ function targetLevel(vis, now, t) {
   }
   if (vis === "listening") return now - micAt < 300 ? micLevel : 0;
   if (vis === "thinking") return 0.3 + 0.12 * Math.sin(t * 2.2);
+  if (vis === "muted") return 0;
   return 0.5 + 0.5 * Math.sin(t * 1.1);  // sleeping: slow breath
 }
 
@@ -141,6 +143,9 @@ let shownVisual = null;
 
 function showVisual(vis) {
   shownVisual = vis;
+  const muted = vis === "muted";
+  $("orb").classList.toggle("muted", muted);
+  $("orb").setAttribute("aria-label", muted ? "Включить микрофон и говорить" : "Выключить микрофон");
   $("statusText").textContent = STATES[vis].label;
   $("caption").textContent = vis === pyState && pyDetail ? pyDetail : STATES[vis].caption;
 }
@@ -489,7 +494,7 @@ function call(method, ...args) {
   if (DEMO) demoCall(method, ...args);
 }
 
-$("orb").onclick = () => call("wake");
+$("orb").onclick = () => call("toggle_mic");
 
 const input = $("input");
 const send = $("send");
@@ -513,6 +518,10 @@ let demoEnrollTimers = [];
 
 function demoCall(method, ...args) {
   if (method === "wake") runDemo();
+  if (method === "toggle_mic") {
+    if (pyState === "muted") runDemo();
+    else { pyState = "muted"; pyDetail = ""; shownVisual = null; }
+  }
   if (method === "start_enroll") {
     const name = args[0];
     const ev = (collected, status) => ({ type: "enroll", name, collected, needed: 3, status });

@@ -25,8 +25,11 @@
   </header>
 
   <section class="stage">
-    <button class="orb" id="orb" aria-label="Нажми, чтобы говорить">
+    <button class="orb" id="orb" aria-label="Выключить микрофон">
       <canvas id="orbCanvas"></canvas>
+      <svg class="mic-off" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 5.2 2.05M15 10V6a3 3 0 0 0-5.4-1.8M19 11a7 7 0 0 1-1.2 3.9M5 11a7 7 0 0 0 11 5.7M12 18v3M3 3l18 18"/>
+      </svg>
     </button>
     <div class="caption" id="caption">Скажи «Джарвис»</div>
   </section>
@@ -34,7 +37,7 @@
   <main class="chat" id="chat">
     <div class="empty" id="empty">
       <p class="empty-title">Скажи <b>«Джарвис, включи свет»</b></p>
-      <p>или просто <b>«Джарвис»</b> и дождись сигнала.<br>Можно нажать на кружок или написать внизу.</p>
+      <p>или просто <b>«Джарвис»</b> и дождись сигнала.<br>Кружок выключает и включает микрофон. Можно и написать внизу.</p>
       <p class="privacy">Пока имя не прозвучало, ничего не уходит в интернет и не сохраняется.</p>
     </div>
   </main>

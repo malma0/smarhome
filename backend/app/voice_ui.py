@@ -18,6 +18,7 @@ SLEEPING = "sleeping"
 LISTENING = "listening"
 THINKING = "thinking"
 SPEAKING = "speaking"
+MUTED = "muted"  # the microphone is switched off - nothing is heard, not even the name
 
 
 class VoiceUI(Protocol):

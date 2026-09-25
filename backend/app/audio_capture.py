@@ -353,6 +353,25 @@ class HandsFreeListener:
         _drain(self._frames)
         self._muted.clear()
 
+    def pause(self) -> None:
+        """The microphone really off - the audio stream stops, so Windows'
+        "microphone in use" icon goes away too. Unlike mute(), which only
+        ignores what's heard while Jarvis replies."""
+        if self._stream.active:
+            self._stream.stop()
+        _drain(self._frames)
+        _drain(self._phrases)
+        self._streamer.reset()
+
+    def resume(self) -> None:
+        if not self._stream.active:
+            _drain(self._frames)
+            self._stream.start()
+
+    @property
+    def paused(self) -> bool:
+        return not self._stream.active
+
     def next_phrase(self, timeout: float | None = None) -> Phrase | None:
         try:
             return self._phrases.get(timeout=timeout)

@@ -383,3 +383,24 @@ button.who:hover { background: rgba(34, 211, 238, .16); }
   color: #fecaca;
   background: rgba(185, 28, 28, 0.25);
 }
+
+/* ---------- microphone off (the orb toggles it) ---------- */
+.orb { position: relative; }
+.orb .mic-off {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 38px;
+  height: 38px;
+  transform: translate(-50%, -50%);
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.orb.muted .mic-off { opacity: 1; }
