@@ -136,3 +136,14 @@ def test_home_actions_read_as_the_new_state():
     ) == {"ok": True, "summary": "Зал, Кухня: розетка выключена"}
     assert summarize_action({"tool": "get_home_status", "input": {}, "result": {"rooms": {}}}) == {
         "ok": True, "summary": "Посмотрел дом"}
+
+
+def test_norm_changes_read_as_the_new_norm():
+    assert summarize_action(
+        {"tool": "set_room_norm", "input": {"room": "спальня", "temperature": 23},
+         "result": {"done": [{"room": "Спальня", "temperature": 23.0}]}}
+    ) == {"ok": True, "summary": "Спальня: норма 23 °C"}
+    assert summarize_action(
+        {"tool": "control_devices", "input": {"room": "кухня", "device": "ventilation", "action": "on"},
+         "result": {"done": [{"room": "Кухня", "device": "ventilation", "action": "on"}]}}
+    ) == {"ok": True, "summary": "Кухня: вентиляция включена"}

@@ -38,14 +38,18 @@ TOOL_LABELS = {
     "delete_file": "Удалил",
     "get_home_status": "Посмотрел дом",
     "control_devices": "Дом",
+    "set_room_norm": "Норма",
 }
 
-DEVICE_NAMES = {"light": "свет", "socket": "розетка", "ac": "кондиционер"}
+DEVICE_NAMES = {"light": "свет", "socket": "розетка", "ac": "кондиционер", "heating": "отопление",
+                "ventilation": "вентиляция"}
 # (device, action) -> how its state reads: "Кухня: свет включён"
 DEVICE_STATES = {
     ("light", "on"): "включён", ("light", "off"): "выключен",
     ("socket", "on"): "включена", ("socket", "off"): "выключена",
     ("ac", "on"): "включён", ("ac", "off"): "выключен",
+    ("heating", "on"): "включено", ("heating", "off"): "выключено",
+    ("ventilation", "on"): "включена", ("ventilation", "off"): "выключена",
 }
 
 
@@ -69,6 +73,14 @@ def summarize_action(action: dict) -> dict:
         if result.get("brightness_pct") is not None:
             summary += f", {result['brightness_pct']}%"
         return {"ok": True, "summary": summary}
+    if tool == "set_room_norm":
+        parts = []
+        for item in result.get("done") or []:
+            if "temperature" in item:
+                parts.append(f"{item['room']}: норма {item['temperature']:g} °C")
+            if "co2_max" in item:
+                parts.append(f"{item['room']}: CO2 до {item['co2_max']:g} ppm")
+        return {"ok": True, "summary": "; ".join(parts) or label}
     if tool == "open_application":
         target = result.get("url") or result.get("opened") or tool_input.get("app", "")
         return {"ok": True, "summary": f"Открыл {target}"}
