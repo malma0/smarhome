@@ -32,6 +32,13 @@ while smoke is detected) and turns every light on to see the way out.
 Jarvis raises the alarm (app/danger.py). "Симуляция: дым, Кухня" and the
 like set them off from the HA UI.
 
+Scenarios ("Я ушёл", "Я дома", "Спокойной ночи", "Доброе утро") are
+ordinary Home Assistant scripts in homeassistant/config/scripts.yaml - the
+file HA's own script editor saves to, so the resident edits them with the
+mouse (Настройки -> Автоматизации и сцены -> Скрипты). `write` creates it
+with the defaults only if it doesn't exist yet: edits are never overwritten.
+The words that start one ("Фразы: ...") live in the script's description.
+
 "Физика" runs every minute: CO2 creeps up (people breathe), ventilation
 brings it down; rooms drift toward a cool autumn outside, heating and the AC
 push back - so the norms visibly work.
@@ -55,6 +62,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "homeassistant" / "config" / "configuration.yaml"
+SCRIPTS = ROOT / "homeassistant" / "config" / "scripts.yaml"
+AWAY_TEMPERATURE = 18  # "Я ушёл": the house is kept at this, ACs off
+NIGHT_DROP = 2  # "Спокойной ночи": the bedroom norm goes down this much
 
 # Where the one-off danger sensors and the main valves are.
 LEAK_ROOM = GAS_ROOM = VALVE_ROOM = "kitchen"
@@ -344,12 +354,84 @@ def _yaml() -> str:
         "# and a little physics.\n\n"
     )
     body = yaml.safe_dump(config, allow_unicode=True, sort_keys=False, width=200)
+    # The scenarios: HA's script editor reads and writes this file.
+    body += "script: !include scripts.yaml\n"
     return header + body.replace("default_config: null", "default_config:")
+
+
+def _scenarios() -> str:
+    """The default scenarios - written once, then they're the resident's."""
+    lights = [f"light.{slug}" for slug, _, _ in ROOMS]
+    sockets = [f"switch.{slug}_socket" for slug, _, full in ROOMS if full]
+    acs = [f"climate.{slug}_ac" for slug, _, full in ROOMS if full]
+    norms = [f"input_number.{slug}_temperature_norm" for slug, _, _ in ROOMS]
+    bedroom = "input_number.bedroom_temperature_norm"
+
+    def restore(scene: str, fallback: list[dict]) -> dict:
+        # A scene saved by scene.create lives until Home Assistant restarts.
+        return {"choose": [{"conditions": [{"condition": "template",
+                                            "value_template": f"{{{{ states.scene.{scene} is not none }}}}"}],
+                            "sequence": [{"action": "scene.turn_on", "target": {"entity_id": f"scene.{scene}"}}]}],
+                "default": fallback}
+
+    scripts = {
+        "ya_ushel": {
+            "alias": "Я ушёл",
+            "description": "Фразы: я ушёл, я ухожу, я пошёл, меня не будет. Запоминает нормы и кондиционеры, "
+                           f"гасит свет, выключает розетки и кондиционеры, держит {AWAY_TEMPERATURE} °C.",
+            "sequence": [
+                {"action": "scene.create", "data": {"scene_id": "before_leaving", "snapshot_entities": norms + acs}},
+                {"action": "light.turn_off", "target": {"entity_id": lights}},
+                {"action": "switch.turn_off", "target": {"entity_id": sockets}},
+                {"action": "climate.set_hvac_mode", "target": {"entity_id": acs}, "data": {"hvac_mode": "off"}},
+                {"action": "input_number.set_value", "target": {"entity_id": norms},
+                 "data": {"value": AWAY_TEMPERATURE}},
+            ],
+        },
+        "ya_doma": {
+            "alias": "Я дома",
+            "description": "Фразы: я дома, я пришёл, я вернулся. Возвращает нормы и кондиционеры, как было "
+                           "до ухода, включает свет в прихожей.",
+            "sequence": [
+                restore("before_leaving", [
+                    {"action": "input_number.set_value", "target": {"entity_id": norms}, "data": {"value": 22}},
+                    {"action": "climate.set_hvac_mode", "target": {"entity_id": acs}, "data": {"hvac_mode": "cool"}},
+                ]),
+                {"action": "light.turn_on", "target": {"entity_id": "light.entrance"}},
+            ],
+        },
+        "spokoynoy_nochi": {
+            "alias": "Спокойной ночи",
+            "description": "Фразы: спокойной ночи, я спать, ложусь спать, отбой. Гасит свет везде, в спальне "
+                           f"норма на {NIGHT_DROP} °C ниже до утра.",
+            "sequence": [
+                {"action": "scene.create", "data": {"scene_id": "before_night", "snapshot_entities": [bedroom]}},
+                {"action": "light.turn_off", "target": {"entity_id": lights}},
+                {"action": "input_number.set_value", "target": {"entity_id": bedroom},
+                 "data": {"value": f"{{{{ [states('{bedroom}') | float(22) - {NIGHT_DROP}, 16] | max }}}}"}},
+            ],
+        },
+        "dobroe_utro": {
+            "alias": "Доброе утро",
+            "description": "Фразы: доброе утро, я проснулся, подъём. Возвращает норму спальни, как было до "
+                           "ночи, включает свет в спальне на 40%.",
+            "sequence": [
+                restore("before_night", []),
+                {"action": "light.turn_on", "target": {"entity_id": "light.bedroom"}, "data": {"brightness_pct": 40}},
+            ],
+        },
+    }
+    return yaml.safe_dump(scripts, allow_unicode=True, sort_keys=False, width=200)
 
 
 def write() -> None:
     CONFIG.write_text(_yaml(), encoding="utf-8")
     print(f"wrote {CONFIG}")
+    if SCRIPTS.exists() and SCRIPTS.read_text(encoding="utf-8").strip():
+        print(f"kept {SCRIPTS} (the scenarios are the resident's now)")
+    else:
+        SCRIPTS.write_text(_scenarios(), encoding="utf-8")
+        print(f"wrote {SCRIPTS} (default scenarios)")
 
 
 def _token() -> str:

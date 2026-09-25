@@ -1299,3 +1299,4 @@ automation:
       entity_id: input_number.kitchen_co2_sim
     data:
       value: '{{ [[states(''input_number.kitchen_co2_sim'') | float(800) + 15 - (90 if is_state(''input_boolean.kitchen_ventilation_power'', ''on'') else 0), 400] | max, 5000] | min }}'
+script: !include scripts.yaml
