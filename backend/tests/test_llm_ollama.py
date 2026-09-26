@@ -34,6 +34,7 @@ def test_tool_schema_translated_to_openai_style_function():
     assert sent["tools"] == [
         {"type": "function", "function": {"name": "get_thing", "description": "does a thing", "parameters": {"type": "object"}}}
     ]
+    assert sent["options"]["temperature"] == 0  # tool calls exactly as trained, not sampled
 
 
 def test_system_prompt_becomes_system_message():

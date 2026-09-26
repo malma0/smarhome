@@ -34,6 +34,9 @@ class OllamaProvider:
                 "stream": False,
                 "messages": ollama_messages,
                 "tools": [self._to_ollama_tool(t) for t in tools],
+                # Ollama samples at 0.8 by default; a small model then drops arguments
+                # ("action" missing in 10 of 103 exam cases). Calls should be what it was taught.
+                "options": {"temperature": 0},
             },
         )
         response.raise_for_status()
