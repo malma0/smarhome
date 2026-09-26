@@ -137,3 +137,16 @@ def test_the_numbers_said_are_exactly_the_intents():
     assert phrase_ok(Intent("norm", "", ["балк", "22.5"], []), "На балконе держи 22,5")
     assert not phrase_ok(Intent("complaint", "", ["зал"], []), "В зале 30 градусов жара")
     assert phrase_ok(Intent("norm", "", ["прих", "900"], []), "Держи CO2 в прихожей до 900")
+
+
+def test_a_bare_main_valve_is_water_not_gas():
+    rng, house = random.Random(0), SimHouse(random.Random(0))
+    from training.intents import _valve
+
+    for _ in range(40):
+        intent = _valve(rng, house)
+        if intent.calls[0]["arguments"]["device"] == "gas_valve" and intent.action == "open":
+            assert not phrase_ok(intent, "Открой главный кран")  # the teacher wrote this for gas
+            assert phrase_ok(intent, "Открой газ")
+            return
+    raise AssertionError("no gas opening drawn")

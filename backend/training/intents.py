@@ -183,7 +183,8 @@ def _valve(rng, house) -> Intent:
     action = rng.choices(["off", "on"], [3, 1])[0]
     return Intent("valve", f"{'ОТКРЫТЬ' if action == 'on' else 'ПЕРЕКРЫТЬ'} {DEVICE_WORDS[which]}", [],
                   [call("control_devices", room="all", device=which, action=action)], ask_again_on_confirm=True,
-                  action="open" if action == "on" else "close")
+                  action="open" if action == "on" else "close",
+                  required_any=("газ",) if which == "gas_valve" else ())  # a bare "главный кран" is water
 
 
 def _chat(rng, house) -> Intent:
