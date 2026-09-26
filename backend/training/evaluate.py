@@ -74,10 +74,10 @@ async def run_case(llm, case: dict) -> dict:
             "got": got, "want": want}
 
 
-def evaluate(spec: str, base_url: str | None, limit: int | None) -> Path:
+def evaluate(spec: str, base_url: str | None, limit: int | None, tag: str = "") -> Path:
     cases = [json.loads(line) for line in EVAL_FILE.open(encoding="utf-8")][:limit]
     RESULTS.mkdir(exist_ok=True)
-    out = RESULTS / (spec.replace(":", "_").replace("/", "_") + ".jsonl")
+    out = RESULTS / (spec.replace(":", "_").replace("/", "_") + (f"_{tag}" if tag else "") + ".jsonl")
     done = {json.loads(line)["said"] for line in out.open(encoding="utf-8")} if out.exists() else set()
     async def run_all() -> None:
         llm = make_llm(spec, base_url)  # one event loop: the model's HTTP client belongs to it
@@ -123,9 +123,10 @@ def main() -> None:
     parser.add_argument("--base-url")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--compare", action="store_true")
+    parser.add_argument("--tag", default="", help="a separate results file, e.g. after retraining")
     args = parser.parse_args()
     if args.model:
-        evaluate(args.model, args.base_url, args.limit)
+        evaluate(args.model, args.base_url, args.limit, args.tag)
     summary()
 
 
