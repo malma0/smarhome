@@ -230,3 +230,54 @@ def test_a_cancelled_turn_leaves_no_half_done_history(memory):
         return agent._sessions["s"]
 
     assert asyncio.run(go()) == []
+
+
+
+def _tool(name):
+    from app.tools.registry import Tool
+
+    async def handler(tool_input, ctx):
+        return {"ok": True}
+
+    return Tool(name=name, description=name, parameters={"type": "object"}, handler=handler)
+
+
+def test_only_the_tools_the_words_point_to_are_sent_and_follow_ups_keep_them(memory):
+    import asyncio
+
+    from app.agent import JarvisAgent
+    from app.llm.base import ContentBlock, LLMResponse
+    from app.tools.registry import ToolRegistry
+
+    tools = ToolRegistry()
+    for name in ("control_devices", "get_weather", "media"):
+        tools.register(_tool(name))
+    llm = AsyncMock()
+    llm.generate.return_value = LLMResponse(content=[ContentBlock(type="text", text="Ок.")], stop_reason="end_turn")
+    agent = JarvisAgent(llm=llm, tools=tools, memory=memory)
+
+    def sent(message):
+        asyncio.run(agent.chat("s", "r", message))
+        return [t.name for t in llm.generate.call_args.kwargs["tools"]]
+
+    assert sent("включи свет на кухне") == ["control_devices"]
+    assert sent("да") == ["control_devices"]  # the follow-up is about the house too
+    assert sent("какая погода?") == ["get_weather"]
+    assert sent("привет") == ["get_weather"]  # no words to go on: the previous turn's
+
+
+def test_the_clock_rides_on_the_message_not_the_system_prompt(memory):
+    import asyncio
+
+    from app.agent import JarvisAgent
+    from app.llm.base import ContentBlock, LLMResponse
+    from app.tools.registry import ToolRegistry
+
+    llm = AsyncMock()
+    llm.generate.return_value = LLMResponse(content=[ContentBlock(type="text", text="Ок.")], stop_reason="end_turn")
+    agent = JarvisAgent(llm=llm, tools=ToolRegistry(), memory=memory)
+    asyncio.run(agent.chat("s", "r", "напомни в 8"))
+    system = llm.generate.call_args.kwargs["system"]
+    message = llm.generate.call_args.kwargs["messages"][0]["content"]
+    assert "Current local time" not in system  # the start of every request stays the same - Groq caches it
+    assert message.startswith("напомни в 8\n\n[Current local time: ")

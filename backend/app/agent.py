@@ -23,6 +23,7 @@ from app.persona import (
     update_resident_gender,
     update_style,
 )
+from app.tools import router
 from app.tools.registry import ToolRegistry, TurnContext
 
 MAX_TOOL_ITERATIONS = 8
@@ -69,6 +70,7 @@ class JarvisAgent:
         self.tools = tools
         self.memory = memory
         self._sessions: dict[str, list[dict]] = {}
+        self._last_groups: dict[str, set[str] | None] = {}  # per session - what a follow-up is about
 
     def reset(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
@@ -77,7 +79,10 @@ class JarvisAgent:
         mode = self.memory.get_persona_mode()
         persona_prompt = build_persona_prompt(mode, self.memory, resident_id)
         gender_note = gender_prompt_note(get_resident_gender(self.memory, resident_id))
-        prompt = f"{GENERAL_ASSISTANT_PREAMBLE}\n\n{current_time_note()}\n\n{persona_prompt}\n\n{gender_note}"
+        # The clock isn't here: it changed the start of every request, and
+        # Groq only reuses (and doesn't count against the limits) a cached
+        # start that matches exactly. It rides on the resident's message.
+        prompt = f"{GENERAL_ASSISTANT_PREAMBLE}\n\n{persona_prompt}\n\n{gender_note}"
         if spoken:
             prompt += f"\n\n{SPOKEN_REPLY_RULES}"
         return prompt
@@ -91,7 +96,7 @@ class JarvisAgent:
         history = self._sessions.setdefault(session_id, [])
         turn_start = len(history)
         try:
-            return await self._turn(history, resident_id, user_message, spoken)
+            return await self._turn(history, resident_id, user_message, spoken, session_id)
         except asyncio.CancelledError:
             # "Джарвис, стоп" mid-answer: the whole turn goes. Left half-done -
             # a tool call without its result - the next request would be
@@ -99,11 +104,14 @@ class JarvisAgent:
             del history[turn_start:]
             raise
 
-    async def _turn(self, history: list[dict], resident_id: str, user_message: str, spoken: bool) -> dict:
-        history.append({"role": "user", "content": user_message})
+    async def _turn(self, history: list[dict], resident_id: str, user_message: str, spoken: bool,
+                    session_id: str = "") -> dict:
+        history.append({"role": "user", "content": f"{user_message}\n\n[{current_time_note()}]"})
 
         system_prompt = self._build_system_prompt(resident_id, spoken=spoken)
-        tool_defs = self.tools.definitions()
+        groups = router.select(user_message, self._last_groups.get(session_id))
+        names = None if groups is None else {n for g in groups for n in router.GROUPS[g]}
+        tool_defs = self.tools.definitions(names)
         ctx = TurnContext()
         actions: list[dict] = []
         final_text = None
@@ -148,6 +156,11 @@ class JarvisAgent:
         if self.memory.get_persona_mode() == "adaptive":
             update_style(self.memory, resident_id, user_message)
 
+        # A follow-up ("да", "а в спальне?") is about the same things: what
+        # was sent - or, if everything was, what got used.
+        used = {g for a in actions if (g := router.group_of(a["tool"]))}
+        self._last_groups[session_id] = groups if groups is not None else (used or None)
+
         return {"response": final_text, "actions": actions}
 
 
@@ -184,6 +197,7 @@ def _build_llm_provider() -> LLMProvider:
             model=settings.groq_model,
             base_url=settings.groq_base_url,
             temperature=settings.groq_temperature,
+            fallback_models=settings.groq_fallback_models,
         )
     raise ValueError(f"Unsupported LLM_PROVIDER {settings.llm_provider!r}. Valid: claude, ollama, groq")
 
