@@ -214,7 +214,11 @@ def main() -> None:
     dropped = 0
     for start in range(0, len(specs), args.batch):
         chunk = [(i, specs[i][1].meaning) for i in range(start, min(start + args.batch, len(specs)))]
-        got = teacher.phrasings(chunk, args.phrasings + 2)  # spares for what the checks drop
+        try:
+            got = teacher.phrasings(chunk, args.phrasings + 2)  # spares for what the checks drop
+        except RuntimeError as e:  # the day's limit: write what is done, a rerun completes it from the cache
+            print(f"{e} Writing the first {start} intents.", flush=True)
+            break
         for i, _ in chunk:
             good, seen = [], set()
             for p in got.get(i, []):
