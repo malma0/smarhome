@@ -43,11 +43,11 @@ def make_llm(spec: str, base_url: str | None):
 
         return GroqProvider(api_key=settings.groq_api_key, model=model, base_url=settings.groq_base_url,
                             temperature=settings.groq_temperature)  # no fallbacks: one model's own score
-    if kind == "ollama":
+    if kind in ("ollama", "qwen"):  # qwen: Ollama with the prompt built by the training template
         from app.llm.ollama import OllamaProvider
 
-        return OllamaProvider(model=model, base_url=base_url or "http://localhost:11434")
-    raise SystemExit(f"Unknown model spec {spec!r} - use groq:<model> or ollama:<model>")
+        return OllamaProvider(model=model, base_url=base_url or "http://localhost:11434", qwen_raw=kind == "qwen")
+    raise SystemExit(f"Unknown model spec {spec!r} - use groq:<model>, ollama:<model> or qwen:<model>")
 
 
 def _effects(calls) -> list[str]:

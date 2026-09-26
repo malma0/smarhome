@@ -11,12 +11,16 @@ from typing import Any
 
 import httpx
 
+from app.llm import qwen_template
 from app.llm.base import ContentBlock, LLMResponse, StopReason, ToolDef
 
 
 class OllamaProvider:
-    def __init__(self, model: str, base_url: str = "http://localhost:11434"):
+    def __init__(self, model: str, base_url: str = "http://localhost:11434", qwen_raw: bool = False):
+        """qwen_raw: build the prompt here (app/llm/qwen_template.py) instead of
+        Ollama's template - for the own fine-tuned model, trained on exactly that text."""
         self._model = model
+        self._qwen_raw = qwen_raw
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(timeout=120)
 
@@ -26,6 +30,8 @@ class OllamaProvider:
         ollama_messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
         for message in messages:
             ollama_messages.extend(self._translate_message(message))
+        if self._qwen_raw:
+            return await self._generate_raw(ollama_messages, tools)
 
         response = await self._client.post(
             f"{self._base_url}/api/chat",
@@ -41,6 +47,21 @@ class OllamaProvider:
         )
         response.raise_for_status()
         return self._parse_response(response.json())
+
+    async def _generate_raw(self, messages: list[dict[str, Any]], tools: list[ToolDef]) -> LLMResponse:
+        prompt = qwen_template.render(messages, [self._to_ollama_tool(t) for t in tools])
+        response = await self._client.post(
+            f"{self._base_url}/api/generate",
+            json={"model": self._model, "prompt": prompt, "raw": True, "stream": False,
+                  "options": {"temperature": 0, "stop": [qwen_template.END]}},
+        )
+        response.raise_for_status()
+        data = response.json()
+        text, calls = qwen_template.parse(data.get("response", ""))
+        return self._parse_response({
+            "message": {"content": text, "tool_calls": [{"function": c} for c in calls]},
+            "done_reason": data.get("done_reason"),
+        })
 
     @staticmethod
     def _to_ollama_tool(tool: ToolDef) -> dict[str, Any]:
