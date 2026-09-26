@@ -41,10 +41,12 @@ class ToolRegistry:
             raise ValueError(f"Tool '{tool.name}' is already registered.")
         self._tools[tool.name] = tool
 
-    def definitions(self) -> list[ToolDef]:
+    def definitions(self, names: set[str] | None = None) -> list[ToolDef]:
+        """All tools, or only those named (app.tools.router picks them)."""
         return [
             ToolDef(name=t.name, description=t.description, parameters=t.parameters)
             for t in self._tools.values()
+            if names is None or t.name in names
         ]
 
     async def dispatch(self, name: str, tool_input: dict, ctx: TurnContext) -> dict:
