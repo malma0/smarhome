@@ -45,3 +45,8 @@ homeassistant/config/blueprints/
 
 # Jarvis window log (pythonw has no console - see backend/jarvis_gui.py)
 backend/*.log
+
+# Own-model training: the teacher cache and trained models stay local
+backend/training/cache/
+backend/training/runs/
+*.gguf
