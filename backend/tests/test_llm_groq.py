@@ -279,3 +279,50 @@ def test_the_models_leaked_thinking_is_cut_off():
     for fine in ("Открыла Steam.", "Включила Never Gonna Give You Up.", "Громкость 40%.", "",
                  "Сейчас играет The Show Must Go On. Что дальше?"):
         assert _drop_leaked_reasoning(fine) == fine, fine
+
+
+
+def _two_models():
+    return GroqProvider(api_key="k", model="openai/gpt-oss-120b", fallback_models=("openai/gpt-oss-20b", "qwen/qwen3.8-27b"))
+
+
+def test_when_one_model_runs_out_the_next_answers_at_once(monkeypatch):
+    provider = _two_models()
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("app.llm.groq.asyncio.sleep", fake_sleep)
+    day_limit = fake_http_response({"error": {"message": "tokens per day (TPD)"}}, 429, {"retry-after": "541"})
+    ok = fake_http_response(chat_completion({"role": "assistant", "content": "ok"}))
+    provider._client.post = AsyncMock(side_effect=[day_limit, ok, ok])
+
+    asyncio.run(provider.generate(system="s", messages=[], tools=[]))
+    models = [c.kwargs["json"]["model"] for c in provider._client.post.call_args_list]
+    assert models == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"] and slept == []
+    assert provider.last_model == "openai/gpt-oss-20b"
+
+    asyncio.run(provider.generate(system="s", messages=[], tools=[]))  # the tired one is skipped for now
+    assert provider._client.post.call_args.kwargs["json"]["model"] == "openai/gpt-oss-20b"
+
+
+def test_each_model_gets_its_own_settings():
+    provider = _two_models()
+    assert provider._body("openai/gpt-oss-20b", [], [])["reasoning_effort"] == "low"
+    qwen = provider._body("qwen/qwen3.8-27b", [], [])
+    assert qwen["reasoning_format"] == "hidden" and "reasoning_effort" not in qwen
+
+
+def test_all_models_resting_is_an_error_from_the_soonest(monkeypatch):
+    import pytest
+
+    provider = GroqProvider(api_key="k", model="a", fallback_models=("b",))
+    monkeypatch.setattr("app.llm.groq.asyncio.sleep", AsyncMock())
+    tired = [fake_http_response({}, 429, {"retry-after": "900"}), fake_http_response({}, 429, {"retry-after": "300"})]
+    provider._client.post = AsyncMock(side_effect=tired)
+    with pytest.raises(RuntimeError, match="429"):
+        asyncio.run(provider.generate(system="s", messages=[], tools=[]))
+    with pytest.raises(RuntimeError, match="429"):  # nothing is even sent while both rest
+        asyncio.run(provider.generate(system="s", messages=[], tools=[]))
+    assert provider._client.post.call_count == 2

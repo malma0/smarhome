@@ -17,6 +17,7 @@ class Settings:
     groq_model: str
     groq_base_url: str
     groq_temperature: float
+    groq_fallback_models: tuple[str, ...]
     home_assistant_url: str
     home_assistant_token: str
     db_path: str
@@ -68,6 +69,10 @@ def load_settings() -> Settings:
         groq_model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
         groq_base_url=os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
         groq_temperature=float(os.environ.get("GROQ_TEMPERATURE", "0.4")),
+        groq_fallback_models=tuple(
+            m.strip() for m in os.environ.get("GROQ_FALLBACK_MODELS", "openai/gpt-oss-20b,qwen/qwen3.8-27b").split(",")
+            if m.strip()
+        ),
         home_assistant_url=os.environ.get("HOME_ASSISTANT_URL", "http://localhost:8123").rstrip("/"),
         home_assistant_token=os.environ.get("HOME_ASSISTANT_TOKEN", ""),
         db_path=os.environ.get("JARVIS_DB_PATH", "jarvis.db"),

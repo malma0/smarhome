@@ -14,6 +14,7 @@ import asyncio
 import difflib
 import json
 import re
+import time
 import uuid
 from typing import Any
 
@@ -36,15 +37,12 @@ MAX_RATE_LIMIT_RETRIES = 2
 MAX_RATE_LIMIT_WAIT_SECONDS = 20
 
 
-def _retry_after(response: httpx.Response) -> float | None:
-    """Seconds to wait before retrying a 429, or None to not retry."""
-    if response.status_code != 429:
-        return None
+def _seconds_to_wait(response: httpx.Response) -> float:
+    """How long a 429 says to wait (per minute: seconds; per day: minutes)."""
     try:
-        wait = float(response.headers.get("retry-after", "1"))
+        return max(1.0, float(response.headers.get("retry-after", "60")))
     except ValueError:
-        wait = 1.0
-    return wait if wait <= MAX_RATE_LIMIT_WAIT_SECONDS else None
+        return 60.0
 
 
 _GLUED_SENTENCE = re.compile(r"[.!?…](?=[A-ZА-ЯЁ])")
@@ -119,8 +117,15 @@ class GroqProvider:
         model: str,
         base_url: str = "https://api.groq.com/openai/v1",
         temperature: float = 0.4,
+        fallback_models: tuple[str, ...] = (),
     ):
         self._model = model
+        # Each model has its own free limits (8 000 tokens a minute, 200 000 a
+        # day on Groq) - when one runs out, the next one answers.
+        self._models = [model, *(m for m in fallback_models if m and m != model)]
+        self._resting_until: dict[str, float] = {}  # model -> monotonic time its limit frees up
+        self._last_refusal: dict[str, httpx.Response] = {}
+        self.last_model: str | None = None
         self._base_url = base_url.rstrip("/")
         self._temperature = temperature
         self._client = httpx.AsyncClient(
@@ -134,26 +139,45 @@ class GroqProvider:
         for message in messages:
             openai_messages.extend(self._translate_message(message))
 
-        body = {
-            "model": self._model,
-            "messages": openai_messages,
-            "tools": [self._to_openai_tool(t) for t in tools],
-            "temperature": self._temperature,
-        }
-        if self._model.startswith("openai/gpt-oss"):
-            # Same tool calls, fewer tokens (measured 50 vs 78 per call) -
-            # which is what the free tier's per-minute budget runs out of.
-            body["reasoning_effort"] = "low"
+        openai_tools = [self._to_openai_tool(t) for t in tools]
+        response = None
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
-            response = await self._client.post(f"{self._base_url}/chat/completions", json=body)
-            wait = _retry_after(response)
-            if wait is None or attempt == MAX_RATE_LIMIT_RETRIES:
+            model = self._pick_model()
+            if model is None:  # every model is resting: the one that frees up first says when
+                soonest = min(self._resting_until, key=self._resting_until.get)
+                self._last_refusal[soonest].raise_for_status()
+            response = await self._client.post(f"{self._base_url}/chat/completions",
+                                               json=self._body(model, openai_messages, openai_tools))
+            if response.status_code != 429:
+                self.last_model = model
                 break
-            await asyncio.sleep(wait)
+            wait = _seconds_to_wait(response)
+            self._resting_until[model] = time.monotonic() + wait
+            self._last_refusal[model] = response
+            if self._pick_model() is not None:
+                continue  # another model has its own limits - no waiting
+            if wait > MAX_RATE_LIMIT_WAIT_SECONDS or attempt == MAX_RATE_LIMIT_RETRIES:
+                break
+            await asyncio.sleep(wait)  # the only model - a short wait beats a failed voice command
+            self._resting_until.pop(model, None)
         if recovered := _recover_rejected_tool_call(response):
             return recovered
         response.raise_for_status()
         return self._parse_response(response.json())
+
+    def _pick_model(self) -> str | None:
+        now = time.monotonic()
+        return next((m for m in self._models if self._resting_until.get(m, 0) <= now), None)
+
+    def _body(self, model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
+        body = {"model": model, "messages": messages, "tools": tools, "temperature": self._temperature}
+        if model.startswith("openai/gpt-oss"):
+            # Same tool calls, fewer tokens (measured 50 vs 78 per call) -
+            # which is what the free tier's per-minute budget runs out of.
+            body["reasoning_effort"] = "low"
+        elif "qwen" in model:
+            body["reasoning_format"] = "hidden"  # Qwen3 can think out loud into the answer
+        return body
 
     @staticmethod
     def _to_openai_tool(tool: ToolDef) -> dict[str, Any]:
