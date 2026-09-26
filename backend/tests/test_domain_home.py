@@ -309,3 +309,15 @@ def test_an_unknown_scenario_lists_the_ones_there_are():
     assert "No scenario" in result["error"] and ha.calls == []
     assert {"name": "Я ушёл", "phrases": ["я ушёл", "я ухожу"]} in result["scenarios"]
     assert _run(scenario)["scenarios"] == result["scenarios"]  # no name: the list
+
+
+
+def test_a_scenario_matches_without_the_filler_words():
+    from app.domains.home import match_scenario
+
+    scenarios = [{"name": "Я дома", "phrases": ["я дома", "я пришёл", "я вернулся"]},
+                 {"name": "Я ушёл", "phrases": ["я ушёл", "я ухожу"]}]
+    assert match_scenario("вернулся", scenarios)["name"] == "Я дома"
+    assert match_scenario("ну всё, я ухожу", scenarios)["name"] == "Я ушёл"
+    assert match_scenario("ушёл уже", scenarios)["name"] == "Я ушёл"
+    assert match_scenario("включи музыку", scenarios) is None

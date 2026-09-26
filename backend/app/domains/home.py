@@ -175,12 +175,26 @@ def _scenario_does(description: str) -> str:
     return (head + (rest.split(".", 1)[1] if found and "." in rest else "")).strip() if found else description.strip()
 
 
+_FILLER = {"я", "мы", "ну", "вот", "уже", "всё", "все", "а", "и", "же", "ведь", "пожалуйста"}
+
+
 def match_scenario(asked: str, scenarios: list[dict]) -> dict | None:
-    """By name or any of its phrases, ignoring case, punctuation and 'Джарвис'."""
+    """By name or any of its phrases, ignoring case, punctuation and 'Джарвис'.
+    Exact first; then the words that matter, by stem, so "вернулся" finds
+    "я вернулся" and "ну всё, я ушла" finds "я ушёл" (found while building
+    training data: people drop the "я")."""
     wanted = _words(asked)
     for scenario in scenarios:
         if wanted in {_words(scenario["name"]), *(_words(p) for p in scenario["phrases"])}:
             return scenario
+    said = {_stem(w) for w in wanted.split() if w not in _FILLER}
+    if not said:
+        return None
+    for scenario in scenarios:
+        for phrase in (scenario["name"], *scenario["phrases"]):
+            words = {_stem(w) for w in _words(phrase).split() if w not in _FILLER}
+            if words and (words <= said or said <= words):
+                return scenario
     return None
 
 
