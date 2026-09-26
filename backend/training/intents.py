@@ -38,6 +38,8 @@ class Intent:
     action: str | None = None  # "on"/"off" - the phrasing has to say it, not the opposite
     question: str | None = None  # status / chat: what's asked, for the answer (training/replies.py)
     direction: str | None = None  # "up"/"down" for "потеплее"/"прохладнее"
+    required_any: tuple[str, ...] = ()  # the phrasing has to have one of these stems
+    no_commands: bool = False  # a question or a complaint - no "включи"/"погаси" in it
 
 
 def call(tool: str, **arguments) -> dict:
@@ -111,14 +113,15 @@ def _status(rng, house) -> Intent:
                                      ("co2", "душно ли там (CO2)"), ("on", "что там включено"),
                                      ("light", "горит ли там свет"), ("ac", "работает ли там кондиционер"),
                                      ("norm", "какая там норма температуры")])
-        return Intent("status", f"СПРОСИТЬ: {what}; комната: {room.lower()}", [stem(room)],
-                      [call("get_home_status", room=_room(room))], question=question)
+        return Intent("status", f"человек спрашивает: {what}; комната: {room.lower()}", [stem(room)],
+                      [call("get_home_status", room=_room(room))], question=question, no_commands=True)
     question, what = rng.choice([("hottest", "где в доме жарче всего"), ("coldest", "где холоднее всего"),
                                  ("on", "что сейчас включено в доме"), ("lights", "где горит свет"),
                                  ("all_temperatures", "какая температура во всех комнатах"),
                                  ("stuffiest", "где душнее всего"), ("all_ok", "всё ли в доме в порядке"),
                                  ("any_ac", "работает ли где-нибудь кондиционер")])
-    return Intent("status", f"СПРОСИТЬ про весь дом: {what}", [], [call("get_home_status")], question=question)
+    return Intent("status", f"человек спрашивает про весь дом: {what}", [], [call("get_home_status")],
+                  question=question, no_commands=True)
 
 
 def _norm_absolute(rng, house) -> Intent:
@@ -126,11 +129,12 @@ def _norm_absolute(rng, house) -> Intent:
     if rng.random() < 0.75:
         value = rng.choice([18, 19, 20, 20.5, 21, 21.5, 22, 22.5, 23, 24, 25])
         shown = f"{value:g}"
-        return Intent("norm", f"ДЕРЖАТЬ температуру {shown} градусов (новая норма); комната: {room.lower()}",
-                      [stem(room), shown.split(".")[0]], [call("set_room_norm", room=_room(room), temperature=value)])
+        return Intent("norm", f"человек просит держать температуру {shown} градусов; комната: {room.lower()}",
+                      [stem(room), shown], [call("set_room_norm", room=_room(room), temperature=value)],
+                      no_commands=True)
     value = rng.choice([700, 800, 900, 1000])
-    return Intent("norm", f"НОРМА CO2 не выше {value} ppm; комната: {room.lower()}", [stem(room), str(value)],
-                  [call("set_room_norm", room=_room(room), co2_max=value)])
+    return Intent("norm", f"человек просит держать CO2 не выше {value}; комната: {room.lower()}",
+                  [stem(room), str(value)], [call("set_room_norm", room=_room(room), co2_max=value)], no_commands=True)
 
 
 def _relative(room: str, delta: float):
@@ -145,27 +149,32 @@ def _relative(room: str, delta: float):
 def _norm_relative(rng, house) -> Intent:
     room = rng.choice(house.rooms)
     warmer = rng.random() < 0.5
-    meaning = f"сделать {'ТЕПЛЕЕ' if warmer else 'ПРОХЛАДНЕЕ'} (без числа); комната: {room.lower()}"
+    meaning = f"человек просит сделать {'теплее' if warmer else 'прохладнее'} (без числа); комната: {room.lower()}"
     return Intent("norm_relative", meaning, [stem(room)], [call("get_home_status", room=_room(room))],
-                  then=_relative(room, 1 if warmer else -1), direction="up" if warmer else "down")
+                  then=_relative(room, 1 if warmer else -1), direction="up" if warmer else "down",
+                  required_any=("тепл",) if warmer else ("прохлад", "холод", "охлад"), no_commands=True)
 
 
 def _complaint(rng, house) -> Intent:
     room = rng.choice(house.rooms)
     kind = rng.choice(["stuffy", "cold", "hot"])
     if kind == "stuffy":
-        return Intent("complaint", f"ПОЖАЛОВАТЬСЯ, что душно (без просьбы); комната: {room.lower()}", [stem(room)],
-                      [call("control_devices", room=_room(room), device="ventilation", action="on")])  # a complaint, no "включи"
-    return Intent("complaint", f"ПОЖАЛОВАТЬСЯ, что {'холодно' if kind == 'cold' else 'жарко'} (без просьбы и чисел); "
-                  f"комната: {room.lower()}", [stem(room)], [call("get_home_status", room=_room(room))],
-                  then=_relative(room, 1 if kind == "cold" else -1), direction="up" if kind == "cold" else "down")
+        return Intent("complaint", f"человек жалуется, что душно (просто жалоба, без просьбы); комната: {room.lower()}",
+                      [stem(room)], [call("control_devices", room=_room(room), device="ventilation", action="on")],
+                      required_any=("душн", "дышать", "сперт", "нечем"), no_commands=True)
+    return Intent("complaint", f"человек жалуется, что {'холодно' if kind == 'cold' else 'жарко'} (просто жалоба, "
+                  f"без просьбы и чисел); комната: {room.lower()}", [stem(room)],
+                  [call("get_home_status", room=_room(room))],
+                  then=_relative(room, 1 if kind == "cold" else -1), direction="up" if kind == "cold" else "down",
+                  required_any=("холод", "мерз", "зябк", "дубак") if kind == "cold" else ("жарк", "жара", "парит", "пекло"),
+                  no_commands=True)
 
 
 def _scenario(rng, house) -> Intent:
     object_id = rng.choice(list(house.scripts))
     alias = house.scripts[object_id]["alias"]
     phrases = house.scripts[object_id]["description"].split(".")[0].removeprefix("Фразы: ")
-    return Intent("scenario", f"СЦЕНАРИЙ «{alias}» - сказать что-то вроде: {phrases}", [],
+    return Intent("scenario", f"человек говорит что-то вроде: {phrases} (сценарий «{alias}»)", [],
                   [call("run_scenario", name="?")], name_from_phrase=True)
 
 

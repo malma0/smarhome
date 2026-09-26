@@ -18,18 +18,27 @@ import httpx
 from app.config import settings
 
 CACHE_DIR = Path(__file__).parent / "cache"
-TEACHER_MODELS = ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"]
+# Not gpt-oss-120b: its daily budget is what Jarvis itself runs on. Not
+# qwen3.8-27b either: tried as a teacher, it wrote four reorderings of one
+# phrase, copied words from the task ("Холодно в гостиной, жалуюсь"), got the
+# meaning wrong ("вруби" for "cooler") and skipped whole batches.
+TEACHER_MODELS = ["openai/gpt-oss-20b"]
 
 PHRASING_PROMPT = """Ты собираешь обучающие данные для голосового ассистента умного дома по имени Джарвис.
 Для каждого пункта ниже напиши {k} РАЗНЫХ фраз, которыми живой человек сказал бы это Джарвису голосом.
 
 Правила:
-- Разговорно и по-разному: короткие и длинные, вежливые и грубоватые, с «Джарвис,» в начале и без,
-  просторечия («вруби», «погаси», «вырубай», «сделай потеплее», «чё-то душно»), разный порядок слов.
-- Это распознанная речь: без опечаток, числа ЦИФРАМИ (22, 40%), знаки препинания обычные.
+- Разговорно и по-разному: короткие и длинные, вежливые и грубоватые, разные глаголы и обороты,
+  просторечия («вруби», «погаси», «вырубай», «сделай потеплее», «чё-то душно»).
+- Имя «Джарвис» не пиши - его отрезает распознавание, фразы без него.
+- Это распознанная речь: слова целиком, без сокращений («выкл», «вент», «°» - нельзя),
+  числа только ЦИФРАМИ и ровно те, что в пункте (22, 22,5, 40%, 900 - не «девятьсот»),
+  грамотный русский язык.
 - Назови ВСЕ перечисленные комнаты - и не добавляй других комнат, устройств и действий.
 - Комнаты в естественном падеже («на кухне», «в спальне», «в зале»).
 - Если сказано «без числа» - не называй чисел. Если «без просьбы» - только жалоба, без команды.
+- Не копируй служебные слова из описания: «жалуется», «спрашивает», «человек», «комната:».
+- Фразы должны отличаться словами, а не только порядком слов.
 
 Пункты:
 {items}
@@ -97,14 +106,19 @@ class Teacher:
         raise RuntimeError("Every teacher model is out of its daily limit - continue tomorrow (the cache keeps progress).")
 
     def phrasings(self, items: list[tuple[int, str]], k: int) -> dict[int, list[str]]:
-        lines = "\n".join(f"{i}. {meaning}" for i, meaning in items)
-        data = self.ask_json(PHRASING_PROMPT.format(k=k, items=lines))
-        out = {}
-        for item in data.get("items", []):
-            try:
-                out[int(item["id"])] = [str(p).strip() for p in item.get("phrases", []) if str(p).strip()]
-            except (KeyError, ValueError, TypeError):
-                continue
+        out: dict[int, list[str]] = {}
+        # gpt-oss-20b now and then answers 1 item of 12; what it skipped is asked again on its own.
+        for _ in range(3):
+            missing = [(i, meaning) for i, meaning in items if not out.get(i)]
+            if not missing:
+                break
+            lines = "\n".join(f"{i}. {meaning}" for i, meaning in missing)
+            data = self.ask_json(PHRASING_PROMPT.format(k=k, items=lines))
+            for item in data.get("items", []):
+                try:
+                    out[int(item["id"])] = [str(p).strip() for p in item.get("phrases", []) if str(p).strip()]
+                except (KeyError, ValueError, TypeError):
+                    continue
         return out
 
     def replies(self, items: list[tuple[int, str, str]]) -> dict[int, str]:

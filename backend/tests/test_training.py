@@ -115,3 +115,25 @@ def test_only_jarvis_turns_are_learned():
     learned = "".join(chr(t) for t, label in zip(example["input_ids"], example["labels"]) if label != -100)
     assert learned == "JARVIS<|im_end|>"
     assert encode(CharTokenizer(), record, max_len=10) is None  # too long: dropped, not cut
+
+
+
+def test_questions_and_complaints_carry_no_commands_or_copied_words():
+    cooler = Intent("norm_relative", "", ["балк"], [], required_any=("прохлад", "холод", "охлад"), no_commands=True)
+    assert phrase_ok(cooler, "Сделай на балконе прохладнее")
+    assert not phrase_ok(cooler, "Джарвис, вруби на балконе")  # seen from a teacher
+    cold = Intent("complaint", "", ["гост"], [], required_any=("холод",), no_commands=True)
+    assert phrase_ok(cold, "Что-то в гостиной холодно")
+    assert not phrase_ok(cold, "Холодно в гостиной, жалуюсь")  # copied from the task
+    question = Intent("status", "", ["кухн"], [], no_commands=True)
+    assert phrase_ok(question, "Что включено на кухне?")
+    assert not phrase_ok(question, "Выключи всё на кухне")
+
+
+def test_the_numbers_said_are_exactly_the_intents():
+    hold = Intent("norm", "", ["гост", "18"], [])
+    assert phrase_ok(hold, "В гостиной держи 18 градусов")
+    assert not phrase_ok(hold, "В гостиной 18,5 градусов, держи")  # seen from the teacher
+    assert phrase_ok(Intent("norm", "", ["балк", "22.5"], []), "На балконе держи 22,5")
+    assert not phrase_ok(Intent("complaint", "", ["зал"], []), "В зале 30 градусов жара")
+    assert phrase_ok(Intent("norm", "", ["прих", "900"], []), "Держи CO2 в прихожей до 900")

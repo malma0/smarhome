@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import random
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -60,13 +61,38 @@ def _norm(text: str) -> str:
 # model would learn to do the opposite.
 ON_WORDS = ("включ", "вруби", "зажг", "зажж", "запуст", "активир")
 OFF_WORDS = ("выключ", "отключ", "выруб", "погас", "потуш", "остан", "убери")
+# Orders, not states: "что включено?" is a question, "включи" is not.
+COMMANDS = re.compile(r"\b(?:вы|от|в)(?:ключи|ключай|руби|рубай)\b|\b(?:погаси|потуши|зажги|запусти|останови)\b")
 OPEN_WORDS = ("открой", "открыть", "откро", "пусти")
 CLOSE_WORDS = ("закрой", "закрыть", "перекр", "выключ", "отключ", "перекро")
 
 
+# Words from the task description a teacher copied into "speech", and
+# written-only forms no speech recognizer puts out.
+LEAKED = ("жалую", "спрашива", "человек", "комната:", "без просьбы", "без числа", "выкл.", "°", "сделай выключ",
+          "сделай включ")
+
+
+NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _numbers(text: str) -> set[str]:
+    return {n.replace(",", ".") for n in NUMBER.findall(text.replace("co2", ""))}
+
+
 def phrase_ok(intent: Intent, phrase: str) -> bool:
     text = _norm(phrase)
-    if not phrase or not all(m in text for m in intent.must_mention):
+    words = [m for m in intent.must_mention if not NUMBER.fullmatch(m)]
+    if not phrase or not all(m in text for m in words):
+        return False
+    # Exactly the intent's numbers: "18,5" is not 18, and a stray "2 градуса" is a different command.
+    if _numbers(text) != _numbers(" ".join(intent.must_mention)):
+        return False
+    if any(w in text for w in LEAKED):
+        return False
+    if intent.required_any and not any(w in text for w in intent.required_any):
+        return False
+    if intent.no_commands and COMMANDS.search(text):
         return False
     wanted, opposite = {"on": (ON_WORDS, OFF_WORDS), "off": (OFF_WORDS, ON_WORDS),
                         "open": (OPEN_WORDS, CLOSE_WORDS), "close": (CLOSE_WORDS, OPEN_WORDS)}.get(intent.action, ((), ()))
@@ -188,9 +214,14 @@ def main() -> None:
     dropped = 0
     for start in range(0, len(specs), args.batch):
         chunk = [(i, specs[i][1].meaning) for i in range(start, min(start + args.batch, len(specs)))]
-        got = teacher.phrasings(chunk, args.phrasings)
+        got = teacher.phrasings(chunk, args.phrasings + 2)  # spares for what the checks drop
         for i, _ in chunk:
-            good = [p for p in got.get(i, []) if phrase_ok(specs[i][1], p)]
+            good, seen = [], set()
+            for p in got.get(i, []):
+                words = frozenset(_norm(_spoken_name(p)).replace("?", " ").split())
+                if phrase_ok(specs[i][1], p) and words not in seen:  # a reordering isn't a new phrasing
+                    good.append(p)
+                    seen.add(words)
             dropped += len(got.get(i, [])) - len(good)
             phrased += [(i, p) for p in good[:args.phrasings]]
         print(f"phrasings: {min(start + args.batch, len(specs))}/{len(specs)} intents, {len(phrased)} kept, "
