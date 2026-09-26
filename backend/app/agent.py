@@ -6,6 +6,7 @@ app.domains.computer and files (phase 2) and app.domains.home (phase 3,
 Home Assistant - when HOME_ASSISTANT_TOKEN is set), see docs/TZ.md."""
 
 import asyncio
+import json
 from datetime import datetime
 
 from app.config import settings
@@ -136,7 +137,7 @@ class JarvisAgent:
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": str(result),
+                        "content": json.dumps(result, ensure_ascii=False, default=str),
                         "is_error": "error" in result,
                     }
                 )
