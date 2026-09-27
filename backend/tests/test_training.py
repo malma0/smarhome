@@ -150,3 +150,20 @@ def test_a_bare_main_valve_is_water_not_gas():
             assert phrase_ok(intent, "Открой газ")
             return
     raise AssertionError("no gas opening drawn")
+
+
+def test_the_exam_clock_is_the_cases_own_not_the_machines():
+    from app.llm.base import ContentBlock, LLMResponse
+    from training.evaluate import run_case
+
+    seen = []
+
+    class Echo:
+        async def generate(self, *, system, messages, tools):
+            seen.append(messages[-1]["content"])
+            return LLMResponse(content=[ContentBlock(type="text", text="ok")], stop_reason="end_turn")
+
+    case = {"house_seed": 5, "said": "спокойной ночи", "kind": "chat", "effects": []}
+    first = asyncio.run(run_case(Echo(), case))["time"]
+    assert asyncio.run(run_case(Echo(), case))["time"] == first and f" {first}, " in seen[0]
+    assert asyncio.run(run_case(Echo(), case, hour=8))["time"] == "08:00" and " 08:00, " in seen[-1]

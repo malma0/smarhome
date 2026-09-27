@@ -23,12 +23,14 @@ import random
 import sys
 import time
 from pathlib import Path
+from unittest.mock import patch
 
-from app.agent import JarvisAgent
+from app.agent import JarvisAgent, current_time_note
 from app.db import connect
 from app.domains import home
 from app.memory import MemoryStore
 from app.tools.registry import ToolRegistry
+from training.build_dataset import _random_time
 from training.sim_house import SimHouse
 
 EVAL_FILE = Path(__file__).parent / "data" / "eval.jsonl"
@@ -54,13 +56,19 @@ def _effects(calls) -> list[str]:
     return sorted(json.dumps(list(c), ensure_ascii=False, sort_keys=True) for c in calls)
 
 
-async def run_case(llm, case: dict) -> dict:
+async def run_case(llm, case: dict, hour: int | None = None) -> dict:
+    # The clock the model sees is the case's own, not the machine's - an exam run
+    # in the morning shouldn't differ from one at night. --hour pins it for all.
+    when = _random_time(random.Random(case["house_seed"]))
+    if hour is not None:
+        when = when.replace(hour=hour, minute=0)
     house = SimHouse(random.Random(case["house_seed"]))
     tools = ToolRegistry()
     home.register(tools, client=house)
     agent = JarvisAgent(llm=llm, tools=tools, memory=MemoryStore(connect(":memory:")))
     started = time.monotonic()
-    result = await agent.chat("eval", "default", case["said"], spoken=True)
+    with patch("app.agent.current_time_note", lambda now=None: current_time_note(when)):
+        result = await agent.chat("eval", "default", case["said"], spoken=True)
     used = [a["tool"] for a in result["actions"]]
     got, want = _effects(house.calls), _effects(case["effects"])
     if case["kind"] == "status":
@@ -71,10 +79,10 @@ async def run_case(llm, case: dict) -> dict:
         ok = got == want
     return {"said": case["said"], "kind": case["kind"], "ok": ok, "seconds": round(time.monotonic() - started, 2),
             "tools": [(a["tool"], a["input"]) for a in result["actions"]], "reply": result["response"],
-            "got": got, "want": want}
+            "got": got, "want": want, "time": f"{when:%H:%M}"}
 
 
-def evaluate(spec: str, base_url: str | None, limit: int | None, tag: str = "") -> Path:
+def evaluate(spec: str, base_url: str | None, limit: int | None, tag: str = "", hour: int | None = None) -> Path:
     cases = [json.loads(line) for line in EVAL_FILE.open(encoding="utf-8")][:limit]
     RESULTS.mkdir(exist_ok=True)
     out = RESULTS / (spec.replace(":", "_").replace("/", "_") + (f"_{tag}" if tag else "") + ".jsonl")
@@ -86,7 +94,7 @@ def evaluate(spec: str, base_url: str | None, limit: int | None, tag: str = "") 
                 if case["said"] in done:
                     continue
                 try:
-                    row = await run_case(llm, case)
+                    row = await run_case(llm, case, hour)
                 except Exception as exc:  # noqa: BLE001 - a daily limit: stop, the next run continues
                     print(f"stopped at case {n}: {exc!r}"[:200])
                     break
@@ -124,9 +132,10 @@ def main() -> None:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--compare", action="store_true")
     parser.add_argument("--tag", default="", help="a separate results file, e.g. after retraining")
+    parser.add_argument("--hour", type=int, help="the model's clock at this hour in every case")
     args = parser.parse_args()
     if args.model:
-        evaluate(args.model, args.base_url, args.limit, args.tag)
+        evaluate(args.model, args.base_url, args.limit, args.tag, args.hour)
     summary()
 
 
