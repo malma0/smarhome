@@ -1056,3 +1056,37 @@ def test_the_daily_limit_is_told_apart_from_the_minute_one(memory, tmp_path, mon
     session.agent.chat = AsyncMock(side_effect=httpx.HTTPStatusError("429", request=request, response=response))
     assert asyncio.run(voice_app._answer(session, "сделай скриншот")) == (
         "Дневной лимит бесплатной модели исчерпан - снова смогу примерно через 9 мин.")
+
+
+def test_a_name_then_a_pause_then_the_command_reaches_whisper_whole(memory, tmp_path, monkeypatch):
+    """"Джарвис, включи… свет на кухне" split at the pause: the local check
+    heard only the name in the first part, and Whisper got "и свет на кухне"."""
+    import queue
+
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "_announcer", None)
+    monkeypatch.setattr(voice_app, "_play_listening_cue", lambda: None)
+    commands = queue.Queue()
+    class _Listener(_texts_listener(["джарвис", "свет на кухне"], commands)):
+        live_text = ""
+
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _Listener)
+    handled = AsyncMock()
+    monkeypatch.setattr(voice_app, "handle_phrase", handled)
+    session = _session(memory, tmp_path)
+    session.ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, _Detector(), commands))
+
+    handled.assert_awaited_once()
+    frames = handled.await_args.args[1]
+    assert sum(len(f) for f in frames) == 2 * voice_app.SAMPLE_RATE + int(0.15 * voice_app.SAMPLE_RATE)
+
+
+def test_a_command_with_the_name_in_it_is_sent_as_it_is():
+    import voice_app
+
+    one = [np.zeros((16000, 1), dtype=np.int16)]
+    assert voice_app.with_wake_phrase(None, one) is one

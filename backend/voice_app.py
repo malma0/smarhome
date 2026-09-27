@@ -824,6 +824,17 @@ async def handle_text(session: VoiceSession, text: str, echo: bool = True) -> No
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=session.ui)
 
 
+def with_wake_phrase(wake_frames: list[np.ndarray] | None, frames: list[np.ndarray]) -> list[np.ndarray]:
+    """"Джарвис, включи… свет на кухне": a pause after the first words ends a
+    phrase, the local recognizer hears only the name in it, and the command
+    that follows came to Whisper as "и свет на кухне" - "включи" stayed in the
+    name's phrase. So that phrase goes in front of the next one."""
+    if not wake_frames:
+        return frames
+    gap = np.zeros((int(0.15 * SAMPLE_RATE), 1), dtype=np.int16)
+    return [*wake_frames, gap, *frames]
+
+
 def _play_listening_cue() -> None:
     try:
         import winsound
@@ -897,6 +908,7 @@ async def run_hands_free(
     ringing: dict[int, dict] = {}  # id -> {"text", "until", "next"}
     just_stopped = False
     interrupted = False  # the name was heard over an answer (respond)
+    wake_frames = None  # the phrase that was only the name - see with_wake_phrase
 
     def ring_due() -> None:
         now = time.monotonic()
@@ -1034,6 +1046,7 @@ async def run_hands_free(
             phrase = await asyncio.to_thread(listener.next_phrase, 0.3)
             if phrase is None:
                 if was_awake and not state.is_awake() and not enrolling:
+                    wake_frames = None
                     idle()
                 continue
 
@@ -1053,6 +1066,7 @@ async def run_hands_free(
             # heard locally, never sent anywhere.
             something_on = ringing or (_announcer is not None and _announcer.busy) or state.is_awake()
             if something_on and is_stop_phrase(phrase.text):
+                wake_frames = None
                 stop_all()
                 continue
 
@@ -1064,10 +1078,12 @@ async def run_hands_free(
             if action == IGNORE:
                 continue
             if action == CUE:
+                wake_frames = phrase.frames
                 await asyncio.to_thread(_play_listening_cue)
                 ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")
                 continue
-            await respond(handle_phrase(session, phrase.frames))
+            frames, wake_frames = with_wake_phrase(wake_frames, phrase.frames), None
+            await respond(handle_phrase(session, frames))
     finally:
         listener.close()
 
