@@ -1071,8 +1071,8 @@ async def run_hands_free(
                 continue
 
             wake_class = None
-            if not state.is_awake() and detector is not None:
-                # Local only - a phrase without the name never goes further.
+            if detector is not None:
+                # Local only - asleep, a phrase without the name never goes further.
                 wake_class = classify(phrase.text or "", detector.wake_words)
             action = state.on_phrase(wake_class)
             if action == IGNORE:

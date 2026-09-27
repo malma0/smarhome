@@ -101,3 +101,14 @@ def test_the_name_heard_over_an_answer():
     assert name_heard("Джервис, включи свет", wake)
     assert not name_heard("стоп хватит старик ловил рыбу", wake)
     assert not name_heard(None, wake)
+
+
+def test_the_name_alone_in_the_follow_up_window_still_means_listen():
+    state, clock = _state()
+    state.on_phrase(WAKE_WITH_COMMAND)
+    state.after_reply()
+    clock.now += 3
+    assert state.on_phrase(WAKE_ONLY) == CUE  # not a message "Джарвис" answered with "Здравствуй!"
+    clock.now += 7
+    assert state.is_awake()
+    assert state.on_phrase(NONE) == PROCESS  # "сделай в зале потемнее"

@@ -65,9 +65,14 @@ class HandsFreeState:
         return self._awake_until is not None and self._clock() < self._awake_until
 
     def on_phrase(self, wake_class: str | None) -> str:
-        """wake_class comes from WakeWordDetector.check - only needed while
-        asleep; pass None when is_awake() (no name required then)."""
+        """wake_class comes from WakeWordDetector.check. Awake, no name is
+        needed - but the name alone still means "listen": in the follow-up
+        window "Джарвис" (pause) "сделай потемнее" went to the model as two
+        messages, and the bare name got "Здравствуй!"."""
         if self.is_awake():
+            if wake_class == WAKE_ONLY:
+                self._awake_until = self._clock() + self._wake_listen
+                return CUE
             # Handling it now; the window reopens after the reply, counted
             # from then - not from before a possibly minute-long answer.
             self._awake_until = None
