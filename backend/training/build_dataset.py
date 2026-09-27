@@ -92,6 +92,8 @@ def phrase_ok(intent: Intent, phrase: str) -> bool:
         return False
     if intent.required_any and not any(w in text for w in intent.required_any):
         return False
+    if any(w in text for w in intent.forbidden_any):
+        return False
     if intent.no_commands and COMMANDS.search(text):
         return False
     wanted, opposite = {"on": (ON_WORDS, OFF_WORDS), "off": (OFF_WORDS, ON_WORDS),
@@ -214,6 +216,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--batch", type=int, default=12)
     parser.add_argument("--eval", action="store_true")
+    parser.add_argument("--kinds", help="only these later-added kinds, e.g. brightness (training/intents.EXTRA_KINDS)")
     parser.add_argument("--out", default="training/data/pilot.jsonl")
     args = parser.parse_args()
 
@@ -221,7 +224,8 @@ def main() -> None:
     specs = []
     for _ in range(args.intents):
         house_seed = rng.randrange(1 << 30)
-        specs.append((house_seed, draw(rng, SimHouse(random.Random(house_seed)))))
+        kinds = args.kinds.split(",") if args.kinds else None
+        specs.append((house_seed, draw(rng, SimHouse(random.Random(house_seed)), kinds)))
 
     teacher = Teacher()
     phrased: list[tuple[int, str]] = []

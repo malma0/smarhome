@@ -141,6 +141,15 @@ class SimHouse:
         return any(area == room and (e.startswith(suffix) if suffix.endswith(".") else e.endswith(suffix))
                    for e, area in self.areas.items())
 
+    def light(self, room: str) -> tuple[bool, int] | None:
+        """(on, brightness %) of the room's light - None when it has none."""
+        entity = next((e for e, a in self.areas.items() if a == room and e.startswith("light.")), None)
+        state = next((s for s in self.states if s["entity_id"] == entity), None)
+        if state is None:
+            return None
+        brightness = state["attributes"].get("brightness")
+        return state["state"] == "on", round(brightness / 255 * 100) if brightness is not None else 100
+
     def norm(self, room: str) -> float | None:
         entity = next((e for e, a in self.areas.items() if a == room and e.endswith("_temperature_norm")), None)
         state = next((s for s in self.states if s["entity_id"] == entity), None)

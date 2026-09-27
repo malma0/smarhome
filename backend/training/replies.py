@@ -266,9 +266,37 @@ CHAT = {
 }
 
 
+def _brightness_reply(rng, intent, pairs) -> str:
+    last_call, result = pairs[-1]
+    room = last_call["arguments"].get("room", "")
+    if last_call["name"] == "control_devices":
+        if "done" not in result or not result["done"]:
+            return _control_reply(rng, pairs)
+        where = at(result["done"][0]["room"])
+        pct = result.get("brightness_pct")
+        if pct is None:
+            return rng.choice([f"Включила свет {where}.", f"Готово, свет {where} включён."])
+        word = "потемнее" if intent.direction == "down" else "посветлее"
+        return rng.choice([f"Сделала {word}: свет {where} на {pct}%.", f"Готово, свет {where} теперь {pct}%."])
+    if "error" in result:
+        return _status_reply(rng, None, result, room)
+    name, data = next(iter(result.get("rooms", {}).items()), (room, {}))
+    where = at(name)
+    light = str(data.get("light", ""))
+    if not light:
+        return f"{cap(where)} нет света."
+    if not light.startswith("on"):
+        return f"Свет {where} и так выключен."
+    if intent.direction == "down":
+        return f"Свет {where} уже на самом слабом."
+    return f"Свет {where} уже на полную."
+
+
 def reply(rng: random.Random, intent, pairs: list[tuple[dict, dict]]) -> str:
     if intent.kind == "chat":
         return rng.choice(CHAT[intent.question])
+    if intent.kind == "brightness":
+        return _brightness_reply(rng, intent, pairs)
     last_call, last_result = pairs[-1]
     name = last_call["name"]
     if name == "control_devices":

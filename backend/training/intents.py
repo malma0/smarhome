@@ -40,6 +40,7 @@ class Intent:
     direction: str | None = None  # "up"/"down" for "потеплее"/"прохладнее"
     required_any: tuple[str, ...] = ()  # the phrasing has to have one of these stems
     no_commands: bool = False  # a question or a complaint - no "включи"/"погаси" in it
+    forbidden_any: tuple[str, ...] = ()  # stems that would mean something else ("потеплее" for "потемнее")
 
 
 def call(tool: str, **arguments) -> dict:
@@ -155,6 +156,46 @@ def _norm_relative(rng, house) -> Intent:
                   required_any=("тепл",) if warmer else ("прохлад", "холод", "охлад"), no_commands=True)
 
 
+BRIGHTNESS_STEP = 30
+
+
+def _brightness_step(room: str, dimmer: bool):
+    def then(house: SimHouse):
+        light = house.light(room)
+        if light is None:
+            return None  # no light there - the answer says so
+        on, pct = light
+        args = {"room": _room(room), "device": "light", "action": "on"}
+        if dimmer:
+            if not on or pct <= 10:
+                return None  # already off / at the least
+            return [call("control_devices", **args, brightness_pct=max(10, pct - BRIGHTNESS_STEP))]
+        if not on:
+            return [call("control_devices", **args)]
+        if pct >= 100:
+            return None  # already full
+        return [call("control_devices", **args, brightness_pct=min(100, pct + BRIGHTNESS_STEP))]
+    return then
+
+
+def _brightness_relative(rng, house) -> Intent:
+    """"Сделай потемнее" once went to the model as "потеплее" - it had never
+    seen dimming. The house tells the brightness, a step of 30% is taken.
+    Mostly a room where the light is on - that's when people ask, and a
+    random room left real steps at 103 of 507 examples."""
+    lit = [r for r in house.rooms if (light := house.light(r)) and light[0]]
+    room = rng.choice(lit) if lit and rng.random() < 0.75 else rng.choice(house.rooms)
+    dimmer = rng.random() < 0.5
+    meaning = (f"человек просит сделать свет {'потемнее, приглушить' if dimmer else 'посветлее, ярче'} "
+               f"(без числа); комната: {room.lower()}")
+    return Intent("brightness", meaning, [stem(room)], [call("get_home_status", room=_room(room))],
+                  then=_brightness_step(room, dimmer), direction="down" if dimmer else "up",
+                  required_any=("темн", "тускл", "приглуш", "убав") if dimmer else ("светл", "ярч", "ярк", "прибав"),
+                  forbidden_any=(("светл", "ярч", "ярк") if dimmer else ("темн", "тускл", "приглуш"))
+                  + ("тепл", "холод", "прохлад", "жар"),
+                  no_commands=True)
+
+
 def _complaint(rng, house) -> Intent:
     room = rng.choice(house.rooms)
     kind = rng.choice(["stuffy", "cold", "hot"])
@@ -201,6 +242,14 @@ KINDS: list[tuple[Callable, int]] = [
 ]
 
 
-def draw(rng: random.Random, house: SimHouse) -> Intent:
+# Kinds added after the main set was built: drawn only when asked for by
+# name (build_dataset --kinds), so the main set's draws - and the teacher's
+# cached phrasings for them - stay the same.
+EXTRA_KINDS: dict[str, Callable] = {"brightness": _brightness_relative}
+
+
+def draw(rng: random.Random, house: SimHouse, kinds: list[str] | None = None) -> Intent:
+    if kinds:
+        return EXTRA_KINDS[rng.choice(kinds)](rng, house)
     make = rng.choices([k for k, _ in KINDS], [w for _, w in KINDS])[0]
     return make(rng, house)

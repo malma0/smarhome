@@ -34,3 +34,10 @@ def test_every_tool_jarvis_has_belongs_to_a_group(tmp_path):
     weather.register(registry, "Омск")
     missing = [d.name for d in registry.definitions() if router.group_of(d.name) is None]
     assert missing == []
+
+
+def test_darker_and_brighter_are_about_the_house():
+    from app.tools import router
+
+    for text in ("сделай потемнее", "приглуши", "поярче пожалуйста"):
+        assert router.select(text, None) == {"home"}, text

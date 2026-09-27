@@ -181,3 +181,38 @@ def test_the_wake_word_is_put_back_like_speech_has_it():
     for seed in range(6):
         conv = asyncio.run(build_conversation(random.Random(seed), 3, intent, "Я дома"))
         assert conv.messages[2]["tool_calls"][0]["function"]["arguments"]["name"] == "я дома"  # never the name
+
+
+def test_dimming_takes_a_step_down_from_what_the_house_says():
+    from training.intents import _brightness_relative
+
+    rng = random.Random(4)
+    seen = set()
+    for seed in range(60):
+        house = SimHouse(random.Random(seed))
+        intent = _brightness_relative(rng, house)
+        room = intent.calls[0]["arguments"]["room"].capitalize()
+        light, follow = house.light(room), intent.then(house)
+        if light is None or (intent.direction == "down" and (not light[0] or light[1] <= 10)):
+            assert follow is None
+            seen.add("nothing")
+        elif intent.direction == "down":
+            assert follow[0]["arguments"]["brightness_pct"] == max(10, light[1] - 30)
+            seen.add("dim")
+        elif not light[0]:
+            assert "brightness_pct" not in follow[0]["arguments"]
+            seen.add("on")
+    assert seen == {"nothing", "dim", "on"}
+
+
+def test_darker_is_not_warmer():
+    from training.intents import _brightness_relative
+
+    house = SimHouse(random.Random(1))
+    dim = next(i for i in (_brightness_relative(random.Random(n), house) for n in range(20)) if i.direction == "down")
+    dim.must_mention = []
+    assert phrase_ok(dim, "Сделай свет потемнее")
+    assert phrase_ok(dim, "Приглуши свет")
+    assert not phrase_ok(dim, "Сделай потеплее")  # the mix-up seen live
+    assert not phrase_ok(dim, "Сделай посветлее")
+    assert not phrase_ok(dim, "Выключи свет")

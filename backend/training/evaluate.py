@@ -75,6 +75,8 @@ async def run_case(llm, case: dict, hour: int | None = None) -> dict:
         ok = got == [] and "get_home_status" in used
     elif case["kind"] == "chat":
         ok = used == []
+    elif case["kind"] == "brightness" and not want:  # nothing to change - but it has to have looked
+        ok = got == [] and "get_home_status" in used
     else:
         ok = got == want
     return {"said": case["said"], "kind": case["kind"], "ok": ok, "seconds": round(time.monotonic() - started, 2),
@@ -82,8 +84,9 @@ async def run_case(llm, case: dict, hour: int | None = None) -> dict:
             "got": got, "want": want, "time": f"{when:%H:%M}"}
 
 
-def evaluate(spec: str, base_url: str | None, limit: int | None, tag: str = "", hour: int | None = None) -> Path:
-    cases = [json.loads(line) for line in EVAL_FILE.open(encoding="utf-8")][:limit]
+def evaluate(spec: str, base_url: str | None, limit: int | None, tag: str = "", hour: int | None = None,
+             cases_file: Path = EVAL_FILE) -> Path:
+    cases = [json.loads(line) for line in cases_file.open(encoding="utf-8")][:limit]
     RESULTS.mkdir(exist_ok=True)
     out = RESULTS / (spec.replace(":", "_").replace("/", "_") + (f"_{tag}" if tag else "") + ".jsonl")
     done = {json.loads(line)["said"] for line in out.open(encoding="utf-8")} if out.exists() else set()
@@ -109,7 +112,7 @@ def evaluate(spec: str, base_url: str | None, limit: int | None, tag: str = "", 
 
 def summary() -> None:
     kinds = ["control", "multi_room", "whole_house", "multi_device", "status", "norm", "norm_relative", "complaint",
-             "scenario", "valve", "chat"]
+             "scenario", "valve", "chat", "brightness"]
     print(f"{'модель':34} {'всего':>12} " + " ".join(f"{k[:11]:>11}" for k in kinds) + "  сек")
     for path in sorted(RESULTS.glob("*.jsonl")):
         rows = [json.loads(line) for line in path.open(encoding="utf-8")]
@@ -133,9 +136,10 @@ def main() -> None:
     parser.add_argument("--compare", action="store_true")
     parser.add_argument("--tag", default="", help="a separate results file, e.g. after retraining")
     parser.add_argument("--hour", type=int, help="the model's clock at this hour in every case")
+    parser.add_argument("--cases", type=Path, default=EVAL_FILE, help="another exam, e.g. data/eval_brightness.jsonl")
     args = parser.parse_args()
     if args.model:
-        evaluate(args.model, args.base_url, args.limit, args.tag, args.hour)
+        evaluate(args.model, args.base_url, args.limit, args.tag, args.hour, args.cases)
     summary()
 
 

@@ -52,7 +52,7 @@ def encode(tokenizer, record: dict, max_len: int) -> dict | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", default="training/data/train.jsonl")
+    parser.add_argument("--data", nargs="+", default=["training/data/train.jsonl"])
     parser.add_argument("--out", default="training/runs/home-1.5b")
     parser.add_argument("--base", default=BASE)
     parser.add_argument("--epochs", type=float, default=2)
@@ -68,7 +68,7 @@ def main() -> None:
                               TrainingArguments)
 
     tokenizer = AutoTokenizer.from_pretrained(args.base)
-    records = [json.loads(line) for line in Path(args.data).open(encoding="utf-8")]
+    records = [json.loads(line) for path in args.data for line in Path(path).open(encoding="utf-8")]
     random.Random(0).shuffle(records)
     examples = [e for r in records if (e := encode(tokenizer, r, args.max_len))]
     print(f"{len(examples)} of {len(records)} conversations fit in {args.max_len} tokens; "
