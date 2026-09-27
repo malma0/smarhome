@@ -167,3 +167,17 @@ def test_the_exam_clock_is_the_cases_own_not_the_machines():
     first = asyncio.run(run_case(Echo(), case))["time"]
     assert asyncio.run(run_case(Echo(), case))["time"] == first and f" {first}, " in seen[0]
     assert asyncio.run(run_case(Echo(), case, hour=8))["time"] == "08:00" and " 08:00, " in seen[-1]
+
+
+def test_the_wake_word_is_put_back_like_speech_has_it():
+    from training.build_dataset import _with_name
+
+    rng = random.Random(0)
+    said = {_with_name(rng, "Включи свет на кухне!") for _ in range(60)}
+    assert said == {"Включи свет на кухне!", "Джарвис, включи свет на кухне!", "Включи свет на кухне, Джарвис!"}
+    assert _with_name(rng, "Джарвис, я дома") == "Джарвис, я дома"
+    house = SimHouse(random.Random(3))
+    intent = Intent("scenario", "", [], [call("run_scenario", name="?")], name_from_phrase=True)
+    for seed in range(6):
+        conv = asyncio.run(build_conversation(random.Random(seed), 3, intent, "Я дома"))
+        assert conv.messages[2]["tool_calls"][0]["function"]["arguments"]["name"] == "я дома"  # never the name

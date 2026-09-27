@@ -107,6 +107,20 @@ def _spoken_name(phrase: str) -> str:
     return " ".join(words).strip(" ,.!?").lower()
 
 
+def _with_name(rng: random.Random, phrase: str) -> str:
+    """Live, the transcript keeps the wake word ("Джарвис, включи свет") - the
+    teacher is told to leave it out, so it's put back here, as people say it."""
+    if "джарвис" in phrase.casefold():
+        return phrase
+    where = rng.choices(["none", "start", "end"], [35, 50, 15])[0]
+    if where == "start":
+        return "Джарвис, " + phrase[:1].lower() + phrase[1:]
+    if where == "end":
+        body = phrase.rstrip(".!?")
+        return f"{body}, Джарвис{phrase[len(body):]}"
+    return phrase
+
+
 def _random_time(rng: random.Random) -> datetime:
     start = datetime(2026, 1, 1).astimezone()
     return start + timedelta(minutes=rng.randrange(0, 365 * 24 * 60))
@@ -144,7 +158,7 @@ async def build_conversation(rng, house_seed: int, intent: Intent, phrase: str) 
     house = SimHouse(random.Random(house_seed))
     when = _random_time(rng)
     messages = [{"role": "system", "content": system_prompt(spoken=rng.random() < 0.7)},
-                {"role": "user", "content": f"{phrase}\n\n[{current_time_note(when)}]"}]
+                {"role": "user", "content": f"{_with_name(rng, phrase)}\n\n[{current_time_note(when)}]"}]
     conv = Conversation(messages, {"kind": intent.kind, "meaning": intent.meaning, "house_seed": house_seed}, rng, intent)
     calls = [dict(c, arguments=dict(c["arguments"])) for c in intent.calls]
     if intent.name_from_phrase:
