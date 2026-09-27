@@ -22,7 +22,8 @@ class OllamaProvider:
         self._model = model
         self._qwen_raw = qwen_raw
         self._base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=120)
+        # A PC that's off shouldn't hold a command for long: 3 s to connect, 120 to answer.
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=3))
 
     async def generate(
         self, *, system: str, messages: list[dict[str, Any]], tools: list[ToolDef]

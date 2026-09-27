@@ -13,6 +13,8 @@ class Settings:
     anthropic_model: str
     ollama_model: str
     ollama_base_url: str
+    home_llm_url: str
+    home_llm_model: str
     groq_api_key: str
     groq_model: str
     groq_base_url: str
@@ -65,6 +67,10 @@ def load_settings() -> Settings:
         anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b"),
         ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
+        # The own home model (backend/training) on Ollama, e.g. http://192.168.1.50:11434 -
+        # house-only requests go there, everything else to LLM_PROVIDER. Empty: off.
+        home_llm_url=os.environ.get("HOME_LLM_URL", "").strip(),
+        home_llm_model=os.environ.get("HOME_LLM_MODEL", "jarvis-home"),
         groq_api_key=os.environ.get("GROQ_API_KEY", ""),
         groq_model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
         groq_base_url=os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),

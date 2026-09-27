@@ -52,7 +52,7 @@ def test_plain_text_reply_without_any_tool_registered(memory):
 
     result = asyncio.run(agent.chat("session-1", "ivan", "what's the capital of France?"))
 
-    assert result == {"response": "Paris.", "actions": []}
+    assert result == {"response": "Paris.", "actions": [], "local": False}
     llm.generate.assert_awaited_once()
 
 

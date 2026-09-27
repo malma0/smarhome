@@ -7,7 +7,10 @@ Home Assistant - when HOME_ASSISTANT_TOKEN is set), see docs/TZ.md."""
 
 import asyncio
 import json
+import time
 from datetime import datetime
+
+import httpx
 
 from app.config import settings
 from app.db import connect
@@ -33,6 +36,11 @@ MAX_TOOL_ITERATIONS = 8
 # until Groq's free 8000 tokens a minute ran out after a few house commands,
 # and replies waited 10-88 s on its rate limit.
 MAX_HISTORY_TURNS = 6
+# The own home model was trained on a command, and a "да" after its question.
+HOME_HISTORY_TURNS = 2
+# After the home model didn't answer (its PC is off), the house goes to the
+# main model for this long before trying it again - not a connect wait per command.
+HOME_LLM_RETRY_SECONDS = 60
 
 GENERAL_ASSISTANT_PREAMBLE = (
     "You are Jarvis, the voice-controlled AI running inside a private home. Residents can "
@@ -66,8 +74,11 @@ class JarvisAgent:
     registry instance this agent was built with).
     """
 
-    def __init__(self, llm: LLMProvider, tools: ToolRegistry, memory: MemoryStore):
+    def __init__(self, llm: LLMProvider, tools: ToolRegistry, memory: MemoryStore,
+                 home_llm: LLMProvider | None = None):
         self.llm = llm
+        self.home_llm = home_llm  # requests only about the house, see app/tools/router.py
+        self._home_llm_down_until = 0.0
         self.tools = tools
         self.memory = memory
         self._sessions: dict[str, list[dict]] = {}
@@ -116,11 +127,23 @@ class JarvisAgent:
         ctx = TurnContext()
         actions: list[dict] = []
         final_text = None
+        local = (self.home_llm is not None and groups == {"home"}
+                 and time.monotonic() >= self._home_llm_down_until)
 
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = await self.llm.generate(
-                system=system_prompt, messages=recent_turns(history, MAX_HISTORY_TURNS), tools=tool_defs
-            )
+            response = None
+            if local:
+                try:
+                    response = await self.home_llm.generate(
+                        system=system_prompt, messages=recent_turns(history, HOME_HISTORY_TURNS), tools=tool_defs
+                    )
+                except (httpx.HTTPError, OSError):  # its PC is off or asleep - the house still works
+                    local = False
+                    self._home_llm_down_until = time.monotonic() + HOME_LLM_RETRY_SECONDS
+            if response is None:
+                response = await self.llm.generate(
+                    system=system_prompt, messages=recent_turns(history, MAX_HISTORY_TURNS), tools=tool_defs
+                )
             history.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
 
             if response.stop_reason != "tool_use":
@@ -162,7 +185,7 @@ class JarvisAgent:
         used = {g for a in actions if (g := router.group_of(a["tool"]))}
         self._last_groups[session_id] = groups if groups is not None else (used or None)
 
-        return {"response": final_text, "actions": actions}
+        return {"response": final_text, "actions": actions, "local": local}
 
 
 def current_time_note(now: datetime | None = None) -> str:
@@ -225,4 +248,8 @@ def build_default_agent() -> JarvisAgent:
 
     reminders.register(tools, reminders.ReminderStore(memory.connection))
     weather.register(tools, settings.weather_city)
-    return JarvisAgent(llm=llm, tools=tools, memory=memory)
+    home_llm = None
+    if settings.home_llm_url and settings.home_assistant_token:
+        # Prompt built with the template it was trained on (app/llm/qwen_template.py).
+        home_llm = OllamaProvider(model=settings.home_llm_model, base_url=settings.home_llm_url, qwen_raw=True)
+    return JarvisAgent(llm=llm, tools=tools, memory=memory, home_llm=home_llm)

@@ -716,6 +716,8 @@ async def _answer(session: VoiceSession, text: str) -> str:
         session.ui.info(f"(ошибка модели: {exc!r})")
         session.ui.jarvis_said(reply, [])
         return reply
+    if result.get("local"):
+        session.ui.info("(ответила своя модель)")
     session.ui.jarvis_said(result["response"], result["actions"])
     return result["response"]
 
