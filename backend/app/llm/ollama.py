@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from app.http_client import trust_env
 from app.llm import qwen_template
 from app.llm.base import ContentBlock, LLMResponse, StopReason, ToolDef
 
@@ -23,7 +24,7 @@ class OllamaProvider:
         self._qwen_raw = qwen_raw
         self._base_url = base_url.rstrip("/")
         # A PC that's off shouldn't hold a command for long: 3 s to connect, 120 to answer.
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=3))
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=3), trust_env=trust_env(self._base_url))
 
     async def generate(
         self, *, system: str, messages: list[dict[str, Any]], tools: list[ToolDef]

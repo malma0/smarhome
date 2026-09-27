@@ -32,7 +32,7 @@ class HomeAssistantClient:
         """Network failures (Home Assistant not running...) come out as
         HomeAssistantError too - one exception type for callers to handle."""
         try:
-            resp = await shared_client().request(
+            resp = await shared_client(self.base_url).request(
                 method, f"{self.base_url}{path}", headers=self._headers(), timeout=TIMEOUT_SECONDS, **kwargs
             )
         except httpx.HTTPError as exc:

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import httpx
 
-from app.http_client import ssl_context
+from app.http_client import ssl_context, trust_env
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 # CPU inference is slow (order of tens of seconds for a long reply on this
@@ -46,7 +46,8 @@ async def synthesize(
     SSE-style endpoint that blocks/streams lines until the job finishes
     (the server appears to be busy with the CPU-bound generation itself
     meanwhile), then GET /audio/{id} fetches the finished WAV."""
-    async with httpx.AsyncClient(timeout=GENERATION_TIMEOUT_SECONDS, verify=ssl_context()) as client:
+    async with httpx.AsyncClient(timeout=GENERATION_TIMEOUT_SECONDS, verify=ssl_context(),
+                                 trust_env=trust_env(base_url)) as client:
         response = await client.post(
             f"{base_url}/speak",
             json={"text": text, "engine": engine, "language": language, "profile": profile},
@@ -118,7 +119,7 @@ async def ensure_profile(
     Voicebox requires a transcript of every sample: it's read from a .txt
     file next to the WAV with the same name (reyzi_sample.wav ->
     reyzi_sample.txt)."""
-    async with httpx.AsyncClient(timeout=30, verify=ssl_context()) as client:
+    async with httpx.AsyncClient(timeout=30, verify=ssl_context(), trust_env=trust_env(base_url)) as client:
         response = await client.get(f"{base_url}/profiles")
         response.raise_for_status()
         if any(p.get("name") == profile for p in response.json()):

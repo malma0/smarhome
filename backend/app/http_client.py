@@ -14,6 +14,7 @@ the Voicebox warm-up thread, each test).
 """
 
 import asyncio
+import ipaddress
 import ssl
 import threading
 import weakref
@@ -23,7 +24,9 @@ import httpx
 
 _lock = threading.Lock()
 _ssl_context: ssl.SSLContext | None = None
-_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
+_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[bool, httpx.AsyncClient]]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def ssl_context() -> ssl.SSLContext:
@@ -34,10 +37,33 @@ def ssl_context() -> ssl.SSLContext:
         return _ssl_context
 
 
-def shared_client() -> httpx.AsyncClient:
+def is_local(url: str) -> bool:
+    """localhost, 127.x, 192.168.x, 10.x, 172.16-31.x, *.local - this machine or the home network."""
+    host = httpx.URL(url).host
+    if host == "localhost" or host.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local
+
+
+def trust_env(url: str) -> bool:
+    """Whether a client for url may take proxy settings from the system. Not
+    for local addresses: with a VPN on, httpx takes the Windows system proxy
+    from the registry but not its bypass list, so Home Assistant on localhost
+    went through the VPN and got 503."""
+    return not is_local(url)
+
+
+def shared_client(url: str | None = None) -> httpx.AsyncClient:
+    """url: where the requests go - a local one gets a client that never uses a proxy."""
     loop = asyncio.get_running_loop()
-    client = _clients.get(loop)
+    direct = url is not None and is_local(url)
+    clients = _clients.setdefault(loop, {})
+    client = clients.get(direct)
     if client is None or client.is_closed:
-        client = httpx.AsyncClient(timeout=60, verify=ssl_context())
-        _clients[loop] = client
+        client = httpx.AsyncClient(timeout=60, verify=ssl_context(), trust_env=not direct)
+        clients[direct] = client
     return client
