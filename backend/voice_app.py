@@ -55,6 +55,7 @@ from app.agent import build_default_agent
 from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech, speech_seconds
 from app.config import settings
 from app.dataset import UtteranceLog
+from app.domains.radio import player as radio_player
 from app.hands_free import CUE, IGNORE, HandsFreeState, is_stop_phrase, name_heard
 from app.reminders import ReminderStore, local_now
 from app.http_client import shared_client
@@ -889,6 +890,7 @@ async def run_hands_free(
     mic_on = True  # the orb switches it: off = the stream really stops
 
     def idle() -> None:
+        radio_player.duck(False)
         if mic_on:
             ui.state(SLEEPING, asleep_hint)
         else:
@@ -901,6 +903,7 @@ async def run_hands_free(
             listener.resume()
             mic_on = True
         state.force_wake()
+        radio_player.duck(True)
         await asyncio.to_thread(_play_listening_cue)
         ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")
 
@@ -951,6 +954,7 @@ async def run_hands_free(
         nonlocal just_stopped
         sounding = _announcer is not None and _announcer.busy
         stopped = bool(ringing) or sounding or state.is_awake()
+        stopped = radio_player.stop() or stopped
         for reminder_id, ring in ringing.items():
             ui.ring(ring["text"], f"reminder:{reminder_id}", False)
         ringing.clear()
@@ -972,6 +976,7 @@ async def run_hands_free(
         taken as the next phrase. Without Vosk there's no local transcript to
         check, so the mic is just muted."""
         nonlocal interrupted
+        radio_player.duck(True)
         if detector is None:
             listener.mute()
         session.speaking_text = ""
@@ -1065,6 +1070,9 @@ async def run_hands_free(
 
             was_awake = state.is_awake()
             phrase = await asyncio.to_thread(listener.next_phrase, 0.3)
+            if detector is not None and radio_player.playing and name_heard(
+                    getattr(listener, "live_text", ""), detector.wake_words):
+                radio_player.duck(True)  # "Джарвис..." over the music: quieter before the command is even said
             if phrase is None:
                 if was_awake and not state.is_awake() and not enrolling:
                     wake_frames = None
@@ -1097,8 +1105,10 @@ async def run_hands_free(
                 wake_class = classify(phrase.text or "", detector.wake_words)
             action = state.on_phrase(wake_class)
             if action == IGNORE:
+                radio_player.duck(False)
                 continue
             if action == CUE:
+                radio_player.duck(True)
                 wake_frames = phrase.frames
                 await asyncio.to_thread(_play_listening_cue)
                 ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")

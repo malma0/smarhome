@@ -8,6 +8,7 @@ pytest>=8.0.0
 # desktop voice app (phase 1)
 sounddevice>=0.4.6
 numpy>=1.26.0
+miniaudio>=1.60  # internet radio (app/domains/radio.py)
 pyttsx3>=2.90
 edge-tts>=7.0.0
 pygame>=2.6.0

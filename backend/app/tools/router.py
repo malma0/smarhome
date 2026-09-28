@@ -21,6 +21,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "reminders": ("reminders",),
     "weather": ("get_weather",),
     "shopping": ("shopping_list",),
+    "radio": ("radio",),
 }
 
 # Stems, matched inside words ("кухн" in "на кухне"), case- and ё-insensitive.
@@ -47,6 +48,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "reminders": ("таймер", "напомни", "напоминан", "будильник", "разбуди", "засеки"),
     "weather": ("погод", "дожд", "снег", "прогноз", "надеть", "зонт", "ветер", "ветр", "на улице", "мороз"),
     "shopping": ("купи", "покуп", "магазин", "список", "кончил"),
+    "radio": ("радио", "радиостанц", "играет", "эфир"),
 }
 
 
