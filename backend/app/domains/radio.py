@@ -110,8 +110,9 @@ def make_handler(radio: Radio, find=find_stations):
             stations = [radio.last]
         else:
             return {"error": "No station named and none played before - ask which station."}
-        if not stations:
-            return {"error": f"No station found for {query!r}."}
+        if not stations:  # live, the model asked for "Europe Plus" - the catalog has "Европа Плюс"
+            return {"error": f"No station found for {query!r}. Try again with the name as the resident said it, "
+                             "in Russian (e.g. 'Европа Плюс'), or a shorter part of it."}
         for station in stations:  # a dead stream: the next one found
             try:
                 await asyncio.to_thread(radio.play, station)
@@ -128,8 +129,8 @@ def register(registry: ToolRegistry, radio: Radio = player) -> None:
         Tool(
             name="radio",
             description=(
-                "Internet radio played by Jarvis. play: station by name ('Маяк', 'Европа Плюс', 'Рекорд', "
-                "'relax'); without one, the last station. stop ('выключи радио'). status ('что играет?' - always ask it, never guess). "
+                "Internet radio played by Jarvis. play: station by name exactly as the resident said it, in "
+                "Russian - never translated ('Маяк', 'Европа Плюс', 'Рекорд'); without one, the last station. stop ('выключи радио'). status ('что играет?' - always ask it, never guess). "
                 "Volume is the computer's volume (media tool)."
             ),
             parameters={
