@@ -483,6 +483,7 @@ class VoiceSession:
     # The reply being spoken right now - if it says "Джарвис" itself, hearing
     # the name doesn't count as being interrupted.
     speaking_text: str = ""
+    answered_locally: bool = False  # the last answer came from the own home model
 
 
 async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSession | None:
@@ -709,6 +710,7 @@ async def _answer(session: VoiceSession, text: str) -> str:
         session.ui.info("(остановила)")
         return ""
     session.ui.state(THINKING, "Думаю...")
+    session.answered_locally = False
     try:
         result = await session.agent.chat(session.session_id, session.resident_id, text, spoken=settings.tts_enabled)
     except Exception as exc:  # noqa: BLE001 - the model failing (rate limit, network) mustn't end the session
@@ -716,8 +718,7 @@ async def _answer(session: VoiceSession, text: str) -> str:
         session.ui.info(f"(ошибка модели: {exc!r})")
         session.ui.jarvis_said(reply, [])
         return reply
-    if result.get("local"):
-        session.ui.info("(ответила своя модель)")
+    session.answered_locally = bool(result.get("local"))
     session.ui.jarvis_said(result["response"], result["actions"])
     return result["response"]
 
@@ -744,10 +745,12 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     ui.state(THINKING, "Распознаю...")
     prompt = build_whisper_prompt(settings.whisper_vocabulary, session.agent.memory.list_resident_ids())
     text: str | None = None
+    started = time.monotonic()
     try:
         text = await transcribe(wav_bytes, settings.groq_api_key, settings.groq_base_url, prompt=prompt)
     except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
         ui.info(f"Ошибка распознавания: {exc}")
+    whisper_seconds = time.monotonic() - started
 
     if text and is_hallucination(text):
         # Noise that got past the voice detector - not answered, and kept out
@@ -758,6 +761,7 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
         return
 
     decision: SpeakerDecision | None = None
+    started = time.monotonic()
     if embedding_task is not None:
         try:
             embedding = await embedding_task
@@ -776,6 +780,7 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
             embedding=embedding,
         )
         session.resident_id = decision.resident
+    voice_seconds = time.monotonic() - started  # beyond Whisper: the two run side by side
 
     # Logged right away - before answering - so the phrase can be corrected
     # the moment it's shown, and even when transcription failed or came back
@@ -804,9 +809,13 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     if not text:
         return
 
+    started = time.monotonic()
     response = await _answer(session, text)
+    timings = {"whisper": round(whisper_seconds, 2), "voice": round(voice_seconds, 2),
+               "answer": round(time.monotonic() - started, 2), "local": session.answered_locally}
+    ui.info(timing_note(timings))
     if utterance_id:
-        session.utterances.set_response(utterance_id, response)
+        session.utterances.update(utterance_id, response=response, timings=timings)
     session.speaking_text = response
     if settings.tts_enabled and response:
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=ui)
@@ -818,10 +827,22 @@ async def handle_text(session: VoiceSession, text: str, echo: bool = True) -> No
     nothing to identify or log to the speech dataset."""
     if echo:
         session.ui.user_said(text, voice=False)
+    started = time.monotonic()
     response = await _answer(session, text)
+    if response:
+        model = "своя модель" if session.answered_locally else "Groq"
+        session.ui.info(f"(ответ {time.monotonic() - started:.1f} с, {model})".replace(".", ","))
     session.speaking_text = response
     if settings.tts_enabled and response:  # empty after "стоп"
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=session.ui)
+
+
+def timing_note(t: dict) -> str:
+    """Where a voice command's time went - "тормозит" is then a number, not
+    a feeling. Before these, 0.6 s of silence ends every phrase (UtteranceSegmenter)."""
+    model = "своя модель" if t["local"] else "Groq"
+    return (f"(распознала {t['whisper']:.1f} с · голос {t['voice']:.1f} с · "
+            f"ответ {t['answer']:.1f} с, {model})").replace(".", ",")
 
 
 def with_wake_phrase(wake_frames: list[np.ndarray] | None, frames: list[np.ndarray]) -> list[np.ndarray]:

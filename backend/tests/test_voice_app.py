@@ -256,10 +256,11 @@ def test_a_voice_phrase_is_shown_with_its_dataset_id_before_jarvis_answers(memor
 
     asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
 
-    assert [e[0] for e in ui.events] == ["state", "user", "state", "jarvis"]
+    assert [e[0] for e in ui.events] == ["state", "user", "state", "jarvis", "info"]  # info: where the time went
     assert ui.events[1] == ("user", "включи свет", True, session.last_utterance_id)
     [record] = [json.loads(l) for l in (tmp_path / "ds" / "metadata.jsonl").read_text("utf-8").splitlines()]
     assert record["response"] == "Включаю."  # filled in after the answer
+    assert set(record["timings"]) == {"whisper", "voice", "answer", "local"}
 
 
 def test_an_unrecognized_phrase_still_gets_a_bubble_to_correct_but_no_answer(memory, tmp_path, monkeypatch):
@@ -1090,3 +1091,10 @@ def test_a_command_with_the_name_in_it_is_sent_as_it_is():
 
     one = [np.zeros((16000, 1), dtype=np.int16)]
     assert voice_app.with_wake_phrase(None, one) is one
+
+
+def test_where_the_time_went_is_shown():
+    import voice_app
+
+    note = voice_app.timing_note({"whisper": 1.42, "voice": 0.0, "answer": 0.81, "local": True})
+    assert note == "(распознала 1,4 с · голос 0,0 с · ответ 0,8 с, своя модель)"
