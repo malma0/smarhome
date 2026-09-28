@@ -256,9 +256,14 @@ class PhraseStreamer:
 
     LIVE_TEXT_EVERY_FRAMES = 10  # ~0.3 s
 
-    def __init__(self, segmenter: UtteranceSegmenter, transcriber_factory: Callable[[], Any] | None = None):
+    def __init__(self, segmenter: UtteranceSegmenter, transcriber_factory: Callable[[], Any] | None = None,
+                 on_edge: Callable[[bool], None] | None = None):
         self._segmenter = segmenter
         self._factory = transcriber_factory
+        # True when a phrase starts, False the moment it ends - before the local
+        # transcript is finished, which takes a while on a long phrase: the
+        # window kept saying "Слушаю" while the phrase was already over.
+        self._on_edge = on_edge
         self._transcript = None
         self._frames_since_live = 0
         # What's been heard of the current phrase so far - read from other
@@ -275,6 +280,8 @@ class PhraseStreamer:
     def feed(self, frame: np.ndarray) -> Phrase | None:
         was_in_phrase = self._segmenter.in_phrase
         frames = self._segmenter.feed(frame)
+        if self._on_edge is not None and was_in_phrase != self._segmenter.in_phrase:
+            self._on_edge(self._segmenter.in_phrase)
         if self._factory is not None:
             if not was_in_phrase and self._segmenter.in_phrase:
                 self._transcript = self._factory()
@@ -310,6 +317,8 @@ class HandsFreeListener:
         sample_rate: int,
         on_level: Callable[[float], None] | None = None,
         transcriber_factory: Callable[[], Any] | None = None,
+        end_silence_seconds: float = 0.6,
+        on_edge: Callable[[bool], None] | None = None,
     ):
         import sounddevice as sd
 
@@ -318,7 +327,11 @@ class HandsFreeListener:
         self._last_level_at = 0.0
         self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=500)
         self._phrases: queue.Queue[Phrase] = queue.Queue()
-        self._streamer = PhraseStreamer(UtteranceSegmenter(make_vad(sample_rate)), transcriber_factory)
+        self._streamer = PhraseStreamer(
+            UtteranceSegmenter(make_vad(sample_rate), end_silence_seconds=end_silence_seconds),
+            transcriber_factory,
+            on_edge=on_edge,
+        )
         self._muted = threading.Event()
         self._held = threading.Event()  # an alarm is sounding (hold/release)
         self._stop = threading.Event()

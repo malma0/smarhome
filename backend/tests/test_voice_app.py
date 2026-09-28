@@ -701,7 +701,7 @@ def _fake_listener_factory(phrases, commands):
     from app.audio_capture import Phrase
 
     class _FakeListener:
-        def __init__(self, sample_rate, on_level=None, transcriber_factory=None):
+        def __init__(self, sample_rate, on_level=None, transcriber_factory=None, **kwargs):
             self._phrases = [Phrase([p], None) for p in phrases]
 
         def next_phrase(self, timeout):
@@ -858,7 +858,7 @@ def _texts_listener(texts, commands):
     from app.audio_capture import Phrase
 
     class _Listener:
-        def __init__(self, sample_rate, on_level=None, transcriber_factory=None):
+        def __init__(self, sample_rate, on_level=None, transcriber_factory=None, **kwargs):
             self._phrases = [Phrase([_seconds(1)], t) for t in texts]
 
         def next_phrase(self, timeout):

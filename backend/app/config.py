@@ -58,6 +58,7 @@ class Settings:
     vosk_model_path: str
     wake_listen_seconds: float
     follow_up_seconds: float
+    phrase_end_silence: float
 
 
 def load_settings() -> Settings:
@@ -119,6 +120,8 @@ def load_settings() -> Settings:
         vosk_model_path=os.environ.get("VOSK_MODEL_PATH", "models/vosk-model-small-ru-0.22"),
         wake_listen_seconds=float(os.environ.get("WAKE_LISTEN_SECONDS", "8")),
         follow_up_seconds=float(os.environ.get("FOLLOW_UP_SECONDS", "10")),
+        # Silence that ends a phrase. 0.6 cut the resident off mid-sentence at a natural pause.
+        phrase_end_silence=float(os.environ.get("PHRASE_END_SILENCE", "0.9")),
     )
 
 

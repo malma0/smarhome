@@ -917,12 +917,24 @@ async def run_hands_free(
             session.resident_id = name  # whoever just enrolled is most likely the one talking
             ui.resident(name)
         idle()
+    def phrase_edge(started: bool) -> None:
+        """From the listener's thread: the window follows the phrase as it
+        happens - only while Jarvis is listening; asleep, most phrases aren't for it."""
+        if not state.is_awake():
+            return
+        if started:
+            ui.state(LISTENING, "Слышу...")
+        else:
+            ui.state(THINKING, "Распознаю...")
+
     listener = HandsFreeListener(
         SAMPLE_RATE,
         on_level=ui.mic_level,
         # The name check runs while the phrase is still being spoken - see
         # app.wake_word.StreamingTranscript.
         transcriber_factory=detector.stream if detector else None,
+        end_silence_seconds=settings.phrase_end_silence,
+        on_edge=phrase_edge,
     )
     Announcer.listeners.add(listener)
 

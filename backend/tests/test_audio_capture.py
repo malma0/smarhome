@@ -241,3 +241,24 @@ def test_speech_seconds_counts_30ms_frames_marked_as_speech(monkeypatch):
     assert speech_seconds([quiet, loud, quiet], 16000) == 10 * audio_capture.VAD_FRAME_SECONDS
     assert contains_speech([quiet, loud, quiet], 16000)
     assert not contains_speech([quiet, loud[: frame * 5], quiet], 16000)  # 0.15s < MIN_SPEECH_SECONDS
+
+
+def test_the_window_hears_when_a_phrase_starts_and_ends_before_its_transcript():
+    import numpy as np
+
+    from app.audio_capture import PhraseStreamer, UtteranceSegmenter
+
+    edges, finished = [], []
+
+    class SlowTranscript:
+        def feed(self, pcm): pass
+        def finish(self):
+            finished.append(len(edges))
+            return "text"
+
+    loud, quiet = np.full((480, 1), 5000, dtype=np.int16), np.zeros((480, 1), dtype=np.int16)
+    streamer = PhraseStreamer(UtteranceSegmenter(lambda f: bool(f.any())), SlowTranscript, on_edge=edges.append)
+    for frame in [quiet] * 5 + [loud] * 30 + [quiet] * 40:
+        streamer.feed(frame)
+    assert edges == [True, False]
+    assert finished == [2]  # the end was told before the transcript was finished
