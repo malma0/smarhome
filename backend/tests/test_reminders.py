@@ -79,3 +79,51 @@ def test_the_store_survives_a_new_connection(tmp_path):
     _run(handler, kind="timer", in_seconds=600)
     again = ReminderStore(connect(str(tmp_path / "j.db")))
     assert len(again.pending()) == 1
+
+
+def test_every_weekday_at_8_said_on_a_saturday_morning_starts_on_monday(tmp_path):
+    from app.reminders import parse_repeat
+
+    assert parse_repeat("mon,tue,wed,thu,fri") == "weekdays"
+    assert parse_repeat("пн, ср") == "mon,wed" and parse_repeat("sat,sun") == "weekends"
+    store, handler = _setup(tmp_path)
+    saturday = datetime(2026, 9, 26, 7, 30, tzinfo=TZ)  # NOW is a Saturday
+    assert saturday.weekday() == 5
+    result = _run(handler, kind="reminder", text="таблетки", at="2026-09-26T08:00", repeat="weekdays")
+    assert result["added"]["at"] == "2026-09-28 08:00"
+    assert result["added"]["repeat"] == "по будням в 08:00"
+
+
+def test_every_day_at_7_said_after_7_starts_tomorrow_instead_of_failing(tmp_path):
+    store, handler = _setup(tmp_path)
+    result = _run(handler, kind="reminder", text="зарядка", at="2026-09-26T07:00", repeat="daily")
+    assert result["added"]["at"] == "2026-09-27 07:00"
+
+
+def test_a_repeating_one_rings_then_moves_on_once_even_after_days_off(tmp_path):
+    store, handler = _setup(tmp_path)
+    _run(handler, kind="reminder", text="полить цветы", at="2026-09-28T09:00", repeat="mon,wed")
+    [item] = store.pending()
+    assert item["repeat"] == "mon,wed"
+    later = datetime(2026, 10, 5, 12, 0, tzinfo=TZ)  # Jarvis was off for a week
+    store.rang(item, later)
+    [item] = store.pending()
+    assert item["due"] == datetime(2026, 10, 7, 9, 0, tzinfo=TZ)  # the next Wednesday, not the missed ones
+
+
+def test_repeat_words_and_what_is_refused(tmp_path):
+    from app.reminders import repeat_words
+
+    assert repeat_words("mon,wed") == "по понедельникам и средам"
+    assert repeat_words("fri") == "по пятницам"
+    _, handler = _setup(tmp_path)
+    assert "error" in _run(handler, kind="timer", in_seconds=60, repeat="daily")
+    assert "error" in _run(handler, kind="reminder", text="x", at="2026-09-27T08:00", repeat="иногда")
+
+
+def test_a_one_off_is_done_when_it_rings(tmp_path):
+    store, handler = _setup(tmp_path)
+    _run(handler, kind="reminder", text="позвонить маме", at="2026-09-26T09:00")
+    [item] = store.pending()
+    store.rang(item, NOW)
+    assert store.pending() == []

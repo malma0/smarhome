@@ -934,7 +934,7 @@ async def run_hands_free(
     def ring_due() -> None:
         now = time.monotonic()
         for item in reminder_store.due(local_now()):
-            reminder_store.mark_done(item["id"])
+            reminder_store.rang(item, local_now())
             ringing[item["id"]] = {"text": item["text"], "until": now + RING_SECONDS, "next": now + RING_EVERY_SECONDS}
             ui.ring(item["text"], f"reminder:{item['id']}", True)
             announcer().say(item["text"], "chime")
