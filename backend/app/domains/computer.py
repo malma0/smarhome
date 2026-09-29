@@ -470,8 +470,9 @@ def register(registry: ToolRegistry) -> None:
         Tool(
             name="search_web",
             description=(
-                "Search in the browser (a new tab): site 'web' (default), 'youtube', 'wikipedia' or 'maps'. "
-                "'найди в интернете рецепт борща', 'найди на ютубе котиков'."
+                "Opens a search in the browser (a new tab) for the resident to look at: site 'web' (default), "
+                "'youtube', 'wikipedia' or 'maps'. 'открой в браузере рецепт борща', 'найди на ютубе котиков'. "
+                "A question you should answer yourself ('узнай...', news, prices) is web_answer."
             ),
             parameters={
                 "type": "object",

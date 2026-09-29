@@ -14,8 +14,8 @@ missing tool.
 """
 
 GROUPS: dict[str, tuple[str, ...]] = {
-    "computer": ("open_application", "close_application", "search_web", "find_files", "list_directory",
-                 "read_file", "write_file", "delete_file"),
+    "computer": ("open_application", "close_application", "search_web", "web_answer", "find_files",
+                 "list_directory", "read_file", "write_file", "delete_file"),
     "pc": ("media", "desktop", "type_text", "screen", "power"),
     "home": ("get_home_status", "control_devices", "set_room_norm", "run_scenario"),
     "reminders": ("reminders",),
@@ -23,6 +23,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "shopping": ("shopping_list",),
     "radio": ("radio",),
     "currency": ("exchange_rates",),
+    "web": ("web_answer",),
 }
 
 # Stems, matched inside words ("кухн" in "на кухне"), case- and ё-insensitive.
@@ -51,6 +52,9 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "shopping": ("купи", "покуп", "магазин", "список", "кончил"),
     "radio": ("радио", "радиостанц", "играет", "эфир"),
     "currency": ("курс", "доллар", "евро", "юан", "валют", "тенге", "фунт стерлинг", "йен", "рубл"),
+    # Things only the internet knows now - "что нового", "кто выиграл", "сколько стоит айфон".
+    "web": ("новост", "узнай", "в интернете", "сколько стоит", "почем", "цена", "цены", "выиграл", "матч",
+            "биткоин", "крипт", "что случилось", "что произошло"),
 }
 
 
