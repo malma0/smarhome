@@ -1,0 +1,129 @@
+[
+ {
+  "type": "function",
+  "function": {
+   "name": "get_home_status",
+   "description": "The house now, room by room: lights, sockets, AC, heating, ventilation, sensors (temperature, humidity, CO2), danger sensors, main valves, and each room's norms (temperature, CO2 max) the house keeps by itself. Call it for every question about the house - it changes. Answer with facts; don't advise what you can't do yourself (like airing a room). If the resident says it's stuffy, hot or cold, they're right - fix it (ventilation on, or set_room_norm), don't argue.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "room": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Only this room (its name in any grammatical form). Omit for the whole house."
+     }
+    }
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "control_devices",
+   "description": "Turn a device type on/off in a room: light (brightness_pct), socket, ventilation, ac (cools, optional temperature), heating (optional temperature), water_valve/gas_valve (on = open, room ignored). room in any form ('на кухне') or 'all' - the whole house in one call. 'Warmer'/'cooler' is set_room_norm, not this. Needs the resident's yes, then retry with confirmed=true: sockets/AC/heating in a second room, temperatures outside 16-28 °C, gas, water during a leak. Always try - never say a room or device is missing unless this tool says so.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "room": {
+      "type": "string"
+     },
+     "device": {
+      "type": "string",
+      "enum": [
+       "light",
+       "socket",
+       "ac",
+       "heating",
+       "ventilation",
+       "water_valve",
+       "gas_valve"
+      ]
+     },
+     "action": {
+      "type": "string",
+      "enum": [
+       "on",
+       "off"
+      ]
+     },
+     "brightness_pct": {
+      "type": [
+       "integer",
+       "null"
+      ],
+      "minimum": 1,
+      "maximum": 100
+     },
+     "temperature": {
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "confirmed": {
+      "type": [
+       "boolean",
+       "null"
+      ],
+      "default": false
+     }
+    },
+    "required": [
+     "room",
+     "device",
+     "action"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "set_room_norm",
+   "description": "What the house keeps a room at: temperature (16-28 °C) and/or co2_max (600-1500 ppm) - heating, AC and ventilation follow. 'Потеплее'/'прохладнее' = the current norm (get_home_status) ±1; 'держи 21' = 21. room in any form or 'all'.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "room": {
+      "type": "string"
+     },
+     "temperature": {
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "co2_max": {
+      "type": [
+       "number",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "room"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "run_scenario",
+   "description": "Run the resident's scenario ('Я ушёл', 'Я дома', 'Спокойной ночи', 'Доброе утро'...) by the phrase they said; no name lists them. Then say briefly what it did ('does').",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    }
+   }
+  }
+ }
+]

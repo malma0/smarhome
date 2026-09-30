@@ -12,9 +12,11 @@ from datetime import datetime
 
 import httpx
 
+from pathlib import Path
+
 from app.config import settings
 from app.db import connect
-from app.llm.base import LLMProvider
+from app.llm.base import LLMProvider, ToolDef
 from app.llm.claude import ClaudeProvider
 from app.llm.groq import GroqProvider
 from app.llm.ollama import OllamaProvider
@@ -41,6 +43,13 @@ HOME_HISTORY_TURNS = 2
 # After the home model didn't answer (its PC is off), the house goes to the
 # main model for this long before trying it again - not a connect wait per command.
 HOME_LLM_RETRY_SECONDS = 60
+# The home tools exactly as the own model saw them in training. The live ones
+# grow (curtains, humidifiers, history...) - a changed tool text is a changed
+# prompt, and that model answered a changed prompt badly (86% vs 98-100%).
+_HOME_MODEL_TOOLS = [
+    ToolDef(name=t["function"]["name"], description=t["function"]["description"], parameters=t["function"]["parameters"])
+    for t in json.loads((Path(__file__).parent / "llm" / "home_model_tools.json").read_text(encoding="utf-8"))
+]
 
 GENERAL_ASSISTANT_PREAMBLE = (
     "You are Jarvis, the voice-controlled AI running inside a private home. Residents can "
@@ -127,7 +136,7 @@ class JarvisAgent:
         ctx = TurnContext()
         actions: list[dict] = []
         final_text = None
-        local = (self.home_llm is not None and groups == {"home"}
+        local = (self.home_llm is not None and groups == {"home"} and not router.beyond_home_model(user_message)
                  and time.monotonic() >= self._home_llm_down_until)
 
         for _ in range(MAX_TOOL_ITERATIONS):
@@ -135,7 +144,8 @@ class JarvisAgent:
             if local:
                 try:
                     response = await self.home_llm.generate(
-                        system=system_prompt, messages=recent_turns(history, HOME_HISTORY_TURNS), tools=tool_defs
+                        system=system_prompt, messages=recent_turns(history, HOME_HISTORY_TURNS),
+                        tools=_HOME_MODEL_TOOLS,
                     )
                 except (httpx.HTTPError, OSError):  # its PC is off or asleep - the house still works
                     local = False

@@ -61,6 +61,20 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 
+# What the own home model (backend/training) was not trained on - such
+# requests go to the main model until it is retrained with them.
+BEYOND_HOME_MODEL = (
+    "штор", "жалюз", "занавес", "увлажн", "влажност", "охран", "окн", "двер", "движен", "электричеств", "энерги",
+    "расход", "истори", "был", "ночью", "вчера", "за месяц", "за неделю", "расписан", "по будням", "закат",
+    "автоматич",
+)
+
+
+def beyond_home_model(message: str) -> bool:
+    text = message.casefold().replace("ё", "е")
+    return any(stem in text for stem in BEYOND_HOME_MODEL)
+
+
 def group_of(tool_name: str) -> str | None:
     return next((group for group, names in GROUPS.items() if tool_name in names), None)
 

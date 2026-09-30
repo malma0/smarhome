@@ -38,8 +38,16 @@ def test_the_house_goes_to_the_home_model_and_the_rest_to_the_main_one(tmp_path)
     assert asyncio.run(agent.chat("s2", "r", "какая погода"))["local"] is False
     assert asyncio.run(agent.chat("s3", "r", "включи свет и скажи погоду"))["local"] is False  # mixed: main
     assert home.generate.await_count == 1 and main.generate.await_count == 2
-    sent = home.generate.await_args.kwargs["tools"]
-    assert [t.name for t in sent] == ["control_devices"]
+    sent = home.generate.await_args.kwargs["tools"]  # always the tools as trained, not the live ones
+    assert [t.name for t in sent] == ["get_home_status", "control_devices", "set_room_norm", "run_scenario"]
+
+
+def test_what_the_home_model_never_learned_goes_to_the_main_one(tmp_path):
+    main, home = llm(said("Закрыла шторы."), said("Было 21.")), llm()
+    agent = make(main, home, tmp_path)
+    assert asyncio.run(agent.chat("s", "r", "закрой шторы в спальне"))["local"] is False
+    assert asyncio.run(agent.chat("s2", "r", "какая температура была ночью в спальне"))["local"] is False
+    assert home.generate.await_count == 0
 
 
 def test_when_the_home_model_is_off_the_main_one_answers_and_it_is_left_alone_a_while(tmp_path):
