@@ -111,6 +111,7 @@ def test_status_groups_the_house_by_room_compactly_without_helpers_or_ha_sensors
         "heating": "heat to 21.5 °C, heating now", "ventilation": "off",
         "norm": {"temperature": "22 °C", "co2_max": "800 ppm"},  # the simulation knob isn't shown
         "danger_sensors": {"moisture": "clear", "gas": "clear"},  # the door isn't a danger
+        "door": "closed",  # but it's shown - open windows and doors matter
         "water_valve": "open", "gas_valve": "open",  # valves aren't sockets
     }
     assert rooms["Спальня"]["light"] == "on 50%"
@@ -195,11 +196,11 @@ def test_home_assistant_down_is_an_error_result_not_a_crash():
     assert "unreachable" in _run(control, room="кухня", device="light", action="on")["error"]
 
 
-def test_registers_four_tools():
+def test_registers_the_home_tools():
     registry = ToolRegistry()
     register(registry, FakeHA())
     assert [d.name for d in registry.definitions()] == [
-        "get_home_status", "control_devices", "set_room_norm", "run_scenario"]
+        "get_home_status", "control_devices", "set_room_norm", "run_scenario", "home_history", "house_schedule"]
 
 
 def test_the_acs_own_range_is_checked_before_calling_it():

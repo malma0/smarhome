@@ -57,6 +57,15 @@ class HomeAssistantClient:
         description is where a scenario keeps the phrases that start it."""
         return (await self._request("GET", f"/api/config/script/config/{object_id}")).json()
 
+    async def get_history(self, entity_id: str, start: str, end: str) -> list[dict[str, Any]]:
+        """[{"state", "last_changed"}, ...] of one entity between two ISO times."""
+        response = await self._request(
+            "GET", f"/api/history/period/{start}",
+            params={"filter_entity_id": entity_id, "end_time": end, "minimal_response": "", "no_attributes": ""},
+        )
+        series = response.json()
+        return series[0] if series else []
+
     async def call_service(
         self,
         domain: str,

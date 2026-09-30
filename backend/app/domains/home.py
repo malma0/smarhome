@@ -12,9 +12,16 @@ Device types, in the words the model uses:
 - ac          -> HA climate that can cool (air conditioner)
 - heating     -> HA climate that only heats (radiator)
 - ventilation -> HA fan
+- humidifier  -> HA humidifier (keeps the room's humidity minimum)
+- curtains    -> HA cover (on = open, position 0-100)
 - water_valve / gas_valve -> HA switch.*water_valve / *gas_valve (on = open)
-Sensors (temperature, humidity, CO2) and danger sensors (smoke, leak, gas,
-CO - raised by app.danger on their own) are read-only, via get_home_status.
+- security    -> input_boolean.security_armed, the house's guard (on = armed)
+Sensors (temperature, humidity, CO2, movement, windows, doors, the house's
+power and electricity) and danger sensors (smoke, leak, gas, CO, movement
+in the armed house - raised by app.danger on their own) are read-only, via
+get_home_status; what they were earlier comes from home_history.
+Schedules ("Расписание: ..." automations) are listed and changed by
+house_schedule.
 
 Norms (the resident's decision): each room has a temperature norm and a CO2
 maximum, and the house keeps them by itself - heating, AC and ventilation
@@ -38,19 +45,28 @@ Safety, in code (docs/TZ.md §7), not only in the prompt:
 """
 
 import json
+from datetime import datetime, timedelta
 
 from app.ha_client import HomeAssistantClient, HomeAssistantError
 from app.tools.registry import Tool, ToolRegistry, TurnContext
 
-DEVICE_TYPES = ("light", "socket", "ac", "heating", "ventilation", "water_valve", "gas_valve")
-VALVE_TYPES = {"water_valve", "gas_valve"}  # one per house - found wherever they are
+DEVICE_TYPES = ("light", "socket", "ac", "heating", "ventilation", "humidifier", "curtains", "water_valve",
+                "gas_valve", "security")
+VALVE_TYPES = {"water_valve", "gas_valve"}
+HOUSE_TYPES = VALVE_TYPES | {"security"}  # one per house - found wherever they are, the room doesn't matter
+SECURITY_ENTITY = "input_boolean.security_armed"
+HOUSE = "Весь дом"  # where house-wide things (the guard, electricity) are listed
+# House-wide sensors, by entity id -> the name the model reads.
+HOUSE_SENSORS = {"sensor.house_power": "power_now", "sensor.house_energy_today": "electricity_today",
+                 "sensor.house_energy_month": "electricity_this_month"}
+OPENING_CLASSES = {"window", "door"}
 # The danger that makes opening a valve risky: water with a leak on needs a
 # yes; gas with gas detected is refused outright, and a yes is needed anyway.
 VALVE_DANGERS = {"water_valve": ("moisture",), "gas_valve": ("gas", "carbon_monoxide")}
-DANGER_CLASSES = ("smoke", "moisture", "gas", "carbon_monoxide")
+DANGER_CLASSES = ("smoke", "moisture", "gas", "carbon_monoxide", "safety")  # safety: the guard's alarm
 CLIMATE_TYPES = {"ac", "heating"}
 GUARDED_TYPES = {"socket", "ac", "heating"}  # a second room in one turn needs confirmation
-NORM_SUFFIXES = {"_temperature_norm": "temperature", "_co2_max": "co2_max"}
+NORM_SUFFIXES = {"_temperature_norm": "temperature", "_co2_max": "co2_max", "_humidity_min": "humidity_min"}
 
 SAFE_TEMPERATURE = (16, 28)
 ABSOLUTE_TEMPERATURE = (5, 35)
@@ -61,7 +77,7 @@ NO_ROOM = "Без комнаты"
 _AREAS_TEMPLATE = (
     "{% set ns = namespace(items=[]) %}"
     "{% for s in states if s.domain in ['light', 'switch', 'climate', 'fan', 'sensor', 'binary_sensor', "
-    "'input_number'] "
+    "'input_number', 'humidifier', 'cover', 'input_boolean'] "
     "and not is_hidden_entity(s.entity_id) %}"
     "{% set ns.items = ns.items + [[s.entity_id, area_name(s.entity_id)]] %}"
     "{% endfor %}{{ ns.items | tojson }}"
@@ -78,7 +94,9 @@ async def _house(client: HomeAssistantClient) -> dict[str, list[dict]]:
             continue  # hidden, or not a device kind this domain handles
         domain = entity_id.split(".")[0]
         attrs = state.get("attributes", {})
-        if domain == "sensor" and not areas[entity_id]:
+        if domain == "input_boolean" and entity_id != SECURITY_ENTITY:
+            continue  # the virtual house's knobs - only the guard is a device
+        if domain == "sensor" and not areas[entity_id] and entity_id not in HOUSE_SENSORS:
             continue  # Home Assistant's own sensors (sun, backups...) - not the house
         device = {"entity_id": entity_id, "name": attrs.get("friendly_name", entity_id), "state": state["state"]}
         if domain == "input_number":
@@ -89,10 +107,24 @@ async def _house(client: HomeAssistantClient) -> dict[str, list[dict]]:
                           min=attrs.get("min"), max=attrs.get("max"))
             del device["state"]
         elif domain == "binary_sensor":
-            if attrs.get("device_class") not in DANGER_CLASSES:
+            kind = attrs.get("device_class")
+            if kind in DANGER_CLASSES:
+                device["type"] = "danger"
+            elif kind == "motion" or kind in OPENING_CLASSES:
+                device["type"] = kind
+            else:
                 continue
-            device["type"] = "danger"
-            device["kind"] = attrs["device_class"]
+            device["kind"] = kind
+        elif entity_id == SECURITY_ENTITY:
+            device["type"] = "security"
+        elif domain == "humidifier":
+            device.update(type="humidifier", target_humidity=attrs.get("humidity"), action=attrs.get("action"))
+        elif domain == "cover":
+            device.update(type="curtains", position=attrs.get("current_position"))
+        elif entity_id in HOUSE_SENSORS:
+            device.update(type="house_sensor", kind=HOUSE_SENSORS[entity_id], value=state["state"],
+                          unit=attrs.get("unit_of_measurement"))
+            del device["state"]
         elif domain == "sensor":
             device["type"] = "sensor"
             device["kind"] = attrs.get("device_class")
@@ -113,7 +145,8 @@ async def _house(client: HomeAssistantClient) -> dict[str, list[dict]]:
             device["action"] = attrs.get("hvac_action")
             device["min_temp"] = attrs.get("min_temp")
             device["max_temp"] = attrs.get("max_temp")
-        rooms.setdefault(areas[entity_id] or NO_ROOM, []).append(device)
+        house_wide = device["type"] in ("security", "house_sensor") and not areas[entity_id]
+        rooms.setdefault(HOUSE if house_wide else areas[entity_id] or NO_ROOM, []).append(device)
     return rooms
 
 
@@ -129,7 +162,31 @@ def _compact(devices: list[dict]) -> dict:
             room.setdefault("norm", {})[device["kind"]] = value
             continue
         if device["type"] == "danger":
-            room.setdefault("danger_sensors", {})[device["kind"]] = "DETECTED" if device["state"] == "on" else "clear"
+            kind = "intrusion" if device["kind"] == "safety" else device["kind"]
+            room.setdefault("danger_sensors", {})[kind] = "DETECTED" if device["state"] == "on" else "clear"
+            continue
+        if device["type"] == "motion":
+            room["movement"] = "now" if device["state"] == "on" else "none"
+            continue
+        if device["type"] in OPENING_CLASSES:
+            room[device["type"]] = "open" if device["state"] == "on" else "closed"
+            continue
+        if device["type"] == "security":
+            room["security"] = "armed" if device["state"] == "on" else "off"
+            continue
+        if device["type"] == "house_sensor":
+            room[device["kind"]] = f"{device['value']} {device.get('unit') or ''}".strip()
+            continue
+        if device["type"] == "humidifier":
+            target = device.get("target_humidity")
+            value = device["state"] + (f", keeps {target:g} %" if device["state"] == "on" and target is not None else "")
+            if device.get("action") == "humidifying":
+                value += ", humidifying now"
+            room["humidifier"] = value
+            continue
+        if device["type"] == "curtains":
+            position = device.get("position")
+            room["curtains"] = "closed" if not position else "open" if position >= 100 else f"open {position:g}%"
             continue
         if device["type"] in VALVE_TYPES:
             room[device["type"]] = "open" if device["state"] == "on" else "closed"
@@ -241,9 +298,19 @@ def _temperature_error(temperature: float, confirmed: bool) -> str | None:
     return None
 
 
-async def _call(client, device: dict, device_type: str, action: str, brightness_pct, temperature) -> None:
+async def _call(client, device: dict, device_type: str, action: str, brightness_pct, temperature,
+                position=None) -> None:
     entity_id = device["entity_id"]
-    if device_type == "light":
+    if device_type == "curtains":
+        if position is not None:
+            await client.call_service("cover", "set_cover_position", entity_id, {"position": position})
+        else:
+            await client.call_service("cover", "open_cover" if action == "on" else "close_cover", entity_id)
+    elif device_type == "humidifier":
+        await client.call_service("humidifier", "turn_off" if action == "off" else "turn_on", entity_id)
+    elif device_type == "security":
+        await client.call_service("input_boolean", "turn_off" if action == "off" else "turn_on", entity_id)
+    elif device_type == "light":
         if action == "off":
             await client.call_service("light", "turn_off", entity_id)
         else:
@@ -290,6 +357,12 @@ def make_handlers(client: HomeAssistantClient):
         temperature = tool_input.get("temperature")
         if brightness_pct is not None and device_type == "light":
             brightness_pct = max(1, min(100, int(brightness_pct)))
+        position = tool_input.get("position")
+        if position is not None and device_type == "curtains":
+            position = max(0, min(100, int(position)))
+            action = "on" if position > 0 else "off"
+        else:
+            position = None
         if temperature is not None and device_type in CLIMATE_TYPES and action == "on":
             temperature = float(temperature)
             if err := _temperature_error(temperature, confirmed):
@@ -300,7 +373,7 @@ def make_handlers(client: HomeAssistantClient):
         except HomeAssistantError as exc:
             return {"error": f"Home Assistant is unreachable: {exc}"}
         asked = (tool_input.get("room") or "").strip()
-        if asked.casefold() in EVERYWHERE or device_type in VALVE_TYPES:
+        if asked.casefold() in EVERYWHERE or device_type in HOUSE_TYPES:
             targets = [r for r, devices in rooms.items() if any(d.get("type") == device_type for d in devices)]
         else:
             room = match_room(asked, list(rooms))
@@ -353,7 +426,7 @@ def make_handlers(client: HomeAssistantClient):
             for room in with_device:
                 for device in rooms[room]:
                     if device.get("type") == device_type:
-                        await _call(client, device, device_type, action, brightness_pct, temperature)
+                        await _call(client, device, device_type, action, brightness_pct, temperature, position)
                         done.append({"room": room, "device": device_type, "action": action})
                 ctx.touched.add(f"{device_type}:{room}")
         except HomeAssistantError as exc:
@@ -363,12 +436,15 @@ def make_handlers(client: HomeAssistantClient):
             result["brightness_pct"] = brightness_pct
         if temperature is not None and device_type in CLIMATE_TYPES and action == "on":
             result["temperature"] = temperature
+        if position is not None:
+            result["position"] = position
         return result
 
     async def set_room_norm(tool_input: dict, ctx: TurnContext) -> dict:
-        wanted = {k: tool_input.get(k) for k in ("temperature", "co2_max") if tool_input.get(k) is not None}
+        wanted = {k: tool_input.get(k) for k in ("temperature", "co2_max", "humidity_min")
+                  if tool_input.get(k) is not None}
         if not wanted:
-            return {"error": "Give temperature and/or co2_max."}
+            return {"error": "Give temperature, co2_max and/or humidity_min."}
         try:
             rooms = await _house(client)
         except HomeAssistantError as exc:
@@ -439,15 +515,148 @@ def make_handlers(client: HomeAssistantClient):
     return get_home_status, control_devices, set_room_norm, run_scenario
 
 
+HISTORY_KINDS = {"temperature": "temperature", "humidity": "humidity", "co2": "carbon_dioxide"}
+ENERGY_ENTITY = "sensor.house_energy"
+SCHEDULE_PREFIX = "Расписание:"
+
+
+def _local(at: str | None, now: datetime) -> datetime | None:
+    """'2026-10-01T03:00' (local, as the model writes it) -> aware datetime."""
+    if not at:
+        return None
+    when = datetime.fromisoformat(str(at).strip().replace(" ", "T"))
+    return when.replace(tzinfo=now.tzinfo) if when.tzinfo is None else when
+
+
+def _points(series: list[dict], start: datetime) -> list[tuple[datetime, float]]:
+    points = []
+    for item in series:
+        try:
+            value = float(item["state"])
+        except (TypeError, ValueError, KeyError):
+            continue  # unknown / unavailable
+        at = max(datetime.fromisoformat(item["last_changed"]), start)  # the state at the start began earlier
+        points.append((at, value))
+    return points
+
+
+def summarize(points: list[tuple[datetime, float]], end: datetime, tz) -> dict:
+    """min and max with when, and the time-weighted average - a value held all night counts for all night."""
+    fmt = lambda t: t.astimezone(tz).strftime("%Y-%m-%d %H:%M")  # noqa: E731
+    low = min(points, key=lambda p: p[1])
+    high = max(points, key=lambda p: p[1])
+    spans = [(value, ((points[i + 1][0] if i + 1 < len(points) else end) - at).total_seconds())
+             for i, (at, value) in enumerate(points)]
+    total = sum(seconds for _, seconds in spans)
+    average = sum(v * s for v, s in spans) / total if total > 0 else points[-1][1]
+    return {"min": {"value": low[1], "at": fmt(low[0])}, "max": {"value": high[1], "at": fmt(high[0])},
+            "average": round(average, 1), "last": points[-1][1]}
+
+
+def _schedule_matches(asked: str, name: str) -> bool:
+    said = {_stem(w) for w in _words(asked).split() if w not in _FILLER}
+    words = {_stem(w) for w in _words(name).split() if w not in _FILLER}
+    return bool(said) and (said <= words or words <= said)
+
+
+def make_more_handlers(client: HomeAssistantClient, now=lambda: datetime.now().astimezone()):
+    async def home_history(tool_input: dict, ctx: TurnContext) -> dict:
+        what = tool_input.get("what") or "temperature"
+        current = now()
+        try:
+            end = _local(tool_input.get("end"), current) or current
+            start = _local(tool_input.get("start"), current) or end - timedelta(hours=24)
+        except ValueError:
+            return {"error": "Times as local 'YYYY-MM-DDTHH:MM'."}
+        if start >= end:
+            return {"error": "start must be before end."}
+        unit = "kWh"
+        try:
+            if what == "electricity":
+                entity_id, room = ENERGY_ENTITY, HOUSE
+            elif what in HISTORY_KINDS:
+                rooms = await _house(client)
+                room = match_room((tool_input.get("room") or "").strip(), list(rooms))
+                if room is None:
+                    return {"error": f"No room called '{tool_input.get('room')}'.", "rooms": sorted(rooms)}
+                sensor = next((d for d in rooms[room] if d.get("type") == "sensor"
+                               and d.get("kind") == HISTORY_KINDS[what]), None)
+                if sensor is None:
+                    return {"error": f"{room} has no {what} sensor."}
+                entity_id, unit = sensor["entity_id"], sensor.get("unit")
+            else:
+                return {"error": "what must be temperature, humidity, co2 or electricity."}
+            series = await client.get_history(entity_id, start.isoformat(), end.isoformat())
+        except HomeAssistantError as exc:
+            return {"error": f"Home Assistant is unreachable: {exc}"}
+        points = _points(series, start)
+        period = {"from": start.strftime("%Y-%m-%d %H:%M"), "to": end.strftime("%Y-%m-%d %H:%M")}
+        if not points:
+            return {"error": "No records for that time - the house keeps 60 days.", **period}
+        if what == "electricity":
+            return {"what": "electricity", **period, "used_kwh": round(points[-1][1] - points[0][1], 2)}
+        return {"room": room, "what": what, "unit": unit, **period, **summarize(points, end, current.tzinfo)}
+
+    async def house_schedule(tool_input: dict, ctx: TurnContext) -> dict:
+        action = tool_input.get("action") or "list"
+        try:
+            states = await client.get_states()
+        except HomeAssistantError as exc:
+            return {"error": f"Home Assistant is unreachable: {exc}"}
+        times = {s["entity_id"]: s["state"] for s in states if s["entity_id"].startswith("input_datetime.")}
+        schedules = []
+        for state in states:
+            name = state.get("attributes", {}).get("friendly_name", "")
+            if state["entity_id"].startswith("automation.") and name.startswith(SCHEDULE_PREFIX):
+                time_helper = f"input_datetime.{state['entity_id'].split('.', 1)[1]}_time"
+                schedules.append({"entity_id": state["entity_id"], "name": name[len(SCHEDULE_PREFIX):].strip(),
+                                  "on": state["state"] == "on", "time_helper": time_helper if time_helper in times else None,
+                                  "time": times.get(time_helper, "")[:5] or None})
+        public = lambda s: {k: s[k] for k in ("name", "on", "time")}  # noqa: E731
+        if action == "list":
+            return {"schedules": [public(s) for s in schedules]}
+        asked = (tool_input.get("name") or "").strip()
+        schedule = next((s for s in schedules if _schedule_matches(asked, s["name"])), None)
+        if schedule is None:
+            return {"error": f"No schedule called '{asked}'.", "schedules": [public(s) for s in schedules]}
+        try:
+            if action in ("enable", "disable"):
+                await client.call_service("automation", "turn_on" if action == "enable" else "turn_off",
+                                          schedule["entity_id"])
+                schedule["on"] = action == "enable"
+            elif action == "set_time":
+                if schedule["time_helper"] is None:
+                    return {"error": f"'{schedule['name']}' has no set time (it follows the sun)."}
+                at = str(tool_input.get("time") or "").strip()
+                try:
+                    hours, minutes = (int(x) for x in at.split(":")[:2])
+                    assert 0 <= hours < 24 and 0 <= minutes < 60
+                except (ValueError, AssertionError):
+                    return {"error": "time as 'HH:MM'."}
+                await client.call_service("input_datetime", "set_datetime", schedule["time_helper"],
+                                          {"time": f"{hours:02d}:{minutes:02d}:00"})
+                schedule["time"] = f"{hours:02d}:{minutes:02d}"
+            else:
+                return {"error": "action must be list, enable, disable or set_time."}
+        except HomeAssistantError as exc:
+            return {"error": f"Home Assistant refused: {exc}"}
+        return {"done": public(schedule)}
+
+    return home_history, house_schedule
+
+
 def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) -> None:
-    get_home_status, control_devices, set_room_norm, run_scenario = make_handlers(client or HomeAssistantClient())
+    client = client or HomeAssistantClient()
+    get_home_status, control_devices, set_room_norm, run_scenario = make_handlers(client)
+    home_history, house_schedule = make_more_handlers(client)
     registry.register(
         Tool(
             name="get_home_status",
             description=(
-                "The house now, room by room: lights, sockets, AC, heating, ventilation, sensors "
-                "(temperature, humidity, CO2), danger sensors, main valves, and each room's norms "
-                "(temperature, CO2 max) the house keeps by itself. Call it for every question about the house "
+                "The house now, room by room: lights, sockets, AC, heating, ventilation, humidifiers, curtains, "
+                "sensors (temperature, humidity, CO2, movement, windows, doors), danger sensors, main valves, and "
+                "each room's norms (temperature, CO2 max, humidity min) the house keeps by itself; under 'Весь "
+                "дом' the guard (security) and electricity (power now, today, this month). Call it for every question about the house "
                 "- it changes. Answer with facts; don't advise what you can't do yourself (like airing a "
                 "room). If the resident says it's stuffy, hot or cold, they're right - fix it (ventilation "
                 "on, or set_room_norm), don't argue."
@@ -469,8 +678,9 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
             name="control_devices",
             description=(
                 "Turn a device type on/off in a room: light (brightness_pct), socket, ventilation, ac (cools, "
-                "optional temperature), heating (optional temperature), water_valve/gas_valve (on = open, "
-                "room ignored). room in any form ('на кухне') or 'all' - the whole house in one call. "
+                "optional temperature), heating (optional temperature), humidifier, curtains (on = open, off = "
+                "close, position 0-100 for 'наполовину'), water_valve/gas_valve (on = open, room ignored), "
+                "security - the guard (on = armed, off = disarmed, room ignored). room in any form ('на кухне') or 'all' - the whole house in one call. "
                 "'Warmer'/'cooler' is set_room_norm, not this. Needs the resident's yes, then retry with "
                 "confirmed=true: sockets/AC/heating in a second room, temperatures outside 16-28 °C, gas, "
                 "water during a leak. Always try - never say a room or device is missing unless this tool "
@@ -485,6 +695,7 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
                     # nullable: models send null for "not given", and Groq rejects
                     # a call whose arguments don't match the schema
                     "brightness_pct": {"type": ["integer", "null"], "minimum": 1, "maximum": 100},
+                    "position": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
                     "temperature": {"type": ["number", "null"]},
                     "confirmed": {"type": ["boolean", "null"], "default": False},
                 },
@@ -497,8 +708,8 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
         Tool(
             name="set_room_norm",
             description=(
-                "What the house keeps a room at: temperature (16-28 °C) and/or co2_max (600-1500 ppm) - "
-                "heating, AC and ventilation follow. 'Потеплее'/'прохладнее' = the current norm "
+                "What the house keeps a room at: temperature (16-28 °C), co2_max (600-1500 ppm), humidity_min "
+                "(30-60 %, rooms with a humidifier) - heating, AC, ventilation and humidifiers follow. 'Потеплее'/'прохладнее' = the current norm "
                 "(get_home_status) ±1; 'держи 21' = 21. room in any form or 'all'."
             ),
             parameters={
@@ -507,6 +718,7 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
                     "room": {"type": "string"},
                     "temperature": {"type": ["number", "null"]},
                     "co2_max": {"type": ["number", "null"]},
+                    "humidity_min": {"type": ["number", "null"]},
                 },
                 "required": ["room"],
             },
@@ -525,5 +737,47 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
                 "properties": {"name": {"type": ["string", "null"]}},
             },
             handler=run_scenario,
+        )
+    )
+    registry.register(
+        Tool(
+            name="home_history",
+            description=(
+                "What the house's sensors were earlier: what temperature, humidity or co2 in a room - min and max "
+                "with when, the average; electricity - kWh used in the period (the whole house). start/end: local "
+                "'YYYY-MM-DDTHH:MM' worked out from the current time ('ночью' = last night 00:00-07:00, 'за "
+                "месяц' = from the 1st); default the last 24 h. Now is get_home_status, not this."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string", "enum": ["temperature", "humidity", "co2", "electricity"]},
+                    "room": {"type": ["string", "null"]},
+                    "start": {"type": ["string", "null"]},
+                    "end": {"type": ["string", "null"]},
+                },
+                "required": ["what"],
+            },
+            handler=home_history,
+        )
+    )
+    registry.register(
+        Tool(
+            name="house_schedule",
+            description=(
+                "The house's schedules - what runs by itself at a time or at sunset ('«Доброе утро» по будням', "
+                "'свет в прихожей на закате'). list; enable / disable by name; set_time 'HH:MM' by name. Not "
+                "reminders to the resident (that's reminders)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "enable", "disable", "set_time"]},
+                    "name": {"type": ["string", "null"]},
+                    "time": {"type": ["string", "null"]},
+                },
+                "required": ["action"],
+            },
+            handler=house_schedule,
         )
     )

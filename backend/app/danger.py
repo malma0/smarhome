@@ -2,7 +2,8 @@
 
 The resident's rule (docs/TZ.md §5): Jarvis never tells anyone a room is
 stuffy or hot - what it can fix, it fixes quietly. What it can't fix and
-isn't just discomfort is a danger: smoke, a leak, gas, carbon monoxide.
+isn't just discomfort is a danger: smoke, a leak, gas, carbon monoxide,
+movement in the house while it's guarded.
 Those are raised at once, whatever the mood, asleep or awake.
 
 The house reacts first, by itself (Home Assistant automations - see
@@ -28,6 +29,7 @@ DANGER_WORDS = {
     "moisture": "протечка",
     "gas": "утечка газа",
     "carbon_monoxide": "угарный газ",
+    "safety": "движение в пустом доме",  # the guard (homeassistant/virtual_house.py)
 }
 REFLEX_DELAY_SECONDS = 2.0  # the house's own automations act first
 RECONNECT_SECONDS = (5, 60)  # first retry, and the most it backs off to

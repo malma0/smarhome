@@ -17,7 +17,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "computer": ("open_application", "close_application", "search_web", "web_answer", "find_files",
                  "list_directory", "read_file", "write_file", "delete_file"),
     "pc": ("media", "desktop", "type_text", "screen", "power"),
-    "home": ("get_home_status", "control_devices", "set_room_norm", "run_scenario"),
+    "home": ("get_home_status", "control_devices", "set_room_norm", "run_scenario", "home_history", "house_schedule"),
     "reminders": ("reminders",),
     "weather": ("get_weather",),
     "shopping": ("shopping_list",),
@@ -34,7 +34,8 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "холодн", "тепле", "теплее", "прохлад", "температур", "влажн", "co2", "углекисл", "комнат", "кухн",
         "спальн", "зал", "кабинет", "коридор", "прихож", "дом", "норм", "сценари", "ушел", "ухожу", "пошел",
         "пришел", "вернул", "спать", "спокойной", "ночи", "утро", "подъем", "проснул", "кран", "воду", "вода",
-        "газ", "дым", "пожар", "протеч", "датчик",
+        "газ", "дым", "пожар", "протеч", "датчик", "штор", "жалюз", "занавес", "увлажн", "охран", "окн", "двер",
+        "движен", "электричеств", "энерги", "расписан", "закат", "по будням",
     ),
     "pc": (
         "громк", "звук", "тише", "погромч", "потиш", "пауз", "трек", "песн", "музык", "следующ", "предыдущ",
