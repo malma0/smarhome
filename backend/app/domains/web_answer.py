@@ -32,30 +32,38 @@ def _prompt(now: datetime) -> str:
             "asked for, nothing else. If nothing reliable is found, say so plainly.")
 
 
-def make_handler(post=None, now=lambda: datetime.now().astimezone()):
-    async def default_post(body: dict):
-        return await shared_client().post(f"{settings.groq_base_url}/chat/completions", json=body, timeout=90,
-                                          headers={"Authorization": f"Bearer {settings.groq_api_key}"})
+async def _default_post(body: dict):
+    return await shared_client().post(f"{settings.groq_base_url}/chat/completions", json=body, timeout=90,
+                                      headers={"Authorization": f"Bearer {settings.groq_api_key}"})
 
+
+async def browse(instructions: str, question: str, post=None, max_tokens: int = 700) -> dict:
+    """The model searches the web for question, told how to answer by
+    instructions. {"text": what it wrote} or {"error": ...}."""
+    for model in MODELS:
+        body = {"model": model, "reasoning_effort": "low", "max_completion_tokens": max_tokens,
+                "tools": [{"type": "browser_search"}],
+                "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": question}]}
+        try:
+            response = await (post or _default_post)(body)
+        except Exception as exc:  # noqa: BLE001 - no internet is an answer, not a crash
+            return {"error": f"The search didn't answer: {exc!r}"[:200]}
+        if response.status_code == 429:  # this model is out of its limit - the next one
+            continue
+        if response.status_code != 200:
+            return {"error": f"The search failed ({response.status_code})."}
+        text = response.json()["choices"][0]["message"].get("content") or ""
+        return {"text": text} if text.strip() else {"error": "Nothing came back from the search."}
+    return {"error": "The web search is out of its free limit for now - try later."}
+
+
+def make_handler(post=None, now=lambda: datetime.now().astimezone()):
     async def web_answer(tool_input: dict, ctx: TurnContext) -> dict:
         question = (tool_input.get("question") or "").strip()
         if not question:
             return {"error": "What to find out?"}
-        for model in MODELS:
-            body = {"model": model, "reasoning_effort": "low", "max_completion_tokens": 700,
-                    "tools": [{"type": "browser_search"}],
-                    "messages": [{"role": "system", "content": _prompt(now())}, {"role": "user", "content": question}]}
-            try:
-                response = await (post or default_post)(body)
-            except Exception as exc:  # noqa: BLE001 - no internet is an answer, not a crash
-                return {"error": f"The search didn't answer: {exc!r}"[:200]}
-            if response.status_code == 429:  # this model is out of its limit - the next one
-                continue
-            if response.status_code != 200:
-                return {"error": f"The search failed ({response.status_code})."}
-            answer = clean(response.json()["choices"][0]["message"].get("content") or "")
-            return {"answer": answer} if answer else {"error": "Nothing came back from the search."}
-        return {"error": "The web search is out of its free limit for now - try later."}
+        found = await browse(_prompt(now()), question, post)
+        return {"answer": clean(found["text"])} if "text" in found else found
 
     return web_answer
 

@@ -248,12 +248,13 @@ def build_default_agent() -> JarvisAgent:
 
     reminders.register(tools, reminders.ReminderStore(memory.connection))
     from app import shopping
-    from app.domains import currency, radio, web_answer
+    from app.domains import booking, currency, radio, web_answer
 
     shopping.register(tools, shopping.ShoppingList(memory.connection))
     radio.register(tools)
     currency.register(tools)
     web_answer.register(tools)
+    booking.register(tools)
     weather.register(tools, settings.weather_city)
     home_llm = None
     if settings.home_llm_url and settings.home_assistant_token:
