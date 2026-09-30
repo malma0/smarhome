@@ -831,17 +831,15 @@ template:
     unit_of_measurement: W
     device_class: power
     state_class: measurement
-    state: '{{ ((60 * (states(''input_number.entrance_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.entrance_light_power'', ''on'') else 0) + (1200 if is_state(''input_boolean.entrance_heater_power'',
-      ''on'') else 0) + (40 if is_state(''input_boolean.entrance_ventilation_power'', ''on'') else 0) + (60 * (states(''input_number.bedroom_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.bedroom_light_power'',
-      ''on'') else 0) + (1200 if is_state(''input_boolean.bedroom_heater_power'', ''on'') else 0) + (40 if is_state(''input_boolean.bedroom_ventilation_power'', ''on'') else 0) + (100 if is_state(''input_boolean.bedroom_socket_power'',
-      ''on'') else 0) + (900 if is_state(''input_boolean.bedroom_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.bedroom_humidifier_power'', ''on'') else 0) + (60 * (states(''input_number.office_light_brightness'')
-      | float(255)) / 255 if is_state(''input_boolean.office_light_power'', ''on'') else 0) + (1200 if is_state(''input_boolean.office_heater_power'', ''on'') else 0) + (40 if is_state(''input_boolean.office_ventilation_power'',
+    state: '{{ ((60 * (states(''input_number.entrance_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.entrance_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.entrance_ventilation_power'',
+      ''on'') else 0) + (60 * (states(''input_number.bedroom_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.bedroom_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.bedroom_ventilation_power'',
+      ''on'') else 0) + (100 if is_state(''input_boolean.bedroom_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.bedroom_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.bedroom_humidifier_power'',
+      ''on'') else 0) + (60 * (states(''input_number.office_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.office_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.office_ventilation_power'',
       ''on'') else 0) + (100 if is_state(''input_boolean.office_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.office_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.office_humidifier_power'',
-      ''on'') else 0) + (60 * (states(''input_number.living_room_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.living_room_light_power'', ''on'') else 0) + (1200 if is_state(''input_boolean.living_room_heater_power'',
-      ''on'') else 0) + (40 if is_state(''input_boolean.living_room_ventilation_power'', ''on'') else 0) + (100 if is_state(''input_boolean.living_room_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.living_room_ac_compressor'',
-      ''on'') else 0) + (30 if is_state(''input_boolean.living_room_humidifier_power'', ''on'') else 0) + (60 * (states(''input_number.corridor_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.corridor_light_power'',
-      ''on'') else 0) + (1200 if is_state(''input_boolean.corridor_heater_power'', ''on'') else 0) + (40 if is_state(''input_boolean.corridor_ventilation_power'', ''on'') else 0) + (60 * (states(''input_number.kitchen_light_brightness'')
-      | float(255)) / 255 if is_state(''input_boolean.kitchen_light_power'', ''on'') else 0) + (1200 if is_state(''input_boolean.kitchen_heater_power'', ''on'') else 0) + (40 if is_state(''input_boolean.kitchen_ventilation_power'',
+      ''on'') else 0) + (60 * (states(''input_number.living_room_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.living_room_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.living_room_ventilation_power'',
+      ''on'') else 0) + (100 if is_state(''input_boolean.living_room_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.living_room_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.living_room_humidifier_power'',
+      ''on'') else 0) + (60 * (states(''input_number.corridor_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.corridor_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.corridor_ventilation_power'',
+      ''on'') else 0) + (60 * (states(''input_number.kitchen_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.kitchen_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.kitchen_ventilation_power'',
       ''on'') else 0) + (100 if is_state(''input_boolean.kitchen_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.kitchen_ac_compressor'', ''on'') else 0)) | round(0) }}'
 - binary_sensor:
   - name: 'Прихожая: дым'
@@ -1775,7 +1773,7 @@ automation:
     target:
       entity_id: input_boolean.security_armed
 - id: curtains_good_morning
-  alias: 'Сценарий «Доброе утро»: шторы в спальне открыть'
+  alias: 'Сценарий «Доброе утро»: шторы открыть'
   triggers:
   - trigger: state
     entity_id: script.dobroe_utro
@@ -1783,7 +1781,11 @@ automation:
   actions:
   - action: cover.open_cover
     target:
-      entity_id: cover.bedroom_curtains
+      entity_id:
+      - cover.bedroom_curtains
+      - cover.office_curtains
+      - cover.living_room_curtains
+      - cover.kitchen_curtains
 - id: curtains_good_night
   alias: 'Сценарий «Спокойной ночи»: шторы закрыть'
   triggers:

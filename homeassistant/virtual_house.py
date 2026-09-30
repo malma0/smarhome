@@ -54,7 +54,7 @@ Around the norms and dangers, the house also:
 - guards itself: armed 2 min after "Я ушёл", disarmed by "Я дома";
   movement or an opening in the armed house is a danger after a minute's
   grace (binary_sensor.<room>_intrusion, raised by app/danger.py);
-- has curtains where there are windows: "Доброе утро" opens the bedroom's,
+- has curtains where there are windows: "Доброе утро" opens them all,
   "Спокойной ночи" closes them all - automations on the scripts running, so
   the resident's scripts.yaml stays theirs;
 - runs schedules ("Расписание: ..." automations): "Доброе утро" at 7:00 on
@@ -127,8 +127,9 @@ AUTO_OFF_MINUTES = 10  # no movement this long - the room's light goes off
 ENTRY_DELAY = "00:01:00"  # movement in the armed house: this long to say "Я дома"
 ARM_DELAY = "00:02:00"  # "Я ушёл": armed after this, time to walk out
 GOOD_MORNING_TIME = "07:00:00"
-# Watts when on, for the electricity meter.
-WATTS = {"light": 60, "socket": 100, "ac": 900, "heating": 1200, "ventilation": 40, "humidifier": 30}
+# Watts when on, for the electricity estimate. Heating is central (the flat's
+# utilities count it), so it uses no electricity here.
+WATTS = {"light": 60, "socket": 100, "ac": 900, "heating": 0, "ventilation": 40, "humidifier": 30}
 
 # The physics, per minute.
 OUTSIDE = 19.0  # rooms drift toward it: a cool autumn
@@ -398,7 +399,6 @@ def _yaml() -> str:
         on = lambda helper: f"is_state('input_boolean.{slug}_{helper}', 'on')"  # noqa: E731
         power.append(f"({WATTS['light']} * (states('input_number.{slug}_light_brightness') | float(255)) / 255 "
                      f"if {on('light_power')} else 0)")
-        power.append(f"({WATTS['heating']} if {on('heater_power')} else 0)")
         power.append(f"({WATTS['ventilation']} if {on('ventilation_power')} else 0)")
         if full:
             power.append(f"({WATTS['socket']} if {on('socket_power')} else 0)")
@@ -569,9 +569,10 @@ def _yaml() -> str:
         },
         {
             "id": "curtains_good_morning",
-            "alias": "Сценарий «Доброе утро»: шторы в спальне открыть",
+            "alias": "Сценарий «Доброе утро»: шторы открыть",
             "triggers": script_ran("dobroe_utro"),
-            "actions": [{"action": "cover.open_cover", "target": {"entity_id": "cover.bedroom_curtains"}}],
+            "actions": [{"action": "cover.open_cover", "target": {"entity_id": [
+                f"cover.{slug}_curtains" for slug in CURTAINS]}}],
         },
         {
             "id": "curtains_good_night",
