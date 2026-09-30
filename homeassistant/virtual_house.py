@@ -43,6 +43,26 @@ The words that start one ("Фразы: ...") live in the script's description.
 brings it down; rooms drift toward a cool autumn outside, heating and the AC
 push back - so the norms visibly work.
 
+Around the norms and dangers, the house also:
+- keeps a humidity minimum where there's a humidifier (generic_hygrostat),
+  as silently as the CO2 norm;
+- has motion sensors everywhere: at night the corridor and the hall light
+  up to 30% on movement and go dark 2 min after; any room's light goes off
+  after 10 min without movement;
+- has windows (and the front door in the hall): an open window pauses the
+  room's heating and AC, closing it brings back what was there;
+- guards itself: armed 2 min after "Я ушёл", disarmed by "Я дома";
+  movement or an opening in the armed house is a danger after a minute's
+  grace (binary_sensor.<room>_intrusion, raised by app/danger.py);
+- has curtains where there are windows: "Доброе утро" opens the bedroom's,
+  "Спокойной ночи" closes them all - automations on the scripts running, so
+  the resident's scripts.yaml stays theirs;
+- runs schedules ("Расписание: ..." automations): "Доброе утро" at 7:00 on
+  weekdays (input_datetime.schedule_good_morning_time), the hall light at
+  sunset;
+- meters electricity: sensor.house_power from what's on, sensor.house_energy
+  and its day/month meters. History is kept 60 days (recorder).
+
 Rooms become HA areas - Jarvis finds "свет на кухне" by asking Home
 Assistant what's in the Кухня area, not from a list in its own code. A real
 lamp added later just needs to be put into its area.
@@ -92,6 +112,24 @@ DEFAULT_CO2_MAX = 800
 NORM_BAND = 0.5  # heating holds norm - 0.5, the AC norm + 0.5
 CO2_HYSTERESIS = 150  # ventilation stops this far under the max
 
+# What else rooms have (all virtual): windows and curtains where there's a
+# window, a humidifier where people sit or sleep, the front door in the hall.
+WINDOWS = ("bedroom", "office", "living_room", "kitchen")
+CURTAINS = WINDOWS
+HUMIDIFIERS = ("bedroom", "office", "living_room")
+DOORS = ("entrance",)
+NIGHT_LIGHT_ROOMS = ("corridor", "entrance")
+NIGHT_LIGHT_PCT = 30
+NIGHT = ("23:00:00", "07:00:00")
+DEFAULT_HUMIDITY_MIN = 40
+HUMIDITY_BAND = 2  # the humidifier starts this far under the minimum
+AUTO_OFF_MINUTES = 10  # no movement this long - the room's light goes off
+ENTRY_DELAY = "00:01:00"  # movement in the armed house: this long to say "Я дома"
+ARM_DELAY = "00:02:00"  # "Я ушёл": armed after this, time to walk out
+GOOD_MORNING_TIME = "07:00:00"
+# Watts when on, for the electricity meter.
+WATTS = {"light": 60, "socket": 100, "ac": 900, "heating": 1200, "ventilation": 40, "humidifier": 30}
+
 # The physics, per minute.
 OUTSIDE = 19.0  # rooms drift toward it: a cool autumn
 DRIFT = 0.02  # share of the gap to OUTSIDE closed each minute
@@ -99,10 +137,17 @@ HEATER_STEP = 0.4
 AC_STEP = 0.4
 CO2_BREATHING = 15
 CO2_VENTILATION = 90
+WINDOW_DRIFT = 4  # an open window: the room goes to the outside this many times faster
+WINDOW_CO2 = 60
+OUTSIDE_HUMIDITY = 35  # autumn with the heating on: dry
+HUMIDITY_DRIFT = 0.01
+HUMIDIFIER_STEP = 1.0
+VENTILATION_DRYING = 0.5
 
 # Platforms whose entities this script owns (the rest - sun, backup,
 # person... - belong to Home Assistant itself and are left alone).
-OWNED_PLATFORMS = {"input_boolean", "input_number", "template", "generic_thermostat", "script", "automation"}
+OWNED_PLATFORMS = {"input_boolean", "input_number", "input_datetime", "template", "generic_thermostat",
+                   "generic_hygrostat", "integration", "utility_meter", "script", "automation"}
 
 
 def _toggle(entity: str, on: bool) -> list[dict]:
@@ -110,10 +155,10 @@ def _toggle(entity: str, on: bool) -> list[dict]:
 
 
 def _yaml() -> str:
-    input_boolean, input_number = {}, {}
+    input_boolean, input_number, input_datetime = {}, {}, {}
     lights, switches, fans, sensors, climate, automations = [], [], [], [], [], []
-    binary_sensors = []
-    physics = []
+    binary_sensors, covers, hygrostats = [], [], []
+    physics, power = [], []
     no_smoke = " and ".join(f"is_state('binary_sensor.{slug}_smoke', 'off')" for slug, _, _ in ROOMS)
 
     def danger_sensor(slug: str, room: str, kind: str, label: str, device_class: str) -> None:
@@ -287,21 +332,107 @@ def _yaml() -> str:
             }],
         })
 
+        # --- movement, windows and doors, the guard ---
+        input_boolean[f"{slug}_motion_sim"] = {"name": f"Симуляция: движение, {name}"}
+        binary_sensors.append({
+            "name": f"{name}: движение", "unique_id": f"{slug}_motion", "device_class": "motion",
+            "state": f"{{{{ is_state('input_boolean.{slug}_motion_sim', 'on') }}}}",
+        })
+        for opening, label in (("window", "окно"), ("door", "дверь")):
+            if slug in (WINDOWS if opening == "window" else DOORS):
+                input_boolean[f"{slug}_{opening}_sim"] = {"name": f"Симуляция: {label} открыто, {name}"}
+                binary_sensors.append({
+                    "name": f"{name}: {label}", "unique_id": f"{slug}_{opening}", "device_class": opening,
+                    "state": f"{{{{ is_state('input_boolean.{slug}_{opening}_sim', 'on') }}}}",
+                })
+        input_boolean[f"{slug}_intrusion_flag"] = {"name": f"{name}: тревога охраны"}
+        binary_sensors.append({
+            "name": f"{name}: движение в пустом доме", "unique_id": f"{slug}_intrusion", "device_class": "safety",
+            "state": f"{{{{ is_state('input_boolean.{slug}_intrusion_flag', 'on') }}}}",
+        })
+
+        if slug in HUMIDIFIERS:
+            input_number[f"{slug}_humidity_min"] = {
+                "name": f"{name}: норма влажности (не ниже)", "min": 30, "max": 60, "step": 1,
+                "initial": DEFAULT_HUMIDITY_MIN, "unit_of_measurement": "%", "mode": "box",
+            }
+            input_boolean[f"{slug}_humidifier_power"] = {"name": f"{name}: мотор увлажнителя"}
+            hygrostats.append({
+                "name": f"{name}: увлажнитель", "unique_id": f"{slug}_humidifier",
+                "humidifier": f"input_boolean.{slug}_humidifier_power", "target_sensor": f"sensor.{slug}_humidity",
+                "device_class": "humidifier", "min_humidity": 30, "max_humidity": 70,
+                "target_humidity": DEFAULT_HUMIDITY_MIN, "dry_tolerance": HUMIDITY_BAND,
+                "wet_tolerance": HUMIDITY_BAND, "initial_state": True,
+            })
+            automations.append({
+                "id": f"{slug}_humidity_norm",
+                "alias": f"{name}: норма влажности",
+                "mode": "restart",
+                "triggers": [
+                    {"trigger": "state", "entity_id": f"input_number.{slug}_humidity_min"},
+                    {"trigger": "homeassistant", "event": "start"},
+                ],
+                "actions": [{
+                    "action": "humidifier.set_humidity",
+                    "target": {"entity_id": f"humidifier.{slug}_humidifier"},
+                    "data": {"humidity": f"{{{{ states('input_number.{slug}_humidity_min') | int({DEFAULT_HUMIDITY_MIN}) }}}}"},
+                }],
+            })
+
+        if slug in CURTAINS:
+            input_number[f"{slug}_curtain_position"] = {
+                "name": f"{name}: положение штор", "min": 0, "max": 100, "step": 1, "unit_of_measurement": "%",
+            }
+            position = f"input_number.{slug}_curtain_position"
+
+            def set_position(value: str, position=position) -> list[dict]:
+                return [{"action": "input_number.set_value", "target": {"entity_id": position}, "data": {"value": value}}]
+
+            covers.append({
+                "name": f"{name}: шторы", "unique_id": f"{slug}_curtains", "device_class": "curtain",
+                "position": f"{{{{ states('{position}') | int(0) }}}}",
+                "open_cover": set_position("100"), "close_cover": set_position("0"),
+                "set_cover_position": set_position("{{ position }}"),
+            })
+
+        on = lambda helper: f"is_state('input_boolean.{slug}_{helper}', 'on')"  # noqa: E731
+        power.append(f"({WATTS['light']} * (states('input_number.{slug}_light_brightness') | float(255)) / 255 "
+                     f"if {on('light_power')} else 0)")
+        power.append(f"({WATTS['heating']} if {on('heater_power')} else 0)")
+        power.append(f"({WATTS['ventilation']} if {on('ventilation_power')} else 0)")
+        if full:
+            power.append(f"({WATTS['socket']} if {on('socket_power')} else 0)")
+            power.append(f"({WATTS['ac']} if {on('ac_compressor')} else 0)")
+        if slug in HUMIDIFIERS:
+            power.append(f"({WATTS['humidifier']} if {on('humidifier_power')} else 0)")
+
         # --- the physics of this room, one step a minute ---
+        window_open = f"is_state('binary_sensor.{slug}_window', 'on')" if slug in WINDOWS else "false"
+        drift = f"({DRIFT} * ({WINDOW_DRIFT} if {window_open} else 1))"
         t = f"states('input_number.{slug}_temperature_sim') | float({temperature})"
         heat = f"({HEATER_STEP} if is_state('input_boolean.{slug}_heater_power', 'on') else 0)"
         cool = f"({AC_STEP} if is_state('input_boolean.{slug}_ac_compressor', 'on') else 0)" if full else "0"
         physics.append({
             "action": "input_number.set_value",
             "target": {"entity_id": f"input_number.{slug}_temperature_sim"},
-            "data": {"value": f"{{{{ ([[{t} + ({OUTSIDE} - {t}) * {DRIFT} + {heat} - {cool}, 5] | max, 40] | min) | round(1) }}}}"},
+            "data": {"value": f"{{{{ ([[{t} + ({OUTSIDE} - {t}) * {drift} + {heat} - {cool}, 5] | max, 40] | min) | round(1) }}}}"},
         })
         c = f"states('input_number.{slug}_co2_sim') | float({co2})"
         vent = f"({CO2_VENTILATION} if is_state('input_boolean.{slug}_ventilation_power', 'on') else 0)"
+        aired = f"({WINDOW_CO2} if {window_open} else 0)"
         physics.append({
             "action": "input_number.set_value",
             "target": {"entity_id": f"input_number.{slug}_co2_sim"},
-            "data": {"value": f"{{{{ [[{c} + {CO2_BREATHING} - {vent}, 400] | max, 5000] | min }}}}"},
+            "data": {"value": f"{{{{ [[{c} + {CO2_BREATHING} - {vent} - {aired}, 400] | max, 5000] | min }}}}"},
+        })
+        h = f"states('input_number.{slug}_humidity_sim') | float({humidity})"
+        wet = f"({HUMIDIFIER_STEP} if is_state('input_boolean.{slug}_humidifier_power', 'on') else 0)" \
+            if slug in HUMIDIFIERS else "0"
+        dry = f"({VENTILATION_DRYING} if is_state('input_boolean.{slug}_ventilation_power', 'on') else 0)"
+        physics.append({
+            "action": "input_number.set_value",
+            "target": {"entity_id": f"input_number.{slug}_humidity_sim"},
+            "data": {"value": f"{{{{ ([[{h} + ({OUTSIDE_HUMIDITY} - {h}) * {HUMIDITY_DRIFT} + {wet} - {dry}, 10] | max, 90] | min) | round(1) }}}}"},
         })
 
     automations += [
@@ -330,6 +461,148 @@ def _yaml() -> str:
         },
     ]
 
+    motion = [f"binary_sensor.{slug}_motion" for slug, _, _ in ROOMS]
+    windows = [f"binary_sensor.{slug}_window" for slug in WINDOWS]
+    openings = windows + [f"binary_sensor.{slug}_door" for slug in DOORS]
+    armed = "input_boolean.security_armed"
+    input_boolean["security_armed"] = {"name": "Охрана"}
+    input_datetime["schedule_good_morning_time"] = {"name": "Расписание: время «Доброе утро»", "has_date": False,
+                                                    "has_time": True}
+    slug_of = {"slug": "{{ trigger.entity_id.split('.')[1].rsplit('_', 1)[0] }}"}
+
+    def script_ran(script: str) -> list[dict]:
+        return [{"trigger": "state", "entity_id": f"script.{script}", "to": "on"}]
+
+    automations += [
+        {
+            "id": "window_pauses_climate",
+            "alias": "Окно открыто: отопление и кондиционер на паузе, закрыто - как было",
+            "mode": "parallel",
+            "triggers": [{"trigger": "state", "entity_id": windows, "from": "off", "to": "on"},
+                         {"trigger": "state", "entity_id": windows, "from": "on", "to": "off"}],
+            "variables": slug_of,
+            "actions": [{
+                "choose": [{
+                    "conditions": [{"condition": "template", "value_template": "{{ trigger.to_state.state == 'on' }}"}],
+                    "sequence": [
+                        {"action": "scene.create", "data": {"scene_id": "window_{{ slug }}", "snapshot_entities": [
+                            "climate.{{ slug }}_heating", "climate.{{ slug }}_ac"]}},
+                        {"action": "climate.set_hvac_mode", "target": {"entity_id": [
+                            "climate.{{ slug }}_heating", "climate.{{ slug }}_ac"]}, "data": {"hvac_mode": "off"}},
+                    ],
+                }],
+                # Closed: what was there before; a scene lost to a restart - heating back on.
+                "default": [{
+                    "choose": [{
+                        "conditions": [{"condition": "template",
+                                        "value_template": "{{ expand('scene.window_' ~ slug) | count > 0 }}"}],
+                        "sequence": [{"action": "scene.turn_on", "target": {"entity_id": "scene.window_{{ slug }}"}}],
+                    }],
+                    "default": [{"action": "climate.set_hvac_mode", "target": {"entity_id": "climate.{{ slug }}_heating"},
+                                 "data": {"hvac_mode": "heat"}}],
+                }],
+            }],
+        },
+        {
+            "id": "night_light_on_motion",
+            "alias": f"Ночью по движению: свет на {NIGHT_LIGHT_PCT}%",
+            "mode": "parallel",
+            "triggers": [{"trigger": "state", "entity_id": [f"binary_sensor.{s}_motion" for s in NIGHT_LIGHT_ROOMS],
+                          "to": "on"}],
+            "conditions": [{"condition": "time", "after": NIGHT[0], "before": NIGHT[1]},
+                           {"condition": "state", "entity_id": armed, "state": "off"}],
+            "variables": slug_of,
+            "actions": [
+                {"condition": "template", "value_template": "{{ is_state('light.' ~ slug, 'off') }}"},
+                {"action": "light.turn_on", "target": {"entity_id": "light.{{ slug }}"},
+                 "data": {"brightness_pct": NIGHT_LIGHT_PCT}},
+                {"wait_template": "{{ is_state('binary_sensor.' ~ slug ~ '_motion', 'off') }}"},
+                {"delay": "00:02:00"},
+                {"condition": "template", "value_template": "{{ is_state('binary_sensor.' ~ slug ~ '_motion', 'off') }}"},
+                {"action": "light.turn_off", "target": {"entity_id": "light.{{ slug }}"}},
+            ],
+        },
+        {
+            "id": "empty_room_light_off",
+            "alias": f"Пустая комната: свет гаснет через {AUTO_OFF_MINUTES} минут без движения",
+            "mode": "parallel",
+            "triggers": [{"trigger": "state", "entity_id": motion, "to": "off", "for": {"minutes": AUTO_OFF_MINUTES}}],
+            "variables": slug_of,
+            "actions": [{"action": "light.turn_off", "target": {"entity_id": "light.{{ slug }}"}}],
+        },
+        {
+            "id": "security_intrusion",
+            "alias": "Охрана: движение или открытие в пустом доме",
+            "mode": "parallel",
+            "triggers": [{"trigger": "state", "entity_id": motion + openings, "to": "on"}],
+            "conditions": [{"condition": "state", "entity_id": armed, "state": "on"}],
+            "variables": slug_of,
+            "actions": [
+                {"delay": ENTRY_DELAY},  # time to come in and say "Я дома"
+                {"condition": "state", "entity_id": armed, "state": "on"},
+                {"action": "input_boolean.turn_on", "target": {"entity_id": "input_boolean.{{ slug }}_intrusion_flag"}},
+            ],
+        },
+        {
+            "id": "security_disarmed",
+            "alias": "Охрана снята: тревоги сброшены",
+            "triggers": [{"trigger": "state", "entity_id": armed, "to": "off"}],
+            "actions": [{"action": "input_boolean.turn_off", "target": {"entity_id": [
+                f"input_boolean.{slug}_intrusion_flag" for slug, _, _ in ROOMS]}}],
+        },
+        {
+            "id": "security_arm_on_leaving",
+            "alias": "Сценарий «Я ушёл»: охрана через 2 минуты",
+            "mode": "restart",
+            "triggers": script_ran("ya_ushel"),
+            "actions": [
+                {"wait_for_trigger": script_ran("ya_doma"), "timeout": ARM_DELAY, "continue_on_timeout": True},
+                {"condition": "template", "value_template": "{{ wait.trigger is none }}"},
+                {"action": "input_boolean.turn_on", "target": {"entity_id": armed}},
+            ],
+        },
+        {
+            "id": "security_disarm_on_coming_home",
+            "alias": "Сценарий «Я дома»: охрана снята",
+            "triggers": script_ran("ya_doma"),
+            "actions": [{"action": "input_boolean.turn_off", "target": {"entity_id": armed}}],
+        },
+        {
+            "id": "curtains_good_morning",
+            "alias": "Сценарий «Доброе утро»: шторы в спальне открыть",
+            "triggers": script_ran("dobroe_utro"),
+            "actions": [{"action": "cover.open_cover", "target": {"entity_id": "cover.bedroom_curtains"}}],
+        },
+        {
+            "id": "curtains_good_night",
+            "alias": "Сценарий «Спокойной ночи»: шторы закрыть",
+            "triggers": script_ran("spokoynoy_nochi"),
+            "actions": [{"action": "cover.close_cover", "target": {"entity_id": [
+                f"cover.{slug}_curtains" for slug in CURTAINS]}}],
+        },
+        {
+            "id": "schedule_good_morning",
+            "alias": "Расписание: «Доброе утро» по будням",
+            "triggers": [{"trigger": "time", "at": "input_datetime.schedule_good_morning_time"}],
+            "conditions": [{"condition": "time", "weekday": ["mon", "tue", "wed", "thu", "fri"]},
+                           {"condition": "state", "entity_id": armed, "state": "off"}],
+            "actions": [{"action": "script.turn_on", "target": {"entity_id": "script.dobroe_utro"}}],
+        },
+        {
+            "id": "schedule_sunset_entrance",
+            "alias": "Расписание: свет в прихожей на закате",
+            "triggers": [{"trigger": "sun", "event": "sunset"}],
+            "conditions": [{"condition": "state", "entity_id": armed, "state": "off"}],
+            "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.entrance"},
+                         "data": {"brightness_pct": 60}}],
+        },
+    ]
+    sensors.append({
+        "name": "Дом: мощность", "unique_id": "house_power", "unit_of_measurement": "W",
+        "device_class": "power", "state_class": "measurement",
+        "state": "{{ (" + " + ".join(power) + ") | round(0) }}",
+    })
+
     automations.append({
         "id": "virtual_house_physics",
         "alias": "Виртуальный дом: физика",
@@ -340,11 +613,23 @@ def _yaml() -> str:
     config = {
         "default_config": None,
         "http": {"server_port": 8123},
+        "recorder": {"purge_keep_days": 60},  # "какая температура была ночью", "сколько за месяц"
         "input_boolean": input_boolean,
         "input_number": input_number,
+        "input_datetime": input_datetime,
         "template": [{"light": lights}, {"switch": switches}, {"fan": fans}, {"sensor": sensors},
-                     {"binary_sensor": binary_sensors}],
+                     {"binary_sensor": binary_sensors}, {"cover": covers}],
         "climate": climate,
+        "generic_hygrostat": hygrostats,
+        "sensor": [{"platform": "integration", "source": "sensor.house_power", "name": "Дом: электричество",
+                    "unique_id": "house_energy", "unit_prefix": "k", "unit_time": "h", "round": 3,
+                    "method": "left"}],
+        "utility_meter": {
+            "house_energy_today": {"source": "sensor.house_energy", "name": "Дом: электричество за сегодня",
+                                   "unique_id": "house_energy_today", "cycle": "daily"},
+            "house_energy_month": {"source": "sensor.house_energy", "name": "Дом: электричество за месяц",
+                                   "unique_id": "house_energy_month", "cycle": "monthly"},
+        },
         "automation": automations,
     }
     header = (
@@ -467,6 +752,22 @@ def _wanted() -> dict[tuple[str, str], tuple[str | None, str, bool]]:
         if slug == GAS_ROOM:
             wanted[("template", f"{slug}_gas")] = (f"binary_sensor.{slug}_gas", slug, False)
             wanted[("input_boolean", f"{slug}_gas_sim")] = (None, slug, False)
+        wanted[("template", f"{slug}_motion")] = (f"binary_sensor.{slug}_motion", slug, False)
+        wanted[("input_boolean", f"{slug}_motion_sim")] = (None, slug, False)
+        wanted[("template", f"{slug}_intrusion")] = (f"binary_sensor.{slug}_intrusion", slug, False)
+        wanted[("input_boolean", f"{slug}_intrusion_flag")] = (None, slug, True)
+        for opening, rooms in (("window", WINDOWS), ("door", DOORS)):
+            if slug in rooms:
+                wanted[("template", f"{slug}_{opening}")] = (f"binary_sensor.{slug}_{opening}", slug, False)
+                wanted[("input_boolean", f"{slug}_{opening}_sim")] = (None, slug, False)
+        if slug in HUMIDIFIERS:
+            wanted[("generic_hygrostat", f"{slug}_humidifier")] = (f"humidifier.{slug}_humidifier", slug, False)
+            wanted[("input_number", f"{slug}_humidity_min")] = (None, slug, False)
+            wanted[("input_boolean", f"{slug}_humidifier_power")] = (None, slug, True)
+            wanted[("automation", f"{slug}_humidity_norm")] = (None, slug, False)
+        if slug in CURTAINS:
+            wanted[("template", f"{slug}_curtains")] = (f"cover.{slug}_curtains", slug, False)
+            wanted[("input_number", f"{slug}_curtain_position")] = (None, slug, True)
         if full:
             wanted[("template", f"{slug}_socket")] = (f"switch.{slug}_socket", slug, False)
             wanted[("generic_thermostat", f"{slug}_ac")] = (f"climate.{slug}_ac", slug, False)
@@ -476,8 +777,20 @@ def _wanted() -> dict[tuple[str, str], tuple[str | None, str, bool]]:
     for valve in ("water_valve", "gas_valve"):
         wanted[("template", valve)] = (f"switch.{valve}", VALVE_ROOM, False)
         wanted[("input_boolean", f"{valve}_open")] = (None, VALVE_ROOM, True)
-    for automation in ("danger_leak", "danger_gas", "danger_smoke"):
+    for automation in ("danger_leak", "danger_gas", "danger_smoke", "window_pauses_climate", "night_light_on_motion",
+                       "empty_room_light_off", "security_intrusion", "security_disarmed", "security_arm_on_leaving",
+                       "security_disarm_on_coming_home", "curtains_good_morning", "curtains_good_night"):
         wanted[("automation", automation)] = (None, None, False)
+    for schedule in ("schedule_good_morning", "schedule_sunset_entrance"):
+        wanted[("automation", schedule)] = (f"automation.{schedule}", None, False)  # Jarvis finds them by id
+    wanted[("input_datetime", "schedule_good_morning_time")] = (
+        "input_datetime.schedule_good_morning_time", None, False)
+    wanted[("input_boolean", "security_armed")] = ("input_boolean.security_armed", None, False)
+    wanted[("template", "house_power")] = ("sensor.house_power", None, False)
+    wanted[("integration", "house_energy")] = ("sensor.house_energy", None, False)
+    # utility_meter adds its tariff to the unique id
+    wanted[("utility_meter", "house_energy_today_single_tariff")] = ("sensor.house_energy_today", None, False)
+    wanted[("utility_meter", "house_energy_month_single_tariff")] = ("sensor.house_energy_month", None, False)
     return wanted
 
 
@@ -541,6 +854,14 @@ async def setup(url: str = "ws://localhost:8123/api/websocket") -> None:
             if entity_id and entry["entity_id"] != entity_id:
                 changes["new_entity_id"] = entity_id
             await call(type="config/entity_registry/update", entity_id=entry["entity_id"], **changes)
+        # A time helper without "initial" (that would reset it on every restart,
+        # undoing "буди меня в 8") starts at midnight - that's "never set".
+        for state in await call(type="get_states"):
+            if state["entity_id"] == "input_datetime.schedule_good_morning_time" and state["state"] == "00:00:00":
+                await call(type="call_service", domain="input_datetime", service="set_datetime",
+                           service_data={"entity_id": state["entity_id"], "time": GOOD_MORNING_TIME})
+                print(f"good morning time set to {GOOD_MORNING_TIME}")
+
         missing = set(wanted) - found
         if missing:
             print(f"not in Home Assistant yet (restart it after `write`?): {sorted(missing)}")

@@ -6,6 +6,8 @@
 default_config:
 http:
   server_port: 8123
+recorder:
+  purge_keep_days: 60
 input_boolean:
   water_valve_open:
     name: 'Главный кран воды: открыт'
@@ -21,6 +23,12 @@ input_boolean:
     name: 'Прихожая: нагрев отопления'
   entrance_ventilation_power:
     name: 'Прихожая: мотор вентиляции'
+  entrance_motion_sim:
+    name: 'Симуляция: движение, Прихожая'
+  entrance_door_sim:
+    name: 'Симуляция: дверь открыто, Прихожая'
+  entrance_intrusion_flag:
+    name: 'Прихожая: тревога охраны'
   bedroom_light_power:
     name: 'Спальня: питание света'
   bedroom_smoke_sim:
@@ -33,6 +41,14 @@ input_boolean:
     name: 'Спальня: питание розетки'
   bedroom_ac_compressor:
     name: 'Спальня: компрессор кондиционера'
+  bedroom_motion_sim:
+    name: 'Симуляция: движение, Спальня'
+  bedroom_window_sim:
+    name: 'Симуляция: окно открыто, Спальня'
+  bedroom_intrusion_flag:
+    name: 'Спальня: тревога охраны'
+  bedroom_humidifier_power:
+    name: 'Спальня: мотор увлажнителя'
   office_light_power:
     name: 'Кабинет: питание света'
   office_smoke_sim:
@@ -45,6 +61,14 @@ input_boolean:
     name: 'Кабинет: питание розетки'
   office_ac_compressor:
     name: 'Кабинет: компрессор кондиционера'
+  office_motion_sim:
+    name: 'Симуляция: движение, Кабинет'
+  office_window_sim:
+    name: 'Симуляция: окно открыто, Кабинет'
+  office_intrusion_flag:
+    name: 'Кабинет: тревога охраны'
+  office_humidifier_power:
+    name: 'Кабинет: мотор увлажнителя'
   living_room_light_power:
     name: 'Зал: питание света'
   living_room_smoke_sim:
@@ -57,6 +81,14 @@ input_boolean:
     name: 'Зал: питание розетки'
   living_room_ac_compressor:
     name: 'Зал: компрессор кондиционера'
+  living_room_motion_sim:
+    name: 'Симуляция: движение, Зал'
+  living_room_window_sim:
+    name: 'Симуляция: окно открыто, Зал'
+  living_room_intrusion_flag:
+    name: 'Зал: тревога охраны'
+  living_room_humidifier_power:
+    name: 'Зал: мотор увлажнителя'
   corridor_light_power:
     name: 'Коридор: питание света'
   corridor_smoke_sim:
@@ -65,6 +97,10 @@ input_boolean:
     name: 'Коридор: нагрев отопления'
   corridor_ventilation_power:
     name: 'Коридор: мотор вентиляции'
+  corridor_motion_sim:
+    name: 'Симуляция: движение, Коридор'
+  corridor_intrusion_flag:
+    name: 'Коридор: тревога охраны'
   kitchen_light_power:
     name: 'Кухня: питание света'
   kitchen_smoke_sim:
@@ -81,6 +117,14 @@ input_boolean:
     name: 'Кухня: питание розетки'
   kitchen_ac_compressor:
     name: 'Кухня: компрессор кондиционера'
+  kitchen_motion_sim:
+    name: 'Симуляция: движение, Кухня'
+  kitchen_window_sim:
+    name: 'Симуляция: окно открыто, Кухня'
+  kitchen_intrusion_flag:
+    name: 'Кухня: тревога охраны'
+  security_armed:
+    name: Охрана
 input_number:
   entrance_light_brightness:
     name: 'Прихожая: яркость света'
@@ -174,6 +218,20 @@ input_number:
     initial: 800
     unit_of_measurement: ppm
     mode: box
+  bedroom_humidity_min:
+    name: 'Спальня: норма влажности (не ниже)'
+    min: 30
+    max: 60
+    step: 1
+    initial: 40
+    unit_of_measurement: '%'
+    mode: box
+  bedroom_curtain_position:
+    name: 'Спальня: положение штор'
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
   office_light_brightness:
     name: 'Кабинет: яркость света'
     min: 1
@@ -220,6 +278,20 @@ input_number:
     initial: 800
     unit_of_measurement: ppm
     mode: box
+  office_humidity_min:
+    name: 'Кабинет: норма влажности (не ниже)'
+    min: 30
+    max: 60
+    step: 1
+    initial: 40
+    unit_of_measurement: '%'
+    mode: box
+  office_curtain_position:
+    name: 'Кабинет: положение штор'
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
   living_room_light_brightness:
     name: 'Зал: яркость света'
     min: 1
@@ -266,6 +338,20 @@ input_number:
     initial: 800
     unit_of_measurement: ppm
     mode: box
+  living_room_humidity_min:
+    name: 'Зал: норма влажности (не ниже)'
+    min: 30
+    max: 60
+    step: 1
+    initial: 40
+    unit_of_measurement: '%'
+    mode: box
+  living_room_curtain_position:
+    name: 'Зал: положение штор'
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
   corridor_light_brightness:
     name: 'Коридор: яркость света'
     min: 1
@@ -358,6 +444,17 @@ input_number:
     initial: 800
     unit_of_measurement: ppm
     mode: box
+  kitchen_curtain_position:
+    name: 'Кухня: положение штор'
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
+input_datetime:
+  schedule_good_morning_time:
+    name: 'Расписание: время «Доброе утро»'
+    has_date: false
+    has_time: true
 template:
 - light:
   - name: 'Прихожая: свет'
@@ -729,27 +826,100 @@ template:
     unit_of_measurement: ppm
     device_class: carbon_dioxide
     state_class: measurement
+  - name: 'Дом: мощность'
+    unique_id: house_power
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    state: '{{ ((60 * (states(''input_number.entrance_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.entrance_light_power'', ''on'') else 0) + (1200 if is_state(''input_boolean.entrance_heater_power'',
+      ''on'') else 0) + (40 if is_state(''input_boolean.entrance_ventilation_power'', ''on'') else 0) + (60 * (states(''input_number.bedroom_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.bedroom_light_power'',
+      ''on'') else 0) + (1200 if is_state(''input_boolean.bedroom_heater_power'', ''on'') else 0) + (40 if is_state(''input_boolean.bedroom_ventilation_power'', ''on'') else 0) + (100 if is_state(''input_boolean.bedroom_socket_power'',
+      ''on'') else 0) + (900 if is_state(''input_boolean.bedroom_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.bedroom_humidifier_power'', ''on'') else 0) + (60 * (states(''input_number.office_light_brightness'')
+      | float(255)) / 255 if is_state(''input_boolean.office_light_power'', ''on'') else 0) + (1200 if is_state(''input_boolean.office_heater_power'', ''on'') else 0) + (40 if is_state(''input_boolean.office_ventilation_power'',
+      ''on'') else 0) + (100 if is_state(''input_boolean.office_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.office_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.office_humidifier_power'',
+      ''on'') else 0) + (60 * (states(''input_number.living_room_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.living_room_light_power'', ''on'') else 0) + (1200 if is_state(''input_boolean.living_room_heater_power'',
+      ''on'') else 0) + (40 if is_state(''input_boolean.living_room_ventilation_power'', ''on'') else 0) + (100 if is_state(''input_boolean.living_room_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.living_room_ac_compressor'',
+      ''on'') else 0) + (30 if is_state(''input_boolean.living_room_humidifier_power'', ''on'') else 0) + (60 * (states(''input_number.corridor_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.corridor_light_power'',
+      ''on'') else 0) + (1200 if is_state(''input_boolean.corridor_heater_power'', ''on'') else 0) + (40 if is_state(''input_boolean.corridor_ventilation_power'', ''on'') else 0) + (60 * (states(''input_number.kitchen_light_brightness'')
+      | float(255)) / 255 if is_state(''input_boolean.kitchen_light_power'', ''on'') else 0) + (1200 if is_state(''input_boolean.kitchen_heater_power'', ''on'') else 0) + (40 if is_state(''input_boolean.kitchen_ventilation_power'',
+      ''on'') else 0) + (100 if is_state(''input_boolean.kitchen_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.kitchen_ac_compressor'', ''on'') else 0)) | round(0) }}'
 - binary_sensor:
   - name: 'Прихожая: дым'
     unique_id: entrance_smoke
     state: '{{ is_state(''input_boolean.entrance_smoke_sim'', ''on'') }}'
     device_class: smoke
+  - name: 'Прихожая: движение'
+    unique_id: entrance_motion
+    device_class: motion
+    state: '{{ is_state(''input_boolean.entrance_motion_sim'', ''on'') }}'
+  - name: 'Прихожая: дверь'
+    unique_id: entrance_door
+    device_class: door
+    state: '{{ is_state(''input_boolean.entrance_door_sim'', ''on'') }}'
+  - name: 'Прихожая: движение в пустом доме'
+    unique_id: entrance_intrusion
+    device_class: safety
+    state: '{{ is_state(''input_boolean.entrance_intrusion_flag'', ''on'') }}'
   - name: 'Спальня: дым'
     unique_id: bedroom_smoke
     state: '{{ is_state(''input_boolean.bedroom_smoke_sim'', ''on'') }}'
     device_class: smoke
+  - name: 'Спальня: движение'
+    unique_id: bedroom_motion
+    device_class: motion
+    state: '{{ is_state(''input_boolean.bedroom_motion_sim'', ''on'') }}'
+  - name: 'Спальня: окно'
+    unique_id: bedroom_window
+    device_class: window
+    state: '{{ is_state(''input_boolean.bedroom_window_sim'', ''on'') }}'
+  - name: 'Спальня: движение в пустом доме'
+    unique_id: bedroom_intrusion
+    device_class: safety
+    state: '{{ is_state(''input_boolean.bedroom_intrusion_flag'', ''on'') }}'
   - name: 'Кабинет: дым'
     unique_id: office_smoke
     state: '{{ is_state(''input_boolean.office_smoke_sim'', ''on'') }}'
     device_class: smoke
+  - name: 'Кабинет: движение'
+    unique_id: office_motion
+    device_class: motion
+    state: '{{ is_state(''input_boolean.office_motion_sim'', ''on'') }}'
+  - name: 'Кабинет: окно'
+    unique_id: office_window
+    device_class: window
+    state: '{{ is_state(''input_boolean.office_window_sim'', ''on'') }}'
+  - name: 'Кабинет: движение в пустом доме'
+    unique_id: office_intrusion
+    device_class: safety
+    state: '{{ is_state(''input_boolean.office_intrusion_flag'', ''on'') }}'
   - name: 'Зал: дым'
     unique_id: living_room_smoke
     state: '{{ is_state(''input_boolean.living_room_smoke_sim'', ''on'') }}'
     device_class: smoke
+  - name: 'Зал: движение'
+    unique_id: living_room_motion
+    device_class: motion
+    state: '{{ is_state(''input_boolean.living_room_motion_sim'', ''on'') }}'
+  - name: 'Зал: окно'
+    unique_id: living_room_window
+    device_class: window
+    state: '{{ is_state(''input_boolean.living_room_window_sim'', ''on'') }}'
+  - name: 'Зал: движение в пустом доме'
+    unique_id: living_room_intrusion
+    device_class: safety
+    state: '{{ is_state(''input_boolean.living_room_intrusion_flag'', ''on'') }}'
   - name: 'Коридор: дым'
     unique_id: corridor_smoke
     state: '{{ is_state(''input_boolean.corridor_smoke_sim'', ''on'') }}'
     device_class: smoke
+  - name: 'Коридор: движение'
+    unique_id: corridor_motion
+    device_class: motion
+    state: '{{ is_state(''input_boolean.corridor_motion_sim'', ''on'') }}'
+  - name: 'Коридор: движение в пустом доме'
+    unique_id: corridor_intrusion
+    device_class: safety
+    state: '{{ is_state(''input_boolean.corridor_intrusion_flag'', ''on'') }}'
   - name: 'Кухня: дым'
     unique_id: kitchen_smoke
     state: '{{ is_state(''input_boolean.kitchen_smoke_sim'', ''on'') }}'
@@ -762,6 +932,107 @@ template:
     unique_id: kitchen_gas
     state: '{{ is_state(''input_boolean.kitchen_gas_sim'', ''on'') }}'
     device_class: gas
+  - name: 'Кухня: движение'
+    unique_id: kitchen_motion
+    device_class: motion
+    state: '{{ is_state(''input_boolean.kitchen_motion_sim'', ''on'') }}'
+  - name: 'Кухня: окно'
+    unique_id: kitchen_window
+    device_class: window
+    state: '{{ is_state(''input_boolean.kitchen_window_sim'', ''on'') }}'
+  - name: 'Кухня: движение в пустом доме'
+    unique_id: kitchen_intrusion
+    device_class: safety
+    state: '{{ is_state(''input_boolean.kitchen_intrusion_flag'', ''on'') }}'
+- cover:
+  - name: 'Спальня: шторы'
+    unique_id: bedroom_curtains
+    device_class: curtain
+    position: '{{ states(''input_number.bedroom_curtain_position'') | int(0) }}'
+    open_cover:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.bedroom_curtain_position
+      data:
+        value: '100'
+    close_cover:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.bedroom_curtain_position
+      data:
+        value: '0'
+    set_cover_position:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.bedroom_curtain_position
+      data:
+        value: '{{ position }}'
+  - name: 'Кабинет: шторы'
+    unique_id: office_curtains
+    device_class: curtain
+    position: '{{ states(''input_number.office_curtain_position'') | int(0) }}'
+    open_cover:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.office_curtain_position
+      data:
+        value: '100'
+    close_cover:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.office_curtain_position
+      data:
+        value: '0'
+    set_cover_position:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.office_curtain_position
+      data:
+        value: '{{ position }}'
+  - name: 'Зал: шторы'
+    unique_id: living_room_curtains
+    device_class: curtain
+    position: '{{ states(''input_number.living_room_curtain_position'') | int(0) }}'
+    open_cover:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.living_room_curtain_position
+      data:
+        value: '100'
+    close_cover:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.living_room_curtain_position
+      data:
+        value: '0'
+    set_cover_position:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.living_room_curtain_position
+      data:
+        value: '{{ position }}'
+  - name: 'Кухня: шторы'
+    unique_id: kitchen_curtains
+    device_class: curtain
+    position: '{{ states(''input_number.kitchen_curtain_position'') | int(0) }}'
+    open_cover:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.kitchen_curtain_position
+      data:
+        value: '100'
+    close_cover:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.kitchen_curtain_position
+      data:
+        value: '0'
+    set_cover_position:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.kitchen_curtain_position
+      data:
+        value: '{{ position }}'
 climate:
 - platform: generic_thermostat
   name: 'Прихожая: отопление'
@@ -877,6 +1148,60 @@ climate:
   initial_hvac_mode: cool
   precision: 0.5
   target_temp_step: 0.5
+generic_hygrostat:
+- name: 'Спальня: увлажнитель'
+  unique_id: bedroom_humidifier
+  humidifier: input_boolean.bedroom_humidifier_power
+  target_sensor: sensor.bedroom_humidity
+  device_class: humidifier
+  min_humidity: 30
+  max_humidity: 70
+  target_humidity: 40
+  dry_tolerance: 2
+  wet_tolerance: 2
+  initial_state: true
+- name: 'Кабинет: увлажнитель'
+  unique_id: office_humidifier
+  humidifier: input_boolean.office_humidifier_power
+  target_sensor: sensor.office_humidity
+  device_class: humidifier
+  min_humidity: 30
+  max_humidity: 70
+  target_humidity: 40
+  dry_tolerance: 2
+  wet_tolerance: 2
+  initial_state: true
+- name: 'Зал: увлажнитель'
+  unique_id: living_room_humidifier
+  humidifier: input_boolean.living_room_humidifier_power
+  target_sensor: sensor.living_room_humidity
+  device_class: humidifier
+  min_humidity: 30
+  max_humidity: 70
+  target_humidity: 40
+  dry_tolerance: 2
+  wet_tolerance: 2
+  initial_state: true
+sensor:
+- platform: integration
+  source: sensor.house_power
+  name: 'Дом: электричество'
+  unique_id: house_energy
+  unit_prefix: k
+  unit_time: h
+  round: 3
+  method: left
+utility_meter:
+  house_energy_today:
+    source: sensor.house_energy
+    name: 'Дом: электричество за сегодня'
+    unique_id: house_energy_today
+    cycle: daily
+  house_energy_month:
+    source: sensor.house_energy
+    name: 'Дом: электричество за месяц'
+    unique_id: house_energy_month
+    cycle: monthly
 automation:
 - id: entrance_temperature_norm
   alias: 'Прихожая: норма температуры'
@@ -975,6 +1300,20 @@ automation:
       - action: fan.turn_off
         target:
           entity_id: fan.bedroom_ventilation
+- id: bedroom_humidity_norm
+  alias: 'Спальня: норма влажности'
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: input_number.bedroom_humidity_min
+  - trigger: homeassistant
+    event: start
+  actions:
+  - action: humidifier.set_humidity
+    target:
+      entity_id: humidifier.bedroom_humidifier
+    data:
+      humidity: '{{ states(''input_number.bedroom_humidity_min'') | int(40) }}'
 - id: office_temperature_norm
   alias: 'Кабинет: норма температуры'
   mode: restart
@@ -1026,6 +1365,20 @@ automation:
       - action: fan.turn_off
         target:
           entity_id: fan.office_ventilation
+- id: office_humidity_norm
+  alias: 'Кабинет: норма влажности'
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: input_number.office_humidity_min
+  - trigger: homeassistant
+    event: start
+  actions:
+  - action: humidifier.set_humidity
+    target:
+      entity_id: humidifier.office_humidifier
+    data:
+      humidity: '{{ states(''input_number.office_humidity_min'') | int(40) }}'
 - id: living_room_temperature_norm
   alias: 'Зал: норма температуры'
   mode: restart
@@ -1077,6 +1430,20 @@ automation:
       - action: fan.turn_off
         target:
           entity_id: fan.living_room_ventilation
+- id: living_room_humidity_norm
+  alias: 'Зал: норма влажности'
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: input_number.living_room_humidity_min
+  - trigger: homeassistant
+    event: start
+  actions:
+  - action: humidifier.set_humidity
+    target:
+      entity_id: humidifier.living_room_humidifier
+    data:
+      humidity: '{{ states(''input_number.living_room_humidity_min'') | int(40) }}'
 - id: corridor_temperature_norm
   alias: 'Коридор: норма температуры'
   mode: restart
@@ -1227,6 +1594,245 @@ automation:
       - light.kitchen
     data:
       brightness_pct: 100
+- id: window_pauses_climate
+  alias: 'Окно открыто: отопление и кондиционер на паузе, закрыто - как было'
+  mode: parallel
+  triggers:
+  - trigger: state
+    entity_id: &id001
+    - binary_sensor.bedroom_window
+    - binary_sensor.office_window
+    - binary_sensor.living_room_window
+    - binary_sensor.kitchen_window
+    from: 'off'
+    to: 'on'
+  - trigger: state
+    entity_id: *id001
+    from: 'on'
+    to: 'off'
+  variables: &id002
+    slug: '{{ trigger.entity_id.split(''.'')[1].rsplit(''_'', 1)[0] }}'
+  actions:
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ trigger.to_state.state == ''on'' }}'
+      sequence:
+      - action: scene.create
+        data:
+          scene_id: window_{{ slug }}
+          snapshot_entities:
+          - climate.{{ slug }}_heating
+          - climate.{{ slug }}_ac
+      - action: climate.set_hvac_mode
+        target:
+          entity_id:
+          - climate.{{ slug }}_heating
+          - climate.{{ slug }}_ac
+        data:
+          hvac_mode: 'off'
+    default:
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ expand(''scene.window_'' ~ slug) | count > 0 }}'
+        sequence:
+        - action: scene.turn_on
+          target:
+            entity_id: scene.window_{{ slug }}
+      default:
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: climate.{{ slug }}_heating
+        data:
+          hvac_mode: heat
+- id: night_light_on_motion
+  alias: 'Ночью по движению: свет на 30%'
+  mode: parallel
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.corridor_motion
+    - binary_sensor.entrance_motion
+    to: 'on'
+  conditions:
+  - condition: time
+    after: '23:00:00'
+    before: 07:00:00
+  - condition: state
+    entity_id: input_boolean.security_armed
+    state: 'off'
+  variables: *id002
+  actions:
+  - condition: template
+    value_template: '{{ is_state(''light.'' ~ slug, ''off'') }}'
+  - action: light.turn_on
+    target:
+      entity_id: light.{{ slug }}
+    data:
+      brightness_pct: 30
+  - wait_template: '{{ is_state(''binary_sensor.'' ~ slug ~ ''_motion'', ''off'') }}'
+  - delay: 00:02:00
+  - condition: template
+    value_template: '{{ is_state(''binary_sensor.'' ~ slug ~ ''_motion'', ''off'') }}'
+  - action: light.turn_off
+    target:
+      entity_id: light.{{ slug }}
+- id: empty_room_light_off
+  alias: 'Пустая комната: свет гаснет через 10 минут без движения'
+  mode: parallel
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.entrance_motion
+    - binary_sensor.bedroom_motion
+    - binary_sensor.office_motion
+    - binary_sensor.living_room_motion
+    - binary_sensor.corridor_motion
+    - binary_sensor.kitchen_motion
+    to: 'off'
+    for:
+      minutes: 10
+  variables: *id002
+  actions:
+  - action: light.turn_off
+    target:
+      entity_id: light.{{ slug }}
+- id: security_intrusion
+  alias: 'Охрана: движение или открытие в пустом доме'
+  mode: parallel
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.entrance_motion
+    - binary_sensor.bedroom_motion
+    - binary_sensor.office_motion
+    - binary_sensor.living_room_motion
+    - binary_sensor.corridor_motion
+    - binary_sensor.kitchen_motion
+    - binary_sensor.bedroom_window
+    - binary_sensor.office_window
+    - binary_sensor.living_room_window
+    - binary_sensor.kitchen_window
+    - binary_sensor.entrance_door
+    to: 'on'
+  conditions:
+  - condition: state
+    entity_id: input_boolean.security_armed
+    state: 'on'
+  variables: *id002
+  actions:
+  - delay: 00:01:00
+  - condition: state
+    entity_id: input_boolean.security_armed
+    state: 'on'
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.{{ slug }}_intrusion_flag
+- id: security_disarmed
+  alias: 'Охрана снята: тревоги сброшены'
+  triggers:
+  - trigger: state
+    entity_id: input_boolean.security_armed
+    to: 'off'
+  actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id:
+      - input_boolean.entrance_intrusion_flag
+      - input_boolean.bedroom_intrusion_flag
+      - input_boolean.office_intrusion_flag
+      - input_boolean.living_room_intrusion_flag
+      - input_boolean.corridor_intrusion_flag
+      - input_boolean.kitchen_intrusion_flag
+- id: security_arm_on_leaving
+  alias: 'Сценарий «Я ушёл»: охрана через 2 минуты'
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: script.ya_ushel
+    to: 'on'
+  actions:
+  - wait_for_trigger:
+    - trigger: state
+      entity_id: script.ya_doma
+      to: 'on'
+    timeout: 00:02:00
+    continue_on_timeout: true
+  - condition: template
+    value_template: '{{ wait.trigger is none }}'
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.security_armed
+- id: security_disarm_on_coming_home
+  alias: 'Сценарий «Я дома»: охрана снята'
+  triggers:
+  - trigger: state
+    entity_id: script.ya_doma
+    to: 'on'
+  actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.security_armed
+- id: curtains_good_morning
+  alias: 'Сценарий «Доброе утро»: шторы в спальне открыть'
+  triggers:
+  - trigger: state
+    entity_id: script.dobroe_utro
+    to: 'on'
+  actions:
+  - action: cover.open_cover
+    target:
+      entity_id: cover.bedroom_curtains
+- id: curtains_good_night
+  alias: 'Сценарий «Спокойной ночи»: шторы закрыть'
+  triggers:
+  - trigger: state
+    entity_id: script.spokoynoy_nochi
+    to: 'on'
+  actions:
+  - action: cover.close_cover
+    target:
+      entity_id:
+      - cover.bedroom_curtains
+      - cover.office_curtains
+      - cover.living_room_curtains
+      - cover.kitchen_curtains
+- id: schedule_good_morning
+  alias: 'Расписание: «Доброе утро» по будням'
+  triggers:
+  - trigger: time
+    at: input_datetime.schedule_good_morning_time
+  conditions:
+  - condition: time
+    weekday:
+    - mon
+    - tue
+    - wed
+    - thu
+    - fri
+  - condition: state
+    entity_id: input_boolean.security_armed
+    state: 'off'
+  actions:
+  - action: script.turn_on
+    target:
+      entity_id: script.dobroe_utro
+- id: schedule_sunset_entrance
+  alias: 'Расписание: свет в прихожей на закате'
+  triggers:
+  - trigger: sun
+    event: sunset
+  conditions:
+  - condition: state
+    entity_id: input_boolean.security_armed
+    state: 'off'
+  actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.entrance
+    data:
+      brightness_pct: 60
 - id: virtual_house_physics
   alias: 'Виртуальный дом: физика'
   triggers:
@@ -1237,66 +1843,112 @@ automation:
     target:
       entity_id: input_number.entrance_temperature_sim
     data:
-      value: '{{ ([[states(''input_number.entrance_temperature_sim'') | float(20.5) + (19.0 - states(''input_number.entrance_temperature_sim'') | float(20.5)) * 0.02 + (0.4 if is_state(''input_boolean.entrance_heater_power'',
+      value: '{{ ([[states(''input_number.entrance_temperature_sim'') | float(20.5) + (19.0 - states(''input_number.entrance_temperature_sim'') | float(20.5)) * (0.02 * (4 if false else 1)) + (0.4 if is_state(''input_boolean.entrance_heater_power'',
         ''on'') else 0) - 0, 5] | max, 40] | min) | round(1) }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.entrance_co2_sim
     data:
-      value: '{{ [[states(''input_number.entrance_co2_sim'') | float(450) + 15 - (90 if is_state(''input_boolean.entrance_ventilation_power'', ''on'') else 0), 400] | max, 5000] | min }}'
+      value: '{{ [[states(''input_number.entrance_co2_sim'') | float(450) + 15 - (90 if is_state(''input_boolean.entrance_ventilation_power'', ''on'') else 0) - (60 if false else 0), 400] | max, 5000] |
+        min }}'
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.entrance_humidity_sim
+    data:
+      value: '{{ ([[states(''input_number.entrance_humidity_sim'') | float(40) + (35 - states(''input_number.entrance_humidity_sim'') | float(40)) * 0.01 + 0 - (0.5 if is_state(''input_boolean.entrance_ventilation_power'',
+        ''on'') else 0), 10] | max, 90] | min) | round(1) }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.bedroom_temperature_sim
     data:
-      value: '{{ ([[states(''input_number.bedroom_temperature_sim'') | float(22.5) + (19.0 - states(''input_number.bedroom_temperature_sim'') | float(22.5)) * 0.02 + (0.4 if is_state(''input_boolean.bedroom_heater_power'',
-        ''on'') else 0) - (0.4 if is_state(''input_boolean.bedroom_ac_compressor'', ''on'') else 0), 5] | max, 40] | min) | round(1) }}'
+      value: '{{ ([[states(''input_number.bedroom_temperature_sim'') | float(22.5) + (19.0 - states(''input_number.bedroom_temperature_sim'') | float(22.5)) * (0.02 * (4 if is_state(''binary_sensor.bedroom_window'',
+        ''on'') else 1)) + (0.4 if is_state(''input_boolean.bedroom_heater_power'', ''on'') else 0) - (0.4 if is_state(''input_boolean.bedroom_ac_compressor'', ''on'') else 0), 5] | max, 40] | min) | round(1)
+        }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.bedroom_co2_sim
     data:
-      value: '{{ [[states(''input_number.bedroom_co2_sim'') | float(900) + 15 - (90 if is_state(''input_boolean.bedroom_ventilation_power'', ''on'') else 0), 400] | max, 5000] | min }}'
+      value: '{{ [[states(''input_number.bedroom_co2_sim'') | float(900) + 15 - (90 if is_state(''input_boolean.bedroom_ventilation_power'', ''on'') else 0) - (60 if is_state(''binary_sensor.bedroom_window'',
+        ''on'') else 0), 400] | max, 5000] | min }}'
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.bedroom_humidity_sim
+    data:
+      value: '{{ ([[states(''input_number.bedroom_humidity_sim'') | float(48) + (35 - states(''input_number.bedroom_humidity_sim'') | float(48)) * 0.01 + (1.0 if is_state(''input_boolean.bedroom_humidifier_power'',
+        ''on'') else 0) - (0.5 if is_state(''input_boolean.bedroom_ventilation_power'', ''on'') else 0), 10] | max, 90] | min) | round(1) }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.office_temperature_sim
     data:
-      value: '{{ ([[states(''input_number.office_temperature_sim'') | float(24.0) + (19.0 - states(''input_number.office_temperature_sim'') | float(24.0)) * 0.02 + (0.4 if is_state(''input_boolean.office_heater_power'',
-        ''on'') else 0) - (0.4 if is_state(''input_boolean.office_ac_compressor'', ''on'') else 0), 5] | max, 40] | min) | round(1) }}'
+      value: '{{ ([[states(''input_number.office_temperature_sim'') | float(24.0) + (19.0 - states(''input_number.office_temperature_sim'') | float(24.0)) * (0.02 * (4 if is_state(''binary_sensor.office_window'',
+        ''on'') else 1)) + (0.4 if is_state(''input_boolean.office_heater_power'', ''on'') else 0) - (0.4 if is_state(''input_boolean.office_ac_compressor'', ''on'') else 0), 5] | max, 40] | min) | round(1)
+        }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.office_co2_sim
     data:
-      value: '{{ [[states(''input_number.office_co2_sim'') | float(1100) + 15 - (90 if is_state(''input_boolean.office_ventilation_power'', ''on'') else 0), 400] | max, 5000] | min }}'
+      value: '{{ [[states(''input_number.office_co2_sim'') | float(1100) + 15 - (90 if is_state(''input_boolean.office_ventilation_power'', ''on'') else 0) - (60 if is_state(''binary_sensor.office_window'',
+        ''on'') else 0), 400] | max, 5000] | min }}'
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.office_humidity_sim
+    data:
+      value: '{{ ([[states(''input_number.office_humidity_sim'') | float(38) + (35 - states(''input_number.office_humidity_sim'') | float(38)) * 0.01 + (1.0 if is_state(''input_boolean.office_humidifier_power'',
+        ''on'') else 0) - (0.5 if is_state(''input_boolean.office_ventilation_power'', ''on'') else 0), 10] | max, 90] | min) | round(1) }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.living_room_temperature_sim
     data:
-      value: '{{ ([[states(''input_number.living_room_temperature_sim'') | float(23.0) + (19.0 - states(''input_number.living_room_temperature_sim'') | float(23.0)) * 0.02 + (0.4 if is_state(''input_boolean.living_room_heater_power'',
-        ''on'') else 0) - (0.4 if is_state(''input_boolean.living_room_ac_compressor'', ''on'') else 0), 5] | max, 40] | min) | round(1) }}'
+      value: '{{ ([[states(''input_number.living_room_temperature_sim'') | float(23.0) + (19.0 - states(''input_number.living_room_temperature_sim'') | float(23.0)) * (0.02 * (4 if is_state(''binary_sensor.living_room_window'',
+        ''on'') else 1)) + (0.4 if is_state(''input_boolean.living_room_heater_power'', ''on'') else 0) - (0.4 if is_state(''input_boolean.living_room_ac_compressor'', ''on'') else 0), 5] | max, 40] | min)
+        | round(1) }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.living_room_co2_sim
     data:
-      value: '{{ [[states(''input_number.living_room_co2_sim'') | float(650) + 15 - (90 if is_state(''input_boolean.living_room_ventilation_power'', ''on'') else 0), 400] | max, 5000] | min }}'
+      value: '{{ [[states(''input_number.living_room_co2_sim'') | float(650) + 15 - (90 if is_state(''input_boolean.living_room_ventilation_power'', ''on'') else 0) - (60 if is_state(''binary_sensor.living_room_window'',
+        ''on'') else 0), 400] | max, 5000] | min }}'
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.living_room_humidity_sim
+    data:
+      value: '{{ ([[states(''input_number.living_room_humidity_sim'') | float(45) + (35 - states(''input_number.living_room_humidity_sim'') | float(45)) * 0.01 + (1.0 if is_state(''input_boolean.living_room_humidifier_power'',
+        ''on'') else 0) - (0.5 if is_state(''input_boolean.living_room_ventilation_power'', ''on'') else 0), 10] | max, 90] | min) | round(1) }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.corridor_temperature_sim
     data:
-      value: '{{ ([[states(''input_number.corridor_temperature_sim'') | float(21.0) + (19.0 - states(''input_number.corridor_temperature_sim'') | float(21.0)) * 0.02 + (0.4 if is_state(''input_boolean.corridor_heater_power'',
+      value: '{{ ([[states(''input_number.corridor_temperature_sim'') | float(21.0) + (19.0 - states(''input_number.corridor_temperature_sim'') | float(21.0)) * (0.02 * (4 if false else 1)) + (0.4 if is_state(''input_boolean.corridor_heater_power'',
         ''on'') else 0) - 0, 5] | max, 40] | min) | round(1) }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.corridor_co2_sim
     data:
-      value: '{{ [[states(''input_number.corridor_co2_sim'') | float(500) + 15 - (90 if is_state(''input_boolean.corridor_ventilation_power'', ''on'') else 0), 400] | max, 5000] | min }}'
+      value: '{{ [[states(''input_number.corridor_co2_sim'') | float(500) + 15 - (90 if is_state(''input_boolean.corridor_ventilation_power'', ''on'') else 0) - (60 if false else 0), 400] | max, 5000] |
+        min }}'
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.corridor_humidity_sim
+    data:
+      value: '{{ ([[states(''input_number.corridor_humidity_sim'') | float(42) + (35 - states(''input_number.corridor_humidity_sim'') | float(42)) * 0.01 + 0 - (0.5 if is_state(''input_boolean.corridor_ventilation_power'',
+        ''on'') else 0), 10] | max, 90] | min) | round(1) }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.kitchen_temperature_sim
     data:
-      value: '{{ ([[states(''input_number.kitchen_temperature_sim'') | float(25.5) + (19.0 - states(''input_number.kitchen_temperature_sim'') | float(25.5)) * 0.02 + (0.4 if is_state(''input_boolean.kitchen_heater_power'',
-        ''on'') else 0) - (0.4 if is_state(''input_boolean.kitchen_ac_compressor'', ''on'') else 0), 5] | max, 40] | min) | round(1) }}'
+      value: '{{ ([[states(''input_number.kitchen_temperature_sim'') | float(25.5) + (19.0 - states(''input_number.kitchen_temperature_sim'') | float(25.5)) * (0.02 * (4 if is_state(''binary_sensor.kitchen_window'',
+        ''on'') else 1)) + (0.4 if is_state(''input_boolean.kitchen_heater_power'', ''on'') else 0) - (0.4 if is_state(''input_boolean.kitchen_ac_compressor'', ''on'') else 0), 5] | max, 40] | min) | round(1)
+        }}'
   - action: input_number.set_value
     target:
       entity_id: input_number.kitchen_co2_sim
     data:
-      value: '{{ [[states(''input_number.kitchen_co2_sim'') | float(800) + 15 - (90 if is_state(''input_boolean.kitchen_ventilation_power'', ''on'') else 0), 400] | max, 5000] | min }}'
+      value: '{{ [[states(''input_number.kitchen_co2_sim'') | float(800) + 15 - (90 if is_state(''input_boolean.kitchen_ventilation_power'', ''on'') else 0) - (60 if is_state(''binary_sensor.kitchen_window'',
+        ''on'') else 0), 400] | max, 5000] | min }}'
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.kitchen_humidity_sim
+    data:
+      value: '{{ ([[states(''input_number.kitchen_humidity_sim'') | float(55) + (35 - states(''input_number.kitchen_humidity_sim'') | float(55)) * 0.01 + 0 - (0.5 if is_state(''input_boolean.kitchen_ventilation_power'',
+        ''on'') else 0), 10] | max, 90] | min) | round(1) }}'
 script: !include scripts.yaml
