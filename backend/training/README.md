@@ -43,7 +43,14 @@ python -m training.build_dataset --intents 150 --phrasings 1 --seed 777 --eval -
 # виды, добавленные позже, - отдельными файлами, чтобы основной набор (и кэш учителя) не менялся:
 python -m training.build_dataset --kinds brightness --intents 150 --phrasings 4 --seed 11 --out training/data/train_brightness.jsonl
 python -m training.build_dataset --kinds brightness --intents 30 --phrasings 1 --seed 778 --eval --out training/data/eval_brightness.jsonl
+python -m training.build_dataset --kinds curtains,humidifier,security,house_status,history,schedule --intents 360 --phrasings 4 --seed 21 --out training/data/train_house2.jsonl
+python -m training.build_dataset --kinds curtains,humidifier,security,house_status,history,schedule --intents 60 --phrasings 1 --seed 779 --eval --out training/data/eval_house2.jsonl
 ```
+
+Описания инструментов, на которых собраны данные, сборка кладёт в
+`training/data/tools.json`. Модель, обученная на них, должна получать ровно их:
+в экзамене — `--tools training/data/tools.json`, в Jarvis — скопировать этот
+файл в `app/llm/home_model_tools.json`, когда модель подключается.
 
 ## Экзамен
 
@@ -70,7 +77,7 @@ python -m training.evaluate --compare
 3. Проверка видеокарты:
    `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"`
 4. Пробный прогон (минуты): `python -m training.train_lora --data training/data/pilot.jsonl --out training/runs/smoke --max-steps 20`
-5. Обучение: `python -m training.train_lora --data training/data/train.jsonl training/data/train_brightness.jsonl --out training/runs/home-1.5b`
+5. Обучение: `python -m training.train_lora --data training/data/train.jsonl training/data/train_brightness.jsonl training/data/train_house2.jsonl --out training/runs/home-1.5b`
    (LoRA поверх 4-битной модели; float16 — у RTX 2060 нет bfloat16).
 6. Слить адаптер с базой: `python -m training.merge_adapter --adapter training/runs/home-1.5b/adapter --out training/runs/home-1.5b/merged`
 7. В GGUF для Ollama — скриптом `convert_hf_to_gguf.py` из llama.cpp:
