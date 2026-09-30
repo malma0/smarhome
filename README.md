@@ -13,7 +13,7 @@ Backend голосового ассистента, который отвечае
 
 **Стек:** Python · FastAPI · SQLite · Anthropic / Groq / Ollama · Home Assistant · Docker · Whisper · Vosk · SpeechBrain · pytest
 
-Полное техническое задание — в [docs/TZ.md](docs/TZ.md). Ниже описано, как всё устроено и как запустить.
+Полное техническое задание — в [docs/TZ.md](docs/TZ.md), что готово, что в работе и что дальше — в [docs/STATUS.md](docs/STATUS.md). Ниже описано, как всё устроено и как запустить.
 
 ## Архитектура
 
