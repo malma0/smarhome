@@ -29,11 +29,15 @@ from app.agent import JarvisAgent, current_time_note
 from app.db import connect
 from app.domains import home
 from app.memory import MemoryStore
-from app.tools.registry import ToolRegistry
+from app.tools.registry import Tool, ToolRegistry
 from training.build_dataset import _random_time
 from training.sim_house import SimHouse
 
 EVAL_FILE = Path(__file__).parent / "data" / "eval.jsonl"
+# The exam's tools are the ones the home model was trained on: the live ones
+# grew (curtains, history...), and a changed tool text would make old and
+# new scores incomparable.
+TRAINED_TOOLS = json.loads((Path(__file__).parents[1] / "app" / "llm" / "home_model_tools.json").read_text("utf-8"))
 RESULTS = Path(__file__).parent / "results"
 
 
@@ -64,7 +68,9 @@ async def run_case(llm, case: dict, hour: int | None = None) -> dict:
         when = when.replace(hour=hour, minute=0)
     house = SimHouse(random.Random(case["house_seed"]))
     tools = ToolRegistry()
-    home.register(tools, client=house)
+    for definition, handler in zip(TRAINED_TOOLS, home.make_handlers(house)):
+        f = definition["function"]
+        tools.register(Tool(name=f["name"], description=f["description"], parameters=f["parameters"], handler=handler))
     agent = JarvisAgent(llm=llm, tools=tools, memory=MemoryStore(connect(":memory:")))
     started = time.monotonic()
     with patch("app.agent.current_time_note", lambda now=None: current_time_note(when)):
