@@ -78,7 +78,9 @@ NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 
 
 def _numbers(text: str) -> set[str]:
-    return {n.replace(",", ".") for n in NUMBER.findall(text.replace("co2", ""))}
+    """"08:00" and "8" are the same hour - leading zeros and a bare 0 don't count."""
+    found = {n.replace(",", ".") for n in NUMBER.findall(text.replace("co2", ""))}
+    return {str(int(n)) if n.isdigit() else n for n in found} - {"0"}
 
 
 def phrase_ok(intent: Intent, phrase: str) -> bool:

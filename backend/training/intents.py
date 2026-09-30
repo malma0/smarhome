@@ -393,11 +393,13 @@ def _schedule(rng, house) -> Intent:
         at = f"{hour:02d}:{minute:02d}"
         mention = [str(hour)] + ([f"{minute:02d}"] if minute else [])
         return Intent("schedule", f"перенести расписание «{name}» на {hour}:{minute:02d}", mention,
-                      [call("house_schedule", action="set_time", name=name, time=at)], question="set_time")
+                      [call("house_schedule", action="set_time", name=name, time=at)], question="set_time",
+                      required_any=("перенес", "переставь", "поставь", "передвин", "сдвин", "распис", "измени"))
     action = rng.choice(["enable", "disable"])
     word = "ВКЛЮЧИТЬ" if action == "enable" else "ВЫКЛЮЧИТЬ (больше не нужно)"
+    # "включи режим спокойной ночи" is the scenario, not its schedule - the word has to be there.
     return Intent("schedule", f"{word} расписание «{name}»", [], [call("house_schedule", action=action, name=name)],
-                  question=action, action="on" if action == "enable" else "off")
+                  question=action, action="on" if action == "enable" else "off", required_any=("распис",))
 
 
 # Kinds added after the main set was built: drawn only when asked for by
