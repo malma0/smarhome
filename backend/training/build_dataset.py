@@ -36,6 +36,7 @@ from training.sim_house import SimHouse
 from training.teacher import Teacher
 
 HOME_TOOLS = ("get_home_status", "control_devices", "set_room_norm", "run_scenario")
+MORE_TOOLS = ("home_history", "house_schedule")
 YES = ["да", "да, подтверждаю", "давай", "конечно", "да, делай", "ага, да"]
 
 
@@ -63,8 +64,8 @@ ON_WORDS = ("включ", "вруби", "зажг", "зажж", "запуст", 
 OFF_WORDS = ("выключ", "отключ", "выруб", "погас", "потуш", "остан", "убери")
 # Orders, not states: "что включено?" is a question, "включи" is not.
 COMMANDS = re.compile(r"\b(?:вы|от|в)(?:ключи|ключай|руби|рубай)\b|\b(?:погаси|потуши|зажги|запусти|останови)\b")
-OPEN_WORDS = ("открой", "открыть", "откро", "пусти")
-CLOSE_WORDS = ("закрой", "закрыть", "перекр", "выключ", "отключ", "перекро")
+OPEN_WORDS = ("открой", "открыть", "откро", "пусти", "раздвин", "раздерн", "подними")
+CLOSE_WORDS = ("закрой", "закрыть", "перекр", "выключ", "отключ", "перекро", "задерн", "задвин", "опусти")
 
 
 # Words from the task description a teacher copied into "speech", and
@@ -133,8 +134,11 @@ def _assistant_calls(calls: list[dict]) -> dict:
             "tool_calls": [{"type": "function", "function": {"name": c["name"], "arguments": c["arguments"]}} for c in calls]}
 
 
-async def _run_calls(house: SimHouse, calls: list[dict], ctx: TurnContext) -> list[tuple[dict, dict]]:
+async def _run_calls(house: SimHouse, calls: list[dict], ctx: TurnContext, when: datetime | None = None
+                     ) -> list[tuple[dict, dict]]:
     handlers = dict(zip(HOME_TOOLS, home.make_handlers(house)))
+    now = when or datetime.now().astimezone()
+    handlers.update(zip(MORE_TOOLS, home.make_more_handlers(house, now=lambda: now)))
     return [(c, await handlers[c["name"]](dict(c["arguments"]), ctx)) for c in calls]
 
 
@@ -162,7 +166,7 @@ async def build_conversation(rng, house_seed: int, intent: Intent, phrase: str) 
     messages = [{"role": "system", "content": system_prompt(spoken=rng.random() < 0.7)},
                 {"role": "user", "content": f"{_with_name(rng, phrase)}\n\n[{current_time_note(when)}]"}]
     conv = Conversation(messages, {"kind": intent.kind, "meaning": intent.meaning, "house_seed": house_seed}, rng, intent)
-    calls = [dict(c, arguments=dict(c["arguments"])) for c in intent.calls]
+    calls = [dict(c, arguments=dict(c["arguments"])) for c in (intent.calls_at(when) if intent.calls_at else intent.calls)]
     if intent.name_from_phrase:
         for c in calls:
             c["arguments"]["name"] = _spoken_name(phrase)
@@ -171,7 +175,7 @@ async def build_conversation(rng, house_seed: int, intent: Intent, phrase: str) 
         return conv
 
     conv.messages.append(_assistant_calls(calls))
-    pairs = await _run_calls(house, calls, TurnContext())
+    pairs = await _run_calls(house, calls, TurnContext(), when)
     conv.results_message(pairs)
     if intent.then and all("error" not in r for _, r in pairs):
         follow = intent.then(house)
@@ -194,14 +198,20 @@ async def build_conversation(rng, house_seed: int, intent: Intent, phrase: str) 
     return conv
 
 
+def exam_time(house_seed: int) -> datetime:
+    """The clock an exam case is set at - training/evaluate.py uses the same."""
+    return _random_time(random.Random(house_seed))
+
+
 async def expected_effects(house_seed: int, intent: Intent, phrase: str) -> list:
     """What the right answer does to the house - for evaluation."""
     house = SimHouse(random.Random(house_seed))
-    calls = [dict(c, arguments=dict(c["arguments"])) for c in intent.calls]
+    when = exam_time(house_seed)
+    calls = [dict(c, arguments=dict(c["arguments"])) for c in (intent.calls_at(when) if intent.calls_at else intent.calls)]
     if intent.name_from_phrase:
         for c in calls:
             c["arguments"]["name"] = _spoken_name(phrase)
-    pairs = await _run_calls(house, calls, TurnContext()) if calls else []
+    pairs = await _run_calls(house, calls, TurnContext(), when) if calls else []
     if intent.then and calls and all("error" not in r for _, r in pairs):
         follow = intent.then(house)
         if follow:
@@ -256,14 +266,20 @@ def main() -> None:
             for i, phrase in phrased:
                 house_seed, intent = specs[i]
                 effects = asyncio.run(expected_effects(house_seed, intent, phrase))
-                f.write(json.dumps({"house_seed": house_seed, "said": phrase, "kind": intent.kind,
-                                    "meaning": intent.meaning, "first_tools": [c["name"] for c in intent.calls],
-                                    "effects": effects}, ensure_ascii=False) + "\n")
+                expected = intent.calls_at(exam_time(house_seed)) if intent.calls_at else intent.calls
+                # Said the way it's said live - with the name, most of the time.
+                said = _with_name(random.Random(house_seed), phrase) if args.kinds else phrase
+                f.write(json.dumps({"house_seed": house_seed, "said": said, "kind": intent.kind,
+                                    "meaning": intent.meaning, "first_tools": [c["name"] for c in expected],
+                                    "expected_calls": expected, "effects": effects}, ensure_ascii=False) + "\n")
         print(f"wrote {len(phrased)} eval cases to {out}")
         return
 
     conversations = [asyncio.run(build_conversation(rng, specs[i][0], specs[i][1], p)) for i, p in phrased]
     tools = tool_definitions()
+    # The tools this data was built with - a model trained on it gets exactly
+    # these at run time (app/llm/home_model_tools.json) and in its exam.
+    (out.parent / "tools.json").write_text(json.dumps(tools, ensure_ascii=False, indent=1), encoding="utf-8")
     with out.open("w", encoding="utf-8") as f:
         for conv in conversations:
             f.write(json.dumps({"messages": conv.messages, "tools": tools, "meta": conv.meta}, ensure_ascii=False) + "\n")

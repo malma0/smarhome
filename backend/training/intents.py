@@ -10,6 +10,7 @@ per room); a teacher model only writes how a person would say it.
 
 import random
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Callable
 
 from training.sim_house import ROOM_CATALOG, SimHouse
@@ -41,6 +42,8 @@ class Intent:
     required_any: tuple[str, ...] = ()  # the phrasing has to have one of these stems
     no_commands: bool = False  # a question or a complaint - no "включи"/"погаси" in it
     forbidden_any: tuple[str, ...] = ()  # stems that would mean something else ("потеплее" for "потемнее")
+    # Calls that depend on the clock the example is set at ("вчера", "ночью") - instead of calls.
+    calls_at: Callable[[datetime], list[dict]] | None = None
 
 
 def call(tool: str, **arguments) -> dict:
@@ -242,10 +245,168 @@ KINDS: list[tuple[Callable, int]] = [
 ]
 
 
+# --- the second batch of the house: curtains, humidifiers, the guard, history, schedules ---
+
+CURTAIN_WORDS = ("штор", "жалюз", "занавес", "портьер")
+ARM_WORDS = ("постав", "включи охран", "охрану включ", "на охран")
+DISARM_WORDS = ("сними", "сня", "выключи охран", "отключи охран", "убери охран")
+
+
+def _rooms_with(house: SimHouse, device: str) -> list[str]:
+    return [r for r in house.rooms if house.has(r, device)]
+
+
+def _curtains(rng, house) -> Intent:
+    rooms = _rooms_with(house, "curtains")
+    everywhere = not rooms or rng.random() < 0.2
+    room = None if everywhere else rng.choice(rooms)
+    where = "ВО ВСЕХ комнатах (все шторы)" if everywhere else f"комната: {room.lower()}"
+    if not everywhere and rng.random() < 0.3:
+        position = rng.choice([30, 50, 50, 70])
+        said = "наполовину" if position == 50 else f"на {position}%"
+        mention = [stem(room)] + ([] if position == 50 else [str(position)])
+        return Intent("curtains", f"ОТКРЫТЬ шторы {said}; {where}", mention,
+                      [call("control_devices", room=_room(room), device="curtains", action="on", position=position)],
+                      required_any=CURTAIN_WORDS + ("жалюзи",) if position != 50 else ("наполовин", "половин"))
+    action = rng.choice(["on", "off"])
+    word = "ОТКРЫТЬ" if action == "on" else "ЗАКРЫТЬ"
+    return Intent("curtains", f"{word} шторы; {where}", [] if everywhere else [stem(room)],
+                  [call("control_devices", room="all" if everywhere else _room(room), device="curtains",
+                        action=action)],
+                  action="open" if action == "on" else "close", required_any=CURTAIN_WORDS)
+
+
+def _humidifier(rng, house) -> Intent:
+    rooms = _rooms_with(house, "humidifier")
+    room = rng.choice(rooms) if rooms else rng.choice(house.rooms)
+    if rng.random() < 0.5:
+        value = rng.choice([35, 40, 45, 50, 55])
+        return Intent("humidifier", f"человек просит держать влажность не ниже {value}%; комната: {room.lower()}",
+                      [stem(room), str(value)], [call("set_room_norm", room=_room(room), humidity_min=value)],
+                      required_any=("влажн", "увлажн"), no_commands=True)
+    action = rng.choice(["on", "off"])
+    return Intent("humidifier", f"{ON_OFF[action]} увлажнитель; комната: {room.lower()}", [stem(room)],
+                  [call("control_devices", room=_room(room), device="humidifier", action=action)],
+                  action=action, required_any=("увлажн",))
+
+
+def _security(rng, house) -> Intent:
+    arm = rng.random() < 0.5
+    meaning = "ПОСТАВИТЬ дом на охрану" if arm else "СНЯТЬ дом с охраны"
+    return Intent("security", meaning, [], [call("control_devices", room="all", device="security",
+                                                 action="on" if arm else "off")],
+                  required_any=ARM_WORDS if arm else DISARM_WORDS,
+                  forbidden_any=DISARM_WORDS if arm else ("постав",))
+
+
+def _house_status(rng, house) -> Intent:
+    """Questions the house answers now - windows, movement, curtains, the guard, power."""
+    choices = []
+    with_window = _rooms_with(house, "window")
+    if with_window:
+        choices.append(("window", "открыто ли там окно", rng.choice(with_window)))
+    choices.append(("movement", "есть ли там сейчас кто-нибудь (движение)", rng.choice(house.rooms)))
+    with_curtains = _rooms_with(house, "curtains")
+    if with_curtains:
+        choices.append(("curtains", "открыты ли там шторы", rng.choice(with_curtains)))
+    with_humidifier = _rooms_with(house, "humidifier")
+    if with_humidifier:
+        choices.append(("humidifier", "работает ли там увлажнитель", rng.choice(with_humidifier)))
+    choices += [("security", "стоит ли дом на охране", None), ("power", "сколько электричества дом тратит прямо сейчас", None),
+                ("windows", "где в доме открыты окна", None)]
+    question, what, room = rng.choice(choices)
+    if room is None:
+        return Intent("house_status", f"человек спрашивает: {what}", [], [call("get_home_status")],
+                      question=question, no_commands=True)
+    return Intent("house_status", f"человек спрашивает: {what}; комната: {room.lower()}", [stem(room)],
+                  [call("get_home_status", room=_room(room))], question=question, no_commands=True)
+
+
+def _period(rng, electricity: bool):
+    """(what the person says, start and end from the clock) - worked out here, not by a model."""
+    def day(when: datetime, days_back: int = 0) -> datetime:
+        return when.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_back)
+
+    fmt = lambda t: t.strftime("%Y-%m-%dT%H:%M")  # noqa: E731
+    if electricity:
+        options = [
+            ("за сегодня", lambda w: (day(w), w)),
+            ("вчера", lambda w: (day(w, 1), day(w))),
+            ("за эту неделю", lambda w: (day(w, w.weekday()), w)),
+            ("за этот месяц", lambda w: (day(w).replace(day=1), w)),
+            ("за прошлый месяц", lambda w: ((day(w).replace(day=1) - timedelta(days=1)).replace(day=1),
+                                            day(w).replace(day=1))),
+        ]
+    else:
+        options = [
+            ("за последний час", lambda w: (w - timedelta(hours=1), w)),
+            ("за последние 3 часа", lambda w: (w - timedelta(hours=3), w)),
+            ("этой ночью", lambda w: (day(w), day(w) + timedelta(hours=7))
+                if w.hour >= 8 else (day(w, 1), day(w, 1) + timedelta(hours=7))),
+            ("вчера", lambda w: (day(w, 1), day(w))),
+            ("за сутки", lambda w: (w - timedelta(hours=24), w)),
+        ]
+    said, span = rng.choice(options)
+    numbers = [n for n in said.split() if n.isdigit()]  # "за последние 3 часа" - the 3 has to be said
+    return said, numbers, lambda when: tuple(fmt(t) for t in span(when))
+
+
+def _history(rng, house) -> Intent:
+    electricity = rng.random() < 0.3
+    said, numbers, span = _period(rng, electricity)
+    if electricity:
+        def calls(when):
+            start, end = span(when)
+            return [call("home_history", what="electricity", start=start, end=end)]
+        return Intent("history", f"человек спрашивает, сколько электричества дом потратил {said}", numbers, [],
+                      calls_at=calls, question="electricity", no_commands=True,
+                      required_any=("электр", "энерг", "свет", "квт", "кило"))
+    room = rng.choice(house.rooms)
+    what, word = rng.choice([("temperature", "какая была температура"), ("humidity", "какая была влажность"),
+                             ("co2", "какой был CO2 (духота)")])
+
+    def calls(when):
+        start, end = span(when)
+        return [call("home_history", what=what, room=_room(room), start=start, end=end)]
+    required = {"temperature": ("темпер", "градус", "тепл", "холод"), "humidity": ("влажн",),
+                "co2": ("co2", "углекисл", "душн", "воздух")}[what]
+    return Intent("history", f"человек спрашивает, {word} {said}; комната: {room.lower()}", [stem(room)] + numbers, [],
+                  calls_at=calls, question=what, no_commands=True, required_any=required)
+
+
+SCHEDULE_NAMES = {"schedule_good_morning": "доброе утро", "schedule_sunset_entrance": "свет на закате",
+                  "schedule_good_night": "спокойной ночи"}
+
+
+def _schedule(rng, house) -> Intent:
+    present = [s["entity_id"].split(".", 1)[1] for s in house.states if s["entity_id"].startswith("automation.schedule_")]
+    if not present or rng.random() < 0.25:
+        return Intent("schedule", "человек спрашивает, какие в доме расписания и во сколько они срабатывают", [],
+                      [call("house_schedule", action="list")], question="list", no_commands=True,
+                      required_any=("распис", "во сколько", "когда"))
+    object_id = rng.choice(present)
+    name = SCHEDULE_NAMES[object_id]
+    timed = object_id != "schedule_sunset_entrance"
+    if timed and rng.random() < 0.6:
+        hour, minute = rng.choice([(6, 0), (6, 30), (7, 0), (7, 30), (8, 0), (8, 30), (9, 0)] if object_id ==
+                                  "schedule_good_morning" else [(22, 0), (22, 30), (23, 0), (23, 30)])
+        at = f"{hour:02d}:{minute:02d}"
+        mention = [str(hour)] + ([f"{minute:02d}"] if minute else [])
+        return Intent("schedule", f"перенести расписание «{name}» на {hour}:{minute:02d}", mention,
+                      [call("house_schedule", action="set_time", name=name, time=at)], question="set_time")
+    action = rng.choice(["enable", "disable"])
+    word = "ВКЛЮЧИТЬ" if action == "enable" else "ВЫКЛЮЧИТЬ (больше не нужно)"
+    return Intent("schedule", f"{word} расписание «{name}»", [], [call("house_schedule", action=action, name=name)],
+                  question=action, action="on" if action == "enable" else "off")
+
+
 # Kinds added after the main set was built: drawn only when asked for by
 # name (build_dataset --kinds), so the main set's draws - and the teacher's
 # cached phrasings for them - stay the same.
-EXTRA_KINDS: dict[str, Callable] = {"brightness": _brightness_relative}
+EXTRA_KINDS: dict[str, Callable] = {
+    "brightness": _brightness_relative, "curtains": _curtains, "humidifier": _humidifier, "security": _security,
+    "house_status": _house_status, "history": _history, "schedule": _schedule,
+}
 
 
 def draw(rng: random.Random, house: SimHouse, kinds: list[str] | None = None) -> Intent:

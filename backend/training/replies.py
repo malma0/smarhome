@@ -27,6 +27,8 @@ DEVICES = {
     "ventilation": ("вентиляция", "вентиляции", "вентиляцию", "включена", "выключена", "включила", "выключила"),
     "water_valve": ("кран воды", "крана воды", "воду", "открыт", "перекрыт", "открыла", "перекрыла"),
     "gas_valve": ("кран газа", "крана газа", "газ", "открыт", "перекрыт", "открыла", "перекрыла"),
+    "curtains": ("шторы", "штор", "шторы", "открыты", "закрыты", "открыла", "закрыла"),
+    "humidifier": ("увлажнитель", "увлажнителя", "увлажнитель", "включён", "выключен", "включила", "выключила"),
 }
 _NAMES = {name.casefold(): name for _, name in ROOM_CATALOG}
 
@@ -89,9 +91,15 @@ def _control_reply(rng: random.Random, pairs: list[tuple[dict, dict]]) -> str:
                 extras[key] = f" на {result['brightness_pct']}%"
             if result.get("temperature") is not None:
                 extras[key] = f", {degrees(result['temperature'])}"
+            if result.get("position") is not None and 0 < result["position"] < 100:
+                extras[key] = f" на {result['position']}%"
             continue
         sentences.append(_control_error(rng, args, result))
     for (device, action), rooms in done_by_device.items():
+        if device == "security":
+            sentences.insert(0, rng.choice(["Поставила дом на охрану.", "Дом на охране."] if action == "on"
+                                           else ["Охрану сняла.", "Сняла дом с охраны."]))
+            continue
         nom, gen, acc, on_state, off_state, verb_on, verb_off = DEVICES[device]
         extra = extras.get((device, action), "")
         if device in ("water_valve", "gas_valve"):
@@ -192,6 +200,29 @@ def _status_reply(rng, question: str | None, result: dict, asked_room: str | Non
                 target = value.split("to ")[1].split(" °C")[0]
                 return f"Да, кондиционер {where} охлаждает до {degrees(float(target))}."
             return f"Нет, кондиционер {where} выключен."
+        if question == "window":
+            if "window" not in data:
+                return f"{cap(where)} нет датчика окна."
+            return f"Окно {where} {'открыто' if data['window'] == 'open' else 'закрыто'}."
+        if question == "movement":
+            if "movement" not in data:
+                return f"{cap(where)} нет датчика движения."
+            return f"{cap(where)} сейчас есть движение." if data["movement"] == "now" else f"{cap(where)} сейчас никого."
+        if question == "curtains":
+            if "curtains" not in data:
+                return f"{cap(where)} нет штор."
+            state = data["curtains"]
+            if state == "closed":
+                return f"Шторы {where} закрыты."
+            return f"Шторы {where} открыты." if state == "open" else f"Шторы {where} {state.replace('open', 'открыты на')}."
+        if question == "humidifier":
+            if "humidifier" not in data:
+                return f"{cap(where)} нет увлажнителя."
+            state = str(data["humidifier"])
+            if not state.startswith("on"):
+                return f"Увлажнитель {where} выключен."
+            keeps = state.split("keeps ")[1].split(" %")[0] if "keeps " in state else None
+            return f"Увлажнитель {where} работает" + (f", держит {keeps}%." if keeps else ".")
         on = [ON_KEYS[k] for k, v in data.items() if k in ON_KEYS and _is_on(k, v)]
         return f"{cap(where)} включены: {_join(on)}." if on else f"{cap(where)} ничего не включено."
 
@@ -215,6 +246,21 @@ def _status_reply(rng, question: str | None, result: dict, asked_room: str | Non
     if question == "any_ac":
         cooling = [r for r, d in rooms.items() if str(d.get("ac", "")).startswith("cool")]
         return f"Кондиционер работает {_rooms_phrase(cooling)}." if cooling else "Кондиционеры нигде не работают."
+    house = rooms.get("Весь дом", {})
+    if question == "security":
+        if "security" not in house:
+            return "Охраны в доме нет."
+        return "Дом на охране." if house["security"] == "armed" else "Охрана выключена."
+    if question == "power":
+        if "power_now" not in house:
+            return "Счётчика электричества в доме нет."
+        watts = _float(house["power_now"])
+        return f"Сейчас дом потребляет {watts:g} Вт." if watts is not None else "Мощность сейчас не видна."
+    if question == "windows":
+        opened = [r for r, d in rooms.items() if d.get("window") == "open"]
+        if not any("window" in d for d in rooms.values()):
+            return "Датчиков окон в доме нет."
+        return f"Окна открыты {_rooms_phrase(opened)}." if opened else "Все окна закрыты."
     if question == "all_ok":
         dangers = [r for r, d in rooms.items() if "DETECTED" in json.dumps(d.get("danger_sensors", {}))]
         return f"Тревога {_rooms_phrase(dangers)}!" if dangers else "Всё спокойно, датчики опасности молчат."
@@ -235,6 +281,8 @@ def _norm_reply(rng, pairs, direction: str | None) -> str:
         error = result["error"]
         if "norm can be" in error:
             return "Норму температуры можно ставить от 16 до 28 градусов."
+        if "has no humidity_min" in error:
+            return f"{cap(at(c['arguments'].get('room', '')))} нет увлажнителя, влажность там не держится."
         if "has no" in error:
             return f"{cap(at(c['arguments'].get('room', '')))} нет нормы, дом там её не держит."
         if error.startswith("No room called"):
@@ -246,6 +294,8 @@ def _norm_reply(rng, pairs, direction: str | None) -> str:
             parts.append(f"{at(d['room'])} держу {degrees(d['temperature'])}")
         if "co2_max" in d:
             parts.append(f"CO2 {at(d['room'])} не выше {d['co2_max']:g} ppm")
+        if "humidity_min" in d:
+            parts.append(f"влажность {at(d['room'])} не ниже {d['humidity_min']:g}%")
     prefix = {"up": "Сделала теплее: ", "down": "Сделала прохладнее: "}.get(direction, rng.choice(["Хорошо, ", "Готово, "]))
     return prefix + _join(parts) + "."
 
@@ -292,6 +342,55 @@ def _brightness_reply(rng, intent, pairs) -> str:
     return f"Свет {where} уже на полную."
 
 
+HISTORY_WORDS = {"temperature": "температура", "humidity": "влажность", "co2": "CO2"}
+
+
+def _history_reply(rng, intent, result: dict) -> str:
+    if "error" in result:
+        error = result["error"]
+        if "no " in error and "sensor" in error:
+            room = error.split(" has no ")[0]
+            what = {"temperature": "температуры", "humidity": "влажности", "co2": "CO2"}.get(intent.question, "")
+            return f"{cap(at(room))} нет датчика {what}.".replace("  ", " ")
+        if error.startswith("No room called"):
+            return "Такой комнаты в доме нет."
+        return "За это время записей нет."
+    if result.get("what") == "electricity":
+        return rng.choice([f"За это время дом потратил {number(result['used_kwh'])} кВт·ч.",
+                           f"Расход - {number(result['used_kwh'])} кВт·ч."])
+    where, what = at(result["room"]), result["what"]
+    low, high, avg = result["min"]["value"], result["max"]["value"], result["average"]
+    if what == "temperature":
+        return f"{cap(where)} было от {number(low)} до {degrees(high)}, в среднем {degrees(avg)}."
+    unit = "%" if what == "humidity" else " ppm"
+    return (f"{HISTORY_WORDS[what].capitalize()} {where} была от {number(low)} до {number(high)}{unit}, "
+            f"в среднем {number(avg)}{unit}.") if what == "humidity" else (
+            f"CO2 {where} был от {low:.0f} до {high:.0f} ppm, в среднем {avg:.0f} ppm.")
+
+
+def _quoted(name: str) -> str:
+    return name if "«" in name else f"«{name}»"
+
+
+def _schedule_reply(rng, intent, result: dict) -> str:
+    if "error" in result:
+        error = result["error"]
+        if "no set time" in error:
+            return "Это расписание привязано к закату, время у него не меняется."
+        return "Такого расписания нет."
+    if "schedules" in result:
+        items = result["schedules"]
+        if not items:
+            return "Расписаний в доме нет."
+        parts = [_quoted(s["name"]) + (f" в {s['time']}" if s.get("time") else "") + ("" if s["on"] else " (выключено)")
+                 for s in items]
+        return "Расписания: " + _join(parts) + "."
+    done = result["done"]
+    if intent.question == "set_time":
+        return f"Перенесла {_quoted(done['name'])} на {done['time']}."
+    return f"{'Включила' if done['on'] else 'Выключила'} расписание {_quoted(done['name'])}."
+
+
 def reply(rng: random.Random, intent, pairs: list[tuple[dict, dict]]) -> str:
     if intent.kind == "chat":
         return rng.choice(CHAT[intent.question])
@@ -299,6 +398,10 @@ def reply(rng: random.Random, intent, pairs: list[tuple[dict, dict]]) -> str:
         return _brightness_reply(rng, intent, pairs)
     last_call, last_result = pairs[-1]
     name = last_call["name"]
+    if name == "home_history":
+        return _history_reply(rng, intent, last_result)
+    if name == "house_schedule":
+        return _schedule_reply(rng, intent, last_result)
     if name == "control_devices":
         return _control_reply(rng, pairs)
     if name == "set_room_norm":

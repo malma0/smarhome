@@ -10,7 +10,9 @@ tool results - and the real house won't be the virtual one.
 
 import copy
 import json
+import math
 import random
+from datetime import datetime, timedelta, timezone
 
 # (slug, name) - the name is what Home Assistant calls the area.
 ROOM_CATALOG = [
@@ -29,6 +31,14 @@ SCENARIOS = [
      "Возвращает норму спальни, включает свет в спальне на 40%."),
     ("kino", "Кино", "включи кино, режим кино, смотрим фильм",
      "Приглушает свет в зале до 20%, выключает свет в остальных комнатах."),
+]
+
+
+# The house's schedules: (automation id, name, its time helper's default or None for the sun).
+SCHEDULES = [
+    ("schedule_good_morning", "Расписание: «Доброе утро» по будням", ["06:30", "07:00", "07:00", "07:30", "08:00"]),
+    ("schedule_sunset_entrance", "Расписание: свет в прихожей на закате", None),
+    ("schedule_good_night", "Расписание: «Спокойной ночи» каждый вечер", ["22:30", "23:00", "23:30", "00:00"]),
 ]
 
 
@@ -61,7 +71,43 @@ class SimHouse:
         for object_id, alias, phrases, does in rng.sample(SCENARIOS, rng.randint(2, len(SCENARIOS))):
             self.states.append(_state(f"script.{object_id}", "off", friendly_name=alias))
             self.scripts[object_id] = {"alias": alias, "description": f"Фразы: {phrases}. {does}"}
+        # Added later (windows, curtains, the guard...) - after everything
+        # above, so the houses of the data built before stay the same.
+        self._extras(chosen)
 
+    def _extras(self, chosen) -> None:
+        r = self.rng
+        for slug, name in chosen:
+            self._add(f"binary_sensor.{slug}_motion", r.choice(["on", "off", "off"]), slug, device_class="motion")
+            if slug == "entrance":
+                self._add("binary_sensor.entrance_door", r.choice(["off", "off", "on"]), slug, device_class="door")
+            window = slug not in ("corridor", "entrance", "bathroom") and r.random() < 0.7
+            if window:
+                self._add(f"binary_sensor.{slug}_window", r.choice(["off", "off", "off", "on"]), slug,
+                          device_class="window")
+            if window and r.random() < 0.7:
+                position = r.choice([0, 0, 100, 100, 50, 30])
+                self._add(f"cover.{slug}_curtains", "open" if position else "closed", slug,
+                          friendly_name=f"{name}: шторы", current_position=position)
+            if slug not in ("corridor", "entrance", "balcony") and r.random() < 0.35:
+                minimum = r.choice([35, 40, 40, 45, 50])
+                self._add(f"humidifier.{slug}_humidifier", r.choice(["on", "on", "off"]), slug,
+                          friendly_name=f"{name}: увлажнитель", humidity=minimum,
+                          action=r.choice(["idle", "humidifying"]))
+                self._add(f"input_number.{slug}_humidity_min", str(float(minimum)), slug, unit_of_measurement="%",
+                          min=30, max=60)
+            self._add(f"binary_sensor.{slug}_intrusion", "off", slug, device_class="safety")
+        if r.random() < 0.85:
+            self._add("input_boolean.security_armed", r.choice(["off", "off", "off", "on"]), None, friendly_name="Охрана")
+        if r.random() < 0.8:
+            self._add("sensor.house_power", str(r.randrange(60, 2500, 5)), None, unit_of_measurement="W")
+            self._add("sensor.house_energy_today", str(round(r.uniform(1, 15), 2)), None, unit_of_measurement="kWh")
+            self._add("sensor.house_energy_month", str(round(r.uniform(40, 400), 1)), None, unit_of_measurement="kWh")
+        for object_id, alias, times in SCHEDULES:
+            if r.random() < 0.6:
+                self.states.append(_state(f"automation.{object_id}", r.choice(["on", "on", "off"]), friendly_name=alias))
+                if times:
+                    self.states.append(_state(f"input_datetime.{object_id}_time", r.choice(times) + ":00"))
     def _add(self, entity_id, state, slug_area, **attrs):
         self.states.append(_state(entity_id, state, **attrs))
         name = next((n for s, n in ROOM_CATALOG if s == slug_area), None)
@@ -120,7 +166,13 @@ class SimHouse:
         if state is None:
             return []
         data = data or {}
-        if service in ("turn_on", "turn_off"):
+        if domain == "cover":
+            position = {"open_cover": 100, "close_cover": 0}.get(service, data.get("position", 0))
+            state["attributes"]["current_position"] = position
+            state["state"] = "open" if position else "closed"
+        elif service == "set_datetime":
+            state["state"] = data["time"]
+        elif service in ("turn_on", "turn_off"):
             state["state"] = "on" if service == "turn_on" else "off"
             if domain == "light" and data.get("brightness_pct"):
                 state["attributes"]["brightness"] = round(data["brightness_pct"] * 255 / 100)
@@ -133,11 +185,34 @@ class SimHouse:
             state["state"] = str(float(data["value"]))
         return []
 
+    async def get_history(self, entity_id, start, end):
+        """A made-up but steady past: the same entity and period always give
+        the same readings - around what the sensor shows now."""
+        begin, finish = datetime.fromisoformat(start), datetime.fromisoformat(end)
+        r = random.Random(f"{entity_id}|{start}")
+        state = next((s for s in self.states if s["entity_id"] == entity_id), None)
+        if state is None and entity_id != "sensor.house_energy":
+            return []
+        points, at = [], begin
+        now_value = float(state["state"]) if state else 0.0
+        total = round(r.uniform(500, 3000), 2)
+        swing = {"temperature": 1.5, "humidity": 6, "carbon_dioxide": 250}.get(
+            (state or {}).get("attributes", {}).get("device_class"), 1)
+        while at <= finish:
+            if entity_id == "sensor.house_energy":
+                value = round(total, 2)
+                total += r.uniform(0.05, 0.6)
+            else:
+                value = round(now_value + swing * math.sin(at.hour / 24 * 2 * math.pi) + r.uniform(-swing, swing) / 4, 1)
+            points.append({"state": str(value), "last_changed": at.astimezone(timezone.utc).isoformat()})
+            at += timedelta(minutes=30)
+        return points
+
     # --- for building examples ---
 
     def has(self, room: str, device: str) -> bool:
         suffix = {"light": "light.", "socket": "_socket", "ventilation": "_ventilation", "heating": "_heating",
-                  "ac": "_ac"}[device]
+                  "ac": "_ac", "humidifier": "humidifier.", "curtains": "cover.", "window": "_window"}[device]
         return any(area == room and (e.startswith(suffix) if suffix.endswith(".") else e.endswith(suffix))
                    for e, area in self.areas.items())
 

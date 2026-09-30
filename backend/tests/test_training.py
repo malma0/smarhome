@@ -19,7 +19,7 @@ def test_a_house_is_the_same_for_the_same_seed_and_the_real_tools_run_on_it():
 
     status, *_ = home.make_handlers(a)
     rooms = asyncio.run(status({}, TurnContext()))["rooms"]
-    assert set(rooms) <= set(a.rooms)
+    assert set(rooms) - {"Весь дом"} <= set(a.rooms)  # plus the house-wide guard and electricity
 
 
 def test_several_rooms_get_one_call_each():
@@ -216,3 +216,37 @@ def test_darker_is_not_warmer():
     assert not phrase_ok(dim, "Сделай потеплее")  # the mix-up seen live
     assert not phrase_ok(dim, "Сделай посветлее")
     assert not phrase_ok(dim, "Выключи свет")
+
+
+def test_history_periods_are_worked_out_from_the_clock():
+    from datetime import datetime, timedelta, timezone
+
+    from training.intents import _period
+
+    when = datetime(2026, 10, 14, 15, 20, tzinfo=timezone(timedelta(hours=7)))  # a Wednesday afternoon
+    spans = {}
+    for seed in range(200):
+        said, numbers, span = _period(random.Random(seed), electricity=seed % 2 == 0)
+        spans[said] = (span(when), numbers)
+    assert spans["вчера"][0] == ("2026-10-13T00:00", "2026-10-14T00:00")
+    assert spans["этой ночью"][0] == ("2026-10-14T00:00", "2026-10-14T07:00")
+    assert spans["за эту неделю"][0] == ("2026-10-12T00:00", "2026-10-14T15:20")
+    assert spans["за прошлый месяц"][0] == ("2026-09-01T00:00", "2026-10-01T00:00")
+    assert spans["за последние 3 часа"] == (("2026-10-14T12:20", "2026-10-14T15:20"), ["3"])
+
+
+def test_new_house_answers_read_right():
+    from training.intents import _schedule, _security
+
+    house = SimHouse(random.Random(2))
+    for seed in range(30):
+        intent = _security(random.Random(seed), house)
+        conv = asyncio.run(build_conversation(random.Random(seed), 2, intent, "поставь на охрану"))
+        answer = conv.messages[-1]["content"]
+        assert answer in ("Поставила дом на охрану.", "Дом на охране.", "Охрану сняла.", "Сняла дом с охраны.",
+                          "В доме нет охраны.") or "охран" in answer.lower()
+    moved = next(i for i in (_schedule(random.Random(s), SimHouse(random.Random(s))) for s in range(80))
+                 if i.question == "set_time")
+    seed = next(s for s in range(80) if _schedule(random.Random(s), SimHouse(random.Random(s))).question == "set_time")
+    conv = asyncio.run(build_conversation(random.Random(seed), seed, moved, "перенеси"))
+    assert conv.messages[-1]["content"].startswith("Перенесла «")
