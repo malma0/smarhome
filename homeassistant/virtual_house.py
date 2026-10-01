@@ -58,7 +58,7 @@ Around the norms and dangers, the house also:
   "Спокойной ночи" closes them all - automations on the scripts running, so
   the resident's scripts.yaml stays theirs;
 - runs schedules ("Расписание: ..." automations): "Доброе утро" at 7:00 on
-  weekdays (input_datetime.schedule_good_morning_time), the hall light at
+  its days (input_datetime.schedule_good_morning_time, input_text.*_days), the hall light at
   sunset;
 - meters electricity: sensor.house_power from what's on, sensor.house_energy
   and its day/month meters. History is kept 60 days (recorder).
@@ -127,6 +127,9 @@ AUTO_OFF_MINUTES = 10  # no movement this long - the room's light goes off
 ENTRY_DELAY = "00:01:00"  # movement in the armed house: this long to say "Я дома"
 ARM_DELAY = "00:02:00"  # "Я ушёл": armed after this, time to walk out
 GOOD_MORNING_TIME = "07:00:00"
+# The days each schedule runs on, Mon=1 .. Sun=7 - the starting value, then changed from the app
+SCHEDULE_DAYS = {"schedule_good_morning": ("«Доброе утро»", "1,2,3,4,5"),
+                 "schedule_sunset_entrance": ("света на закате", "1,2,3,4,5,6,7")}
 # Watts when on, for the electricity estimate. Heating is central (the flat's
 # utilities count it), so it uses no electricity here.
 WATTS = {"light": 60, "socket": 100, "ac": 900, "heating": 0, "ventilation": 40, "humidifier": 30}
@@ -147,7 +150,7 @@ VENTILATION_DRYING = 0.5
 
 # Platforms whose entities this script owns (the rest - sun, backup,
 # person... - belong to Home Assistant itself and are left alone).
-OWNED_PLATFORMS = {"input_boolean", "input_number", "input_datetime", "template", "generic_thermostat",
+OWNED_PLATFORMS = {"input_boolean", "input_number", "input_datetime", "input_text", "template", "generic_thermostat",
                    "generic_hygrostat", "integration", "utility_meter", "script", "automation"}
 
 
@@ -156,7 +159,7 @@ def _toggle(entity: str, on: bool) -> list[dict]:
 
 
 def _yaml() -> str:
-    input_boolean, input_number, input_datetime = {}, {}, {}
+    input_boolean, input_number, input_datetime, input_text = {}, {}, {}, {}
     lights, switches, fans, sensors, climate, automations = [], [], [], [], [], []
     binary_sensors, covers, hygrostats = [], [], []
     physics, power = [], []
@@ -468,6 +471,15 @@ def _yaml() -> str:
     input_boolean["security_armed"] = {"name": "Охрана"}
     input_datetime["schedule_good_morning_time"] = {"name": "Расписание: время «Доброе утро»", "has_date": False,
                                                     "has_time": True}
+    # A schedule's days live in a helper ("1,2,3,4,5" = Mon..Fri), not in the automation:
+    # the app shows them and will change them - no editing of the automation itself.
+    for schedule, (title, _) in SCHEDULE_DAYS.items():
+        input_text[f"{schedule}_days"] = {"name": f"Расписание: дни {title}", "max": 20}
+
+    def on_its_days(schedule: str) -> dict:
+        return {"condition": "template",
+                "value_template": "{{ now().isoweekday() | string in states('input_text.%s_days').split(',') }}" % schedule}
+
     slug_of = {"slug": "{{ trigger.entity_id.split('.')[1].rsplit('_', 1)[0] }}"}
 
     def script_ran(script: str) -> list[dict]:
@@ -583,9 +595,9 @@ def _yaml() -> str:
         },
         {
             "id": "schedule_good_morning",
-            "alias": "Расписание: «Доброе утро» по будням",
+            "alias": "Расписание: «Доброе утро»",  # the days are its own helper now
             "triggers": [{"trigger": "time", "at": "input_datetime.schedule_good_morning_time"}],
-            "conditions": [{"condition": "time", "weekday": ["mon", "tue", "wed", "thu", "fri"]},
+            "conditions": [on_its_days("schedule_good_morning"),
                            {"condition": "state", "entity_id": armed, "state": "off"}],
             "actions": [{"action": "script.turn_on", "target": {"entity_id": "script.dobroe_utro"}}],
         },
@@ -593,7 +605,8 @@ def _yaml() -> str:
             "id": "schedule_sunset_entrance",
             "alias": "Расписание: свет в прихожей на закате",
             "triggers": [{"trigger": "sun", "event": "sunset"}],
-            "conditions": [{"condition": "state", "entity_id": armed, "state": "off"}],
+            "conditions": [on_its_days("schedule_sunset_entrance"),
+                           {"condition": "state", "entity_id": armed, "state": "off"}],
             "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.entrance"},
                          "data": {"brightness_pct": 60}}],
         },
@@ -618,6 +631,7 @@ def _yaml() -> str:
         "input_boolean": input_boolean,
         "input_number": input_number,
         "input_datetime": input_datetime,
+        "input_text": input_text,
         "template": [{"light": lights}, {"switch": switches}, {"fan": fans}, {"sensor": sensors},
                      {"binary_sensor": binary_sensors}, {"cover": covers}],
         "climate": climate,
@@ -784,6 +798,8 @@ def _wanted() -> dict[tuple[str, str], tuple[str | None, str, bool]]:
         wanted[("automation", automation)] = (None, None, False)
     for schedule in ("schedule_good_morning", "schedule_sunset_entrance"):
         wanted[("automation", schedule)] = (f"automation.{schedule}", None, False)  # Jarvis finds them by id
+    for schedule in SCHEDULE_DAYS:
+        wanted[("input_text", f"{schedule}_days")] = (f"input_text.{schedule}_days", None, False)
     wanted[("input_datetime", "schedule_good_morning_time")] = (
         "input_datetime.schedule_good_morning_time", None, False)
     wanted[("input_boolean", "security_armed")] = ("input_boolean.security_armed", None, False)
@@ -862,6 +878,11 @@ async def setup(url: str = "ws://localhost:8123/api/websocket") -> None:
                 await call(type="call_service", domain="input_datetime", service="set_datetime",
                            service_data={"entity_id": state["entity_id"], "time": GOOD_MORNING_TIME})
                 print(f"good morning time set to {GOOD_MORNING_TIME}")
+            schedule = state["entity_id"].removeprefix("input_text.").removesuffix("_days")
+            if schedule in SCHEDULE_DAYS and state["state"] in ("", "unknown"):  # never set - the starting days
+                await call(type="call_service", domain="input_text", service="set_value",
+                           service_data={"entity_id": state["entity_id"], "value": SCHEDULE_DAYS[schedule][1]})
+                print(f"{schedule}: days {SCHEDULE_DAYS[schedule][1]}")
 
         missing = set(wanted) - found
         if missing:
