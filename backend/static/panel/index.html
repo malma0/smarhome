@@ -13,12 +13,12 @@
 <link rel="icon" href="icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="app.css?v=2">
+<link rel="stylesheet" href="app.css?v=3">
 <title>Jarvis</title>
 </head>
 <body>
 <div class="jv-root" id="root">
-  <div class="jv-app" id="app">
+  <div class="jv-app" id="app" data-screen="home">
     <span class="ambient"></span>
     <button class="zoom-out" id="zoomOut" aria-label="Вернуться к плану" hidden></button>
     <div class="plan-stage" id="stage"><div class="plan" id="plan"></div></div>
@@ -84,6 +84,7 @@
     </div>
   </div>
 </div>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
+<script src="screens.js?v=1"></script>
 </body>
 </html>

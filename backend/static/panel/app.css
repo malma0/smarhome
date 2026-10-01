@@ -260,3 +260,50 @@ body { -webkit-text-size-adjust: 100%; }
 .lock .go { height: 52px; padding: 0 18px; border-radius: 16px; background: var(--blue); color: #fff; font-weight: 600; }
 .lock .err { color: var(--redSoft); min-height: 18px; font-size: 13px; }
 [hidden] { display: none !important; }
+
+/* ---------- the other screens (screens.js): each fills the space above the nav and scrolls ---------- */
+.screen { position: absolute; left: 0; right: 0; top: 0; bottom: 84px; overflow-y: auto; padding: 40px 16px 32px; box-sizing: border-box; display: none; flex-direction: column; gap: 24px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.screen::-webkit-scrollbar { display: none; }
+.jv-app:not([data-screen="home"]) .header, .jv-app:not([data-screen="home"]) .plan-stage, .jv-app:not([data-screen="home"]) .orb,
+.jv-app:not([data-screen="home"]) #skeleton, .jv-app:not([data-screen="home"]) .back, .jv-app:not([data-screen="home"]) .zoom-out { display: none; }
+.jv-app[data-screen="scenes"] #screen-scenes { display: flex; animation: jvFadeUp .35s cubic-bezier(.2,.7,.2,1); }
+.scr-head { display: flex; flex-direction: column; gap: 4px; padding: 0 4px; }
+.scr-head h1 { margin: 0; font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; }
+.scr-head span { font-size: 13px; line-height: 18px; color: var(--text2); }
+.scr-h2 { display: flex; justify-content: space-between; align-items: center; padding: 0 4px; }
+.scr-h2 h2 { margin: 0; font-size: 18px; line-height: 24px; font-weight: 600; }
+.scr-h2 button { height: 44px; padding: 0 4px; font-size: 14px; font-weight: 500; color: var(--cyan); display: flex; align-items: center; gap: 4px; }
+.scr-empty { margin: 0; padding: 0 4px; font-size: 13px; color: var(--text3); }
+
+/* scenarios */
+@keyframes jvRun { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes jvPop { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(1); } }
+.scenes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.scene { position: relative; overflow: hidden; text-align: left; min-height: 150px; border-radius: 22px; padding: 14px; background: var(--surf); border: 1px solid var(--line); display: flex; flex-direction: column; justify-content: space-between; gap: 10px; transition: background-color .3s, border-color .3s, box-shadow .4s, transform .12s ease; }
+.scene .top { display: flex; justify-content: space-between; align-items: flex-start; width: 100%; }
+.scene .ic-box { width: 42px; height: 42px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: var(--surf2); color: var(--text2); transition: background-color .3s; }
+.scene .done { width: 24px; height: 24px; border-radius: 50%; background: #22D3EE; color: #04161B; display: flex; align-items: center; justify-content: center; animation: jvPop .4s cubic-bezier(.3,.7,.2,1.2); }
+.scene .txt { display: flex; flex-direction: column; gap: 4px; }
+.scene .name { font-size: 16px; line-height: 20px; font-weight: 600; }
+.scene .desc { font-size: 12px; line-height: 16px; color: var(--text2); }
+.scene .meta { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; line-height: 14px; color: var(--text3); }
+.scene .run { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg,#2F5BEA,#22D3EE); transform-origin: 0 50%; animation: jvRun 1.2s cubic-bezier(.4,0,.2,1) forwards; }
+.scene.active { background: rgba(47,91,234,.14); border-color: rgba(34,211,238,.45); box-shadow: 0 0 32px rgba(47,91,234,.25); }
+.scene.running { border-color: rgba(34,211,238,.45); }
+.scene.active .ic-box, .scene.running .ic-box { background: var(--blue); color: #fff; }
+.scene.active .meta, .scene.running .meta { color: var(--cyanText); }
+.add-scene { height: 52px; border-radius: 16px; border: 1px dashed var(--handle); color: var(--text2); font-size: 14px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+/* schedules */
+.scheds { display: flex; flex-direction: column; gap: 8px; }
+.sched { border-radius: 20px; background: var(--surf); border: 1px solid var(--line); padding: 14px 8px 14px 16px; display: flex; align-items: center; gap: 14px; transition: opacity .25s; }
+.sched.off { opacity: .55; }
+.sched .body { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sched .line { display: flex; align-items: baseline; gap: 10px; }
+.sched .time { position: relative; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 24px; line-height: 28px; font-weight: 500; letter-spacing: -0.02em; }
+.sched .time input { position: absolute; inset: 0; opacity: 0; width: 100%; font-size: 16px; }
+.sched .time.sun { font-size: 18px; }
+.sched .name { font-size: 14px; line-height: 18px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sched .days { display: flex; gap: 4px; }
+.sched .day { width: 26px; height: 22px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; color: var(--text3); transition: background-color .2s, color .2s; }
+.sched .day.on { background: rgba(34,211,238,.14); color: var(--cyanText); }

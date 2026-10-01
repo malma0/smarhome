@@ -46,31 +46,69 @@
 
   // ---------------------------------------------------------------- icons (the mockup's set)
 
-  const ICONS = {
-    light: '<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',
-    socket: '<rect x="4" y="4" width="16" height="16" rx="5"/><path d="M9.5 10v3.5M14.5 10v3.5"/>',
+  const ICONS = {  // every icon of the design's Icon component
     ac: '<rect x="3" y="5" width="18" height="8" rx="2.5"/><path d="M7 10h10"/><path d="M8 16.5l-1 3M12 16.5v3M16 16.5l1 3"/>',
-    heat: '<rect x="4" y="5" width="4" height="14" rx="2"/><rect x="10" y="5" width="4" height="14" rx="2"/><rect x="16" y="5" width="4" height="14" rx="2"/>',
-    vent: '<circle cx="12" cy="12" r="1.8"/><path d="M12 10.2C11 6 12.5 3.5 15 3.8c2.3.3 2.2 3.6-1.2 6.4"/><path d="M13.8 12c4.2-1 6.7.5 6.4 3-.3 2.3-3.6 2.2-6.4-1.2"/><path d="M12 13.8c1 4.2-.5 6.7-3 6.4-2.3-.3-2.2-3.6 1.2-6.4"/><path d="M10.2 12C6 13 3.5 11.5 3.8 9c.3-2.3 3.6-2.2 6.4 1.2"/>',
-    humid: '<path d="M12 3.5s6 6.3 6 10.5a6 6 0 0 1-12 0c0-4.2 6-10.5 6-10.5z"/><path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5"/>',
-    curtain: '<path d="M3 4h18"/><path d="M5 4v16h3c0-5 2-9 3-16"/><path d="M19 4v16h-3c0-5-2-9-3-16"/>',
-    water: '<path d="M12 3v4"/><path d="M8.5 3h7"/><circle cx="12" cy="13" r="5"/><path d="M3 13h4M17 13h4"/><path d="M12 13l2.5-2"/>',
-    gas: '<path d="M12 3c.8 3.2 5 5.2 5 10a5 5 0 0 1-10 0c0-2.6 1.4-4.3 2.6-5.2.2 2 1.2 3.2 2.4 3.4C12 8.8 11 6 12 3z"/>',
+    alert: '<path d="M12 3.5L2.5 20h19z"/><path d="M12 10v4.5M12 17.2h.01"/>',
+    back: '<path d="M15 5l-7 7 7 7"/>',
+    bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+    bolt: '<path d="M13 2.5L4.5 13.5H11l-1 8 8.5-11H12z"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    chart: '<path d="M4 20V11M9.5 20V5M15 20v-6M20.5 20V9"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    chev: '<path d="M9 5l7 7-7 7"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    close: '<path d="M6 6l12 12M18 6L6 18"/>',
     cloud: '<path d="M7 18.5a4.5 4.5 0 0 1-.4-9A6 6 0 0 1 18 8.6a5 5 0 0 1-.5 9.9z"/>',
+    co2: '<path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 12h16a3 3 0 1 1-3 3"/><path d="M3 16h7"/>',
+    curtain: '<path d="M3 4h18"/><path d="M5 4v16h3c0-5 2-9 3-16"/><path d="M19 4v16h-3c0-5-2-9-3-16"/>',
+    cycle: '<path d="M20 11a8 8 0 0 0-14.5-4.5M4 13a8 8 0 0 0 14.5 4.5"/><path d="M5 3v4h4M19 21v-4h-4"/>',
+    door: '<path d="M6 21V4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21"/><path d="M3.5 21h17"/><path d="M14.5 12.5h.01"/>',
+    down: '<path d="M5 9l7 7 7-7"/>',
+    edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+    exit: '<path d="M14 4h4.5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H14"/><path d="M9.5 16.5L5 12l4.5-4.5M5 12h10.5"/>',
+    gas: '<path d="M12 3c.8 3.2 5 5.2 5 10a5 5 0 0 1-10 0c0-2.6 1.4-4.3 2.6-5.2.2 2 1.2 3.2 2.4 3.4C12 8.8 11 6 12 3z"/>',
+    grip: '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"/>',
+    heat: '<rect x="4" y="5" width="4" height="14" rx="2"/><rect x="10" y="5" width="4" height="14" rx="2"/><rect x="16" y="5" width="4" height="14" rx="2"/>',
+    home: '<path d="M3.5 10.5L12 4l8.5 6.5V20a1 1 0 0 1-1 1H15v-6H9v6H4.5a1 1 0 0 1-1-1z"/>',
+    hub: '<rect x="3.5" y="13" width="17" height="7" rx="2"/><path d="M7.5 16.5h.01M11 16.5h.01"/><path d="M8.5 9.5a5 5 0 0 1 7 0M6 7a8.5 8.5 0 0 1 12 0"/>',
+    humid: '<path d="M12 3.5s6 6.3 6 10.5a6 6 0 0 1-12 0c0-4.2 6-10.5 6-10.5z"/><path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5"/>',
+    kettle: '<path d="M6 10h10.5l-1 9.5h-8.5z"/><path d="M7.5 10a4 4 0 0 1 7.5 0"/><path d="M16.3 12.5H18a2 2 0 0 1 0 4h-2"/><path d="M10 4.5h2.5"/>',
+    key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l2.5 2.5M14.5 8.5l2 2"/>',
+    layout: '<rect x="3.5" y="3.5" width="17" height="17" rx="1.5"/><path d="M3.5 11h8V3.5M11.5 15v5.5M11.5 11h9"/>',
+    leak: '<path d="M12 3s4.5 4.8 4.5 8a4.5 4.5 0 0 1-9 0c0-3.2 4.5-8 4.5-8z"/><path d="M3 19c1.5 0 1.5 1.2 3 1.2S7.5 19 9 19s1.5 1.2 3 1.2 1.5-1.2 3-1.2 1.5 1.2 3 1.2 1.5-1.2 3-1.2"/>',
+    light: '<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',
+    lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
+    mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>',
+    minus: '<path d="M5 12h14"/>',
+    moon: '<path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/>',
+    motion: '<circle cx="12" cy="12" r="2"/><path d="M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6"/><path d="M5.3 5.3a9.5 9.5 0 0 0 0 13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4"/>',
+    move: '<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+    palette: '<path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.5-1-2.6 0-1 .8-1.7 1.8-1.7h2.1a3.8 3.8 0 0 0 3.8-3.8c0-4-3.8-7.2-8.5-7.2z"/><path d="M7.5 11.5h.01M10 7.5h.01M14.5 7.5h.01"/>',
+    phone: '<path d="M5 3.5h3.5l2 5-2.5 1.5a11 11 0 0 0 6 6l1.5-2.5 5 2V19a2 2 0 0 1-2 2A17 17 0 0 1 3 5.5a2 2 0 0 1 2-2z"/>',
+    play: '<path d="M8 5.5v13l10.5-6.5z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    power: '<path d="M12 3v8"/><path d="M6.5 6.5a8 8 0 1 0 11 0"/>',
+    redo: '<path d="M15 7l4.5 4.5L15 16"/><path d="M19.5 11.5H9a4.5 4.5 0 0 0 0 9h2"/>',
+    room: '<path d="M4 4h16v16H4z"/><path d="M4 10h4M12 4v4M14 20v-5h6"/>',
+    scenes: '<rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><path d="M17 14v6.5M13.8 17.2h6.5"/>',
+    send: '<path d="M5 12h13M13 6l6 6-6 6"/>',
     shield: '<path d="M12 3l7.5 3v5.5c0 4.7-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.8-7.5-9.5V6z"/>',
     shieldok: '<path d="M12 3l7.5 3v5.5c0 4.7-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.8-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
-    bolt: '<path d="M13 2.5L4.5 13.5H11l-1 8 8.5-11H12z"/>',
-    home: '<path d="M3.5 10.5L12 4l8.5 6.5V20a1 1 0 0 1-1 1H15v-6H9v6H4.5a1 1 0 0 1-1-1z"/>',
-    scenes: '<rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><path d="M17 14v6.5M13.8 17.2h6.5"/>',
-    chart: '<path d="M4 20V11M9.5 20V5M15 20v-6M20.5 20V9"/>',
     sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
-    back: '<path d="M15 5l-7 7 7 7"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>',
-    minus: '<path d="M5 12h14"/>',
-    close: '<path d="M6 6l12 12M18 6L6 18"/>',
+    smoke: '<path d="M4 5h16v2.5A3.5 3.5 0 0 1 16.5 11h-9A3.5 3.5 0 0 1 4 7.5z"/><path d="M8.5 14c-1 1.5 1 2.5 0 4M12 14c-1 1.5 1 2.5 0 4M15.5 14c-1 1.5 1 2.5 0 4"/>',
+    socket: '<rect x="4" y="4" width="16" height="16" rx="5"/><path d="M9.5 10v3.5M14.5 10v3.5"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+    sunrise: '<path d="M4 18h16M7 18a5 5 0 0 1 10 0"/><path d="M12 5v4M5.6 10.6l1.4 1.4M18.4 10.6L17 12M3 14.5h1.5M19.5 14.5H21"/>',
+    thermo: '<path d="M14 14.6V5a2 2 0 0 0-4 0v9.6a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>',
+    undo: '<path d="M9 7L4.5 11.5 9 16"/><path d="M4.5 11.5H15a4.5 4.5 0 0 1 0 9h-2"/>',
+    user: '<circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
+    users: '<circle cx="9" cy="8.5" r="3.3"/><path d="M2.8 19.5a6.2 6.2 0 0 1 12.4 0"/><path d="M15.5 5.5a3.3 3.3 0 0 1 0 6.3M17.5 14.2a6.2 6.2 0 0 1 3.7 5.3"/>',
+    vent: '<circle cx="12" cy="12" r="1.8"/><path d="M12 10.2C11 6 12.5 3.5 15 3.8c2.3.3 2.2 3.6-1.2 6.4"/><path d="M13.8 12c4.2-1 6.7.5 6.4 3-.3 2.3-3.6 2.2-6.4-1.2"/><path d="M12 13.8c1 4.2-.5 6.7-3 6.4-2.3-.3-2.2-3.6 1.2-6.4"/><path d="M10.2 12C6 13 3.5 11.5 3.8 9c.3-2.3 3.6-2.2 6.4 1.2"/>',
+    voice: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>',
+    water: '<path d="M12 3v4"/><path d="M8.5 3h7"/><circle cx="12" cy="13" r="5"/><path d="M3 13h4M17 13h4"/><path d="M12 13l2.5-2"/>',
     wifioff: '<path d="M3 3l18 18"/><path d="M8.5 16.4a5 5 0 0 1 6.2-.6"/><path d="M5.2 12.9a9.7 9.7 0 0 1 4-2.4M18.8 12.9a9.6 9.6 0 0 0-2.3-1.6"/><path d="M2 9.3a15 15 0 0 1 4-2.6M22 9.3A15 15 0 0 0 11 5.1"/><path d="M12 20h.01"/>',
-    bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
-  };
+    window: '<rect x="4.5" y="3.5" width="15" height="17" rx="1.5"/><path d="M12 3.5v17M4.5 12h15"/>',
+  };;
   const icon = (type, size) => `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">${ICONS[type] || ""}</svg>`;
 
   // ---------------------------------------------------------------- small helpers
@@ -633,7 +671,7 @@
     $("nav").innerHTML = tabs.map((t, i) => `<button class="${i === 0 ? "cur" : ""}" data-tab="${t[0]}" aria-current="${i === 0 ? "page" : "false"}"><span class="bar"></span>${icon(t[0], 22)}${t[1]}</button>`).join("");
     $("nav").addEventListener("click", (e) => {
       const b = e.target.closest("button");
-      if (b && b.dataset.tab !== "home") toast("Раздел «" + b.textContent.trim() + "» — в следующей версии");
+      if (b) showScreen(b.dataset.tab);
     });
     $("plan").addEventListener("click", (e) => {
       const dev = e.target.closest(".p-dev");
@@ -712,10 +750,29 @@
     setInterval(loadWeather, 10 * 60 * 1000);
   }
 
+  // ---------------------------------------------------------------- the other screens (screens.js)
+
+  const screens = {};
+  function showScreen(name) {
+    if (name !== "home" && !screens[name]) { toast("Раздел — в следующей версии"); return; }
+    if (state.room) closeRoom();
+    $("app").setAttribute("data-screen", name);
+    $("nav").querySelectorAll("button").forEach((b) => {
+      const cur = b.dataset.tab === name;
+      b.classList.toggle("cur", cur);
+      b.setAttribute("aria-current", cur ? "page" : "false");
+    });
+    if (screens[name]) screens[name].open();
+  }
+  // what screens.js builds on: one way to ask the server, one toast, one icon set
+  window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; } };
+
   // the phone's back button (the Android app asks first): close what is open, else leave the app
   window.jarvisBack = () => {
     if (!$("confirm").hidden) { closeGasConfirm(); return true; }
     if (state.room) { closeRoom(); return true; }
+    const current = $("app").getAttribute("data-screen");
+    if (current && current !== "home") { showScreen("home"); return true; }
     return false;
   };
 
