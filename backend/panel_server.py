@@ -6,10 +6,13 @@ when APP_PIN is set (app/panel.py, started with the voice app).
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+os.chdir(HERE)  # relative paths (the database, the dataset) as Jarvis itself has them
 
 import uvicorn  # noqa: E402
 
