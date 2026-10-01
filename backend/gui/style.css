@@ -305,6 +305,10 @@ button.who:hover { background: rgba(34, 211, 238, .16); }
 .modal-actions .ghost { background: transparent; color: var(--muted); }
 .modal-actions .primary { background: linear-gradient(135deg, #22d3ee, #6d3ff0); color: #fff; }
 
+/* ---------- the panel on the phone ---------- */
+.phone-label { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+.phone-link { margin: 0; font-size: 15px; font-weight: 600; color: #67e8f9; user-select: text; word-break: break-all; }
+
 /* ---------- voices in the house ---------- */
 .voice-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .voice-empty { margin: 0; font-size: 13px; color: var(--faint); }

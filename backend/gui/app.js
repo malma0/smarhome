@@ -470,6 +470,8 @@ function onEnroll(e) {
 
 $("residentChip").onclick = openVoices;
 $("voicesClose").onclick = closeVoices;
+$("phoneChip").onclick = () => { $("phoneModal").hidden = false; };
+$("phoneClose").onclick = () => { $("phoneModal").hidden = true; };
 $("enrollCancel").onclick = closeVoices;
 $("newVoiceForm").onsubmit = (e) => {
   e.preventDefault();
@@ -493,6 +495,11 @@ window.jarvis = {
       case "note": addNote(e.text); break;
       case "info": toast(e.text); break;
       case "resident": $("residentName").textContent = e.name; break;
+      case "panel":  // the control panel runs: its links stay one click away, not in a passing toast
+        $("phonePanel").textContent = e.panel;
+        $("phoneApk").textContent = e.apk || "ещё не собрано (python android/build.py)";
+        $("phoneChip").hidden = false;
+        break;
       case "stats": $("datasetText").textContent = `${e.minutes} мин · ${e.utterances} ${plural(e.utterances, "фраза", "фразы", "фраз")}`; break;
       case "mic": micLevel = e.level; micAt = performance.now(); break;
       case "envelope":

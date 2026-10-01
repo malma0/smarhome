@@ -228,6 +228,10 @@ class WebviewUI:
     def info(self, text: str) -> None:
         self._send({"type": "info", "text": text.strip()})
 
+    def panel(self, panel_url: str, apk_url: str) -> None:
+        """The phone's links, kept in the window (the "Телефон" chip) - a toast is gone too fast."""
+        self._send({"type": "panel", "panel": panel_url, "apk": apk_url})
+
     def resident(self, name: str) -> None:
         self._send({"type": "resident", "name": name})
 
@@ -339,9 +343,7 @@ async def _voice_main(ui: WebviewUI, commands: "queue.Queue[tuple]") -> None:
 
         if panel.start_in_thread():  # the control panel for the phone / the iPad - only with APP_PIN set
             base = f"http://{panel.home_address() or 'localhost'}:{settings.panel_port}"
-            ui.info(f"Панель управления: {base}/panel/")
-            if panel.APK.exists():
-                ui.info(f"Приложение для Android: {base}/jarvis.apk")
+            ui.panel(f"{base}/panel/", f"{base}/jarvis.apk" if panel.APK.exists() else "")
         detector = voice_app.build_wake_detector(ui) if settings.voice_mode == "wake" else None
         await voice_app.run_hands_free(session, detector, commands)
     except Exception as exc:  # noqa: BLE001 - show it instead of silently dying behind the window
