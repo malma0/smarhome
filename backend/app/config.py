@@ -15,6 +15,8 @@ class Settings:
     ollama_base_url: str
     home_llm_url: str
     home_llm_model: str
+    app_pin: str
+    panel_port: int
     groq_api_key: str
     groq_model: str
     groq_base_url: str
@@ -72,6 +74,9 @@ def load_settings() -> Settings:
         # house-only requests go there, everything else to LLM_PROVIDER. Empty: off.
         home_llm_url=os.environ.get("HOME_LLM_URL", "").strip(),
         home_llm_model=os.environ.get("HOME_LLM_MODEL", "jarvis-home"),
+        # The control panel (app/panel.py) on the home network: off until the resident sets a PIN.
+        app_pin=os.environ.get("APP_PIN", "").strip(),
+        panel_port=int(os.environ.get("PANEL_PORT", "8765")),
         groq_api_key=os.environ.get("GROQ_API_KEY", ""),
         groq_model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
         groq_base_url=os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),

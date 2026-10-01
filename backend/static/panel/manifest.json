@@ -1,0 +1,15 @@
+{
+ "name": "Jarvis",
+ "short_name": "Jarvis",
+ "start_url": "/panel/",
+ "display": "standalone",
+ "background_color": "#07090f",
+ "theme_color": "#07090f",
+ "icons": [
+  {
+   "src": "icon.png",
+   "sizes": "512x512",
+   "type": "image/png"
+  }
+ ]
+}
