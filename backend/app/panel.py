@@ -32,6 +32,8 @@ WEATHER_SECONDS = 600
 SERIES_POINTS = 25  # one an hour over the day - what the room's chart draws
 SERIES_KINDS = {"temperature": "temperature", "humidity": "humidity", "co2": "carbon_dioxide"}
 NORM_FIELDS = ("room", "temperature", "co2_max", "humidity_min")
+ALL_DAYS = [1, 2, 3, 4, 5, 6, 7]
+DAY_DIGITS = {str(d) for d in ALL_DAYS}
 
 
 def view(rooms: dict[str, list[dict]]) -> list[dict]:
@@ -65,6 +67,42 @@ def view(rooms: dict[str, list[dict]]) -> list[dict]:
                 room["devices"].append(item)
         out.append(room)
     return out
+
+
+async def scenes_view(client: HomeAssistantClient) -> list[dict]:
+    """The scenarios for their screen: what each does and when it last ran."""
+    scenes = []
+    for state in await client.get_states():
+        if not state["entity_id"].startswith("script."):
+            continue
+        object_id = state["entity_id"].split(".", 1)[1]
+        try:
+            description = (await client.get_script_config(object_id)).get("description") or ""
+        except HomeAssistantError:
+            description = ""
+        attrs = state.get("attributes", {})
+        scenes.append({"name": attrs.get("friendly_name", object_id), "does": home._scenario_does(description),
+                       "last": attrs.get("last_triggered")})
+    return scenes
+
+
+def schedules_view(states: list[dict]) -> list[dict]:
+    """The schedules with their time (None: at sunset) and days (Mon=1 .. Sun=7, from input_text.<id>_days)."""
+    by_id = {s["entity_id"]: s for s in states}
+    schedules = []
+    for state in states:
+        name = state.get("attributes", {}).get("friendly_name", "")
+        if not (state["entity_id"].startswith("automation.") and name.startswith(home.SCHEDULE_PREFIX)):
+            continue
+        slug = state["entity_id"].split(".", 1)[1]
+        days_helper = by_id.get(f"input_text.{slug}_days")
+        days = ALL_DAYS
+        if days_helper:
+            days = sorted({int(d) for d in str(days_helper["state"]).split(",") if d.strip() in DAY_DIGITS})
+        schedules.append({"id": slug, "name": name[len(home.SCHEDULE_PREFIX):].strip(), "on": state["state"] == "on",
+                          "time": (by_id.get(f"input_datetime.{slug}_time", {}).get("state") or "")[:5] or None,
+                          "days": days, "days_editable": days_helper is not None})
+    return schedules
 
 
 def series(points: list[dict], start: datetime, end: datetime, count: int = SERIES_POINTS) -> list[float | None]:
@@ -173,13 +211,41 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
     async def run_scenario(body: dict):
         return await run(scenario_h, {"name": str(body.get("name") or "")})
 
+    @app.get("/api/scenes", dependencies=[api])
+    async def scenes():
+        try:
+            return {"scenes": await scenes_view(client)}
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
+    async def all_schedules() -> dict:
+        try:
+            return {"schedules": schedules_view(await client.get_states())}
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
     @app.get("/api/schedules", dependencies=[api])
     async def schedules():
-        return await run(schedule_h, {"action": "list"})
+        return await all_schedules()
 
     @app.post("/api/schedules", dependencies=[api])
     async def change_schedule(body: dict):
-        return await run(schedule_h, {k: body[k] for k in ("action", "name", "time") if k in body})
+        """enable / disable / set_time go through the tool's own rules; set_days is the app's."""
+        if body.get("action") == "set_days":
+            days = sorted({int(d) for d in body.get("days") or [] if str(d) in DAY_DIGITS})
+            if not days:
+                return {"error": "Нужен хотя бы один день - чтобы не срабатывало, выключи расписание."}
+            found = next((s for s in (await all_schedules())["schedules"] if s["id"] == body.get("id")), None)
+            if found is None or not found["days_editable"]:
+                return {"error": "Нет такого расписания с днями."}
+            try:
+                await client.call_service("input_text", "set_value", f"input_text.{found['id']}_days",
+                                          {"value": ",".join(str(d) for d in days)})
+            except HomeAssistantError as exc:
+                raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+            return await all_schedules()
+        result = await run(schedule_h, {k: body[k] for k in ("action", "name", "time") if k in body})
+        return result if "error" in result else await all_schedules()
 
     @app.post("/api/history", dependencies=[api])
     async def history(body: dict):

@@ -85,3 +85,37 @@ def test_the_phone_app_finds_jarvis_without_a_pin_and_without_using_up_tries(tmp
     (tmp_path / "jarvis.apk").write_bytes(b"PK")
     got = client.get("/jarvis.apk")
     assert got.status_code == 200 and got.headers["content-type"] == "application/vnd.android.package-archive"
+
+
+def test_schedules_with_their_days_and_changing_the_days():
+    from tests.test_home_features import _state
+
+    ha = FakeHA()
+    ha.states.append(_state("input_text.schedule_good_morning_days", "1,2,3,4,5"))
+    client = _client(ha)
+    got = {s["id"]: s for s in client.get("/api/schedules", headers={"X-Pin": PIN}).json()["schedules"]}
+    assert got["schedule_good_morning"]["time"] == "07:00" and got["schedule_good_morning"]["days"] == [1, 2, 3, 4, 5]
+    sunset = got["schedule_sunset_entrance"]
+    assert sunset["time"] is None and sunset["days"] == [1, 2, 3, 4, 5, 6, 7] and not sunset["days_editable"]
+
+    change = lambda body: client.post("/api/schedules", headers={"X-Pin": PIN}, json=body).json()  # noqa: E731
+    assert "schedules" in change({"action": "set_days", "id": "schedule_good_morning", "days": [6, 7, 9]})
+    assert ha.calls[-1] == ("input_text", "set_value", "input_text.schedule_good_morning_days", {"value": "6,7"})
+    assert "error" in change({"action": "set_days", "id": "schedule_good_morning", "days": []})  # off is the switch
+    assert "error" in change({"action": "set_days", "id": "schedule_sunset_entrance", "days": [1]})  # no days helper
+    change({"action": "disable", "name": "«Доброе утро» по будням"})
+    assert ha.calls[-1] == ("automation", "turn_off", "automation.schedule_good_morning", None)
+
+
+def test_scenes_say_what_they_do_and_when_they_last_ran():
+    from tests.test_home_features import _state
+
+    class WithScripts(FakeHA):
+        async def get_script_config(self, object_id):
+            return {"description": "Свет и розетки выключены, охрана через 2 минуты. Фразы: я ушёл, я ухожу"}
+
+    ha = WithScripts()
+    ha.states.append(_state("script.ya_ushel", "off", friendly_name="Я ушёл", last_triggered="2026-10-01T08:41:00+07:00"))
+    scenes = _client(ha).get("/api/scenes", headers={"X-Pin": PIN}).json()["scenes"]
+    assert scenes == [{"name": "Я ушёл", "does": scenes[0]["does"], "last": "2026-10-01T08:41:00+07:00"}]
+    assert "Фразы" not in scenes[0]["does"] and "охрана" in scenes[0]["does"]
