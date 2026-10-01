@@ -153,7 +153,8 @@ def evaluate(spec: str, base_url: str | None, limit: int | None, tag: str = "", 
 
 def summary() -> None:
     kinds = ["control", "multi_room", "whole_house", "multi_device", "status", "norm", "norm_relative", "complaint",
-             "scenario", "valve", "chat", "brightness"]
+             "scenario", "valve", "chat", "brightness", "curtains", "humidifier", "security", "house_status", "history",
+             "schedule"]
     print(f"{'модель':34} {'всего':>12} " + " ".join(f"{k[:11]:>11}" for k in kinds) + "  сек")
     for path in sorted(RESULTS.glob("*.jsonl")):
         rows = [json.loads(line) for line in path.open(encoding="utf-8")]

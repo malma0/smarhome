@@ -64,11 +64,9 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
 
 # What the own home model (backend/training) was not trained on - such
 # requests go to the main model until it is retrained with them.
-BEYOND_HOME_MODEL = (
-    "штор", "жалюз", "занавес", "увлажн", "влажност", "охран", "окн", "двер", "движен", "электричеств", "энерги",
-    "расход", "истори", "был", "ночью", "вчера", "за месяц", "за неделю", "расписан", "по будням", "закат",
-    "автоматич",
-)
+# v5 learned curtains, humidifiers, the guard, windows, movement, history and
+# schedules; the front door it never saw asked about.
+BEYOND_HOME_MODEL = ("двер",)
 
 
 def beyond_home_model(message: str) -> bool:
@@ -80,10 +78,20 @@ def group_of(tool_name: str) -> str | None:
     return next((group for group, names in GROUPS.items() if tool_name in names), None)
 
 
+# Verbs, not things: "закрой шторы" is the house, "закрой браузер" the computer.
+# Live, "открой шторы в зале" went to the cloud model as computer + house,
+# and it asked to confirm instead of opening them.
+GENERIC_VERBS = {"computer": ("открой", "закрой", "запусти", "найди", "поищи", "прочитай", "запиши", "создай", "удали")}
+
+
 def select(message: str, previous: set[str] | None) -> set[str] | None:
     """The groups to send - or None: send every tool."""
     text = message.casefold().replace("ё", "е")
-    found = {group for group, stems in KEYWORDS.items() if any(stem in text for stem in stems)}
+    hits = {group: {stem for stem in stems if stem in text} for group, stems in KEYWORDS.items()}
+    found = {group for group, matched in hits.items() if matched}
+    only_verbs = {group for group in found if hits[group] <= set(GENERIC_VERBS.get(group, ()))}
+    if found - only_verbs:
+        found -= only_verbs
     if found:
         return found
     return set(previous) if previous else None

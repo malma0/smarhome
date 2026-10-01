@@ -41,3 +41,13 @@ def test_darker_and_brighter_are_about_the_house():
 
     for text in ("сделай потемнее", "приглуши", "поярче пожалуйста"):
         assert router.select(text, None) == {"home"}, text
+
+
+def test_a_verb_alone_does_not_make_it_a_computer_command():
+    from app.tools import router
+
+    assert router.select("закрой шторы в зале", None) == {"home"}
+    assert router.select("открой шторы", None) == {"home"}
+    assert router.select("открой steam", None) == {"computer"}
+    assert router.select("закрой браузер", None) == {"computer"}
+    assert router.select("открой", None) == {"computer"}  # nothing else said: the verb is all there is

@@ -3,7 +3,7 @@
   "type": "function",
   "function": {
    "name": "get_home_status",
-   "description": "The house now, room by room: lights, sockets, AC, heating, ventilation, sensors (temperature, humidity, CO2), danger sensors, main valves, and each room's norms (temperature, CO2 max) the house keeps by itself. Call it for every question about the house - it changes. Answer with facts; don't advise what you can't do yourself (like airing a room). If the resident says it's stuffy, hot or cold, they're right - fix it (ventilation on, or set_room_norm), don't argue.",
+   "description": "The house now, room by room: lights, sockets, AC, heating, ventilation, humidifiers, curtains, sensors (temperature, humidity, CO2, movement, windows, doors), danger sensors, main valves, and each room's norms (temperature, CO2 max, humidity min) the house keeps by itself; under 'Весь дом' the guard (security) and electricity (power now, today, this month). Call it for every question about the house - it changes. Answer with facts; don't advise what you can't do yourself (like airing a room). If the resident says it's stuffy, hot or cold, they're right - fix it (ventilation on, or set_room_norm), don't argue.",
    "parameters": {
     "type": "object",
     "properties": {
@@ -22,7 +22,7 @@
   "type": "function",
   "function": {
    "name": "control_devices",
-   "description": "Turn a device type on/off in a room: light (brightness_pct), socket, ventilation, ac (cools, optional temperature), heating (optional temperature), water_valve/gas_valve (on = open, room ignored). room in any form ('на кухне') or 'all' - the whole house in one call. 'Warmer'/'cooler' is set_room_norm, not this. Needs the resident's yes, then retry with confirmed=true: sockets/AC/heating in a second room, temperatures outside 16-28 °C, gas, water during a leak. Always try - never say a room or device is missing unless this tool says so.",
+   "description": "Turn a device type on/off in a room: light (brightness_pct), socket, ventilation, ac (cools, optional temperature), heating (optional temperature), humidifier, curtains (on = open, off = close, position 0-100 for 'наполовину'), water_valve/gas_valve (on = open, room ignored), security - the guard (on = armed, off = disarmed, room ignored). room in any form ('на кухне') or 'all' - the whole house in one call. 'Warmer'/'cooler' is set_room_norm, not this. Needs the resident's yes, then retry with confirmed=true: sockets/AC/heating in a second room, temperatures outside 16-28 °C, gas, water during a leak. Always try - never say a room or device is missing unless this tool says so.",
    "parameters": {
     "type": "object",
     "properties": {
@@ -37,8 +37,11 @@
        "ac",
        "heating",
        "ventilation",
+       "humidifier",
+       "curtains",
        "water_valve",
-       "gas_valve"
+       "gas_valve",
+       "security"
       ]
      },
      "action": {
@@ -54,6 +57,14 @@
        "null"
       ],
       "minimum": 1,
+      "maximum": 100
+     },
+     "position": {
+      "type": [
+       "integer",
+       "null"
+      ],
+      "minimum": 0,
       "maximum": 100
      },
      "temperature": {
@@ -82,7 +93,7 @@
   "type": "function",
   "function": {
    "name": "set_room_norm",
-   "description": "What the house keeps a room at: temperature (16-28 °C) and/or co2_max (600-1500 ppm) - heating, AC and ventilation follow. 'Потеплее'/'прохладнее' = the current norm (get_home_status) ±1; 'держи 21' = 21. room in any form or 'all'.",
+   "description": "What the house keeps a room at: temperature (16-28 °C), co2_max (600-1500 ppm), humidity_min (30-60 %, rooms with a humidifier) - heating, AC, ventilation and humidifiers follow. 'Потеплее'/'прохладнее' = the current norm (get_home_status) ±1; 'держи 21' = 21. room in any form or 'all'.",
    "parameters": {
     "type": "object",
     "properties": {
@@ -96,6 +107,12 @@
       ]
      },
      "co2_max": {
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "humidity_min": {
       "type": [
        "number",
        "null"
@@ -123,6 +140,84 @@
       ]
      }
     }
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "home_history",
+   "description": "What the house's sensors were earlier: what temperature, humidity or co2 in a room - min and max with when, the average; electricity - kWh used in the period (the whole house). start/end: local 'YYYY-MM-DDTHH:MM' worked out from the current time ('ночью' = last night 00:00-07:00, 'за месяц' = from the 1st); default the last 24 h. Now is get_home_status, not this.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "what": {
+      "type": "string",
+      "enum": [
+       "temperature",
+       "humidity",
+       "co2",
+       "electricity"
+      ]
+     },
+     "room": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "start": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "end": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "what"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "house_schedule",
+   "description": "The house's schedules - what runs by itself at a time or at sunset ('«Доброе утро» по будням', 'свет в прихожей на закате'). list; enable / disable by name; set_time 'HH:MM' by name. Not reminders to the resident (that's reminders).",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "action": {
+      "type": "string",
+      "enum": [
+       "list",
+       "enable",
+       "disable",
+       "set_time"
+      ]
+     },
+     "name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "time": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "action"
+    ]
    }
   }
  }
