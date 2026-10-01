@@ -1757,6 +1757,8 @@ automation:
   - trigger: state
     entity_id: script.ya_ushel
     to: 'on'
+  - trigger: event
+    event_type: jarvis_arm_soon
   actions:
   - wait_for_trigger:
     - trigger: state

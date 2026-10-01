@@ -126,6 +126,7 @@ HUMIDITY_BAND = 2  # the humidifier starts this far under the minimum
 AUTO_OFF_MINUTES = 10  # no movement this long - the room's light goes off
 ENTRY_DELAY = "00:01:00"  # movement in the armed house: this long to say "Я дома"
 ARM_DELAY = "00:02:00"  # "Я ушёл": armed after this, time to walk out
+ARM_EVENT = "jarvis_arm_soon"  # the same countdown, asked for from the app
 GOOD_MORNING_TIME = "07:00:00"
 # The days each schedule runs on, Mon=1 .. Sun=7 - the starting value, then changed from the app
 SCHEDULE_DAYS = {"schedule_good_morning": ("«Доброе утро»", "1,2,3,4,5"),
@@ -566,7 +567,9 @@ def _yaml() -> str:
             "id": "security_arm_on_leaving",
             "alias": "Сценарий «Я ушёл»: охрана через 2 минуты",
             "mode": "restart",
-            "triggers": script_ran("ya_ushel"),
+            # the app's "Поставить на охрану" fires the event - automation.trigger would hold
+            # the call for the whole two minutes
+            "triggers": script_ran("ya_ushel") + [{"trigger": "event", "event_type": ARM_EVENT}],
             "actions": [
                 {"wait_for_trigger": script_ran("ya_doma"), "timeout": ARM_DELAY, "continue_on_timeout": True},
                 {"condition": "template", "value_template": "{{ wait.trigger is none }}"},

@@ -66,6 +66,29 @@ class HomeAssistantClient:
         series = response.json()
         return series[0] if series else []
 
+    async def get_histories(self, entity_ids: list[str], start: str, end: str) -> dict[str, list[dict[str, Any]]]:
+        """Several entities at once: {entity_id: [{"state", "last_changed"}, ...]} - the journal's sensors."""
+        if not entity_ids:
+            return {}
+        response = await self._request(
+            "GET", f"/api/history/period/{start}",
+            params={"filter_entity_id": ",".join(entity_ids), "end_time": end, "minimal_response": "",
+                    "no_attributes": ""},
+        )
+        found = {}
+        for series in response.json():
+            if series:
+                found[series[0]["entity_id"]] = series
+        return found
+
+    async def get_logbook(self, start: str, end: str) -> list[dict[str, Any]]:
+        """What happened and why ("context_name": the automation that did it) between two ISO times."""
+        return (await self._request("GET", f"/api/logbook/{start}", params={"end_time": end})).json()
+
+    async def fire_event(self, event_type: str, data: dict[str, Any] | None = None) -> None:
+        """An event for automations to start from - returns at once, unlike automation.trigger."""
+        await self._request("POST", f"/api/events/{event_type}", json=data or {})
+
     async def call_service(
         self,
         domain: str,
