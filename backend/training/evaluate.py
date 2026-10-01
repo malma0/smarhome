@@ -31,7 +31,7 @@ from app.db import connect
 from app.domains import home
 from app.memory import MemoryStore
 from app.tools.registry import Tool, ToolRegistry
-from app.domains.home import match_room
+from app.domains.home import match_room, period_span
 from training.build_dataset import _random_time
 from training.sim_house import SimHouse
 
@@ -47,17 +47,30 @@ def load_tools(path: Path = TRAINED_TOOLS_FILE) -> list[dict]:
     return json.loads(Path(path).read_text("utf-8"))
 
 
+def _span(call: dict, now: datetime) -> dict:
+    """A call's period as start/end - named (period) or given."""
+    if call.get("period"):
+        try:
+            start, end = period_span(call["period"], now)
+        except KeyError:
+            return {}
+        return {"start": start.strftime("%Y-%m-%dT%H:%M"), "end": end.strftime("%Y-%m-%dT%H:%M")}
+    return {"start": call.get("start") or (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M"),
+            "end": call.get("end") or now.strftime("%Y-%m-%dT%H:%M")}
+
+
 def same_history_call(actual: dict, expected: dict, now: datetime) -> bool:
     """The right sensor and room, and the period within an hour of the right one."""
     if actual.get("what") != expected.get("what"):
         return False
     if expected.get("room") and match_room(actual.get("room") or "", [expected["room"].capitalize()]) is None:
         return False
+    got_span, want_span = _span(actual, now), _span(expected, now)
     for key in ("start", "end"):
         try:
-            got = datetime.fromisoformat(str(actual.get(key) or now.strftime("%Y-%m-%dT%H:%M")))
-            want = datetime.fromisoformat(expected[key])
-        except ValueError:
+            got = datetime.fromisoformat(got_span[key])
+            want = datetime.fromisoformat(want_span[key])
+        except (KeyError, ValueError):
             return False
         if abs(got.replace(tzinfo=None) - want.replace(tzinfo=None)) > HISTORY_SLACK:
             return False

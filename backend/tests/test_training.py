@@ -221,18 +221,21 @@ def test_darker_is_not_warmer():
 def test_history_periods_are_worked_out_from_the_clock():
     from datetime import datetime, timedelta, timezone
 
+    from app.domains.home import period_span
     from training.intents import _period
 
-    when = datetime(2026, 10, 14, 15, 20, tzinfo=timezone(timedelta(hours=7)))  # a Wednesday afternoon
-    spans = {}
-    for seed in range(200):
-        said, numbers, span = _period(random.Random(seed), electricity=seed % 2 == 0)
-        spans[said] = (span(when), numbers)
-    assert spans["вчера"][0] == ("2026-10-13T00:00", "2026-10-14T00:00")
-    assert spans["этой ночью"][0] == ("2026-10-14T00:00", "2026-10-14T07:00")
-    assert spans["за эту неделю"][0] == ("2026-10-12T00:00", "2026-10-14T15:20")
-    assert spans["за прошлый месяц"][0] == ("2026-09-01T00:00", "2026-10-01T00:00")
-    assert spans["за последние 3 часа"] == (("2026-10-14T12:20", "2026-10-14T15:20"), ["3"])
+    tz = timezone(timedelta(hours=7))
+    when = datetime(2026, 10, 14, 15, 20, tzinfo=tz)  # a Wednesday afternoon
+    fmt = lambda span: tuple(t.strftime("%Y-%m-%dT%H:%M") for t in span)  # noqa: E731
+    assert fmt(period_span("yesterday", when)) == ("2026-10-13T00:00", "2026-10-14T00:00")
+    assert fmt(period_span("last_night", when)) == ("2026-10-14T00:00", "2026-10-14T07:00")
+    assert fmt(period_span("this_week", when)) == ("2026-10-12T00:00", "2026-10-14T15:20")
+    assert fmt(period_span("last_month", when)) == ("2026-09-01T00:00", "2026-10-01T00:00")
+    early = datetime(2026, 10, 14, 5, 0, tzinfo=tz)  # "этой ночью" at 5 - the night still going on
+    assert fmt(period_span("last_night", early)) == ("2026-10-14T00:00", "2026-10-14T05:00")
+    named = {_period(random.Random(seed), electricity=seed % 2 == 0)[0]: _period(random.Random(seed), seed % 2 == 0)
+             for seed in range(200)}
+    assert named["за последние 3 часа"][1:] == (["3"], "last_3_hours")
 
 
 def test_new_house_answers_read_right():

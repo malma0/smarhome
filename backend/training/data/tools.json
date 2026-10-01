@@ -147,7 +147,7 @@
   "type": "function",
   "function": {
    "name": "home_history",
-   "description": "What the house's sensors were earlier: what temperature, humidity or co2 in a room - min and max with when, the average; electricity - kWh used in the period (the whole house). start/end: local 'YYYY-MM-DDTHH:MM' worked out from the current time ('ночью' = last night 00:00-07:00, 'за месяц' = from the 1st); default the last 24 h. Now is get_home_status, not this.",
+   "description": "What the house's sensors were earlier: what temperature, humidity or co2 in a room - min and max with when, the average; electricity - kWh used in the period (the whole house). period: last_hour, last_3_hours, last_24_hours, last_night ('ночью'), today, yesterday, this_week, this_month, last_month - the dates are worked out for you. Only for another span: start/end as local 'YYYY-MM-DDTHH:MM'. Now is get_home_status, not this.",
    "parameters": {
     "type": "object",
     "properties": {
@@ -164,6 +164,24 @@
       "type": [
        "string",
        "null"
+      ]
+     },
+     "period": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "enum": [
+       "last_hour",
+       "last_3_hours",
+       "last_24_hours",
+       "last_night",
+       "today",
+       "yesterday",
+       "this_week",
+       "this_month",
+       "last_month",
+       null
       ]
      },
      "start": {

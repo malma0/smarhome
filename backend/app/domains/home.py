@@ -520,6 +520,30 @@ ENERGY_ENTITY = "sensor.house_energy"
 SCHEDULE_PREFIX = "Расписание:"
 
 
+PERIODS = ("last_hour", "last_3_hours", "last_24_hours", "last_night", "today", "yesterday", "this_week",
+           "this_month", "last_month")
+
+
+def period_span(period: str, now: datetime) -> tuple[datetime, datetime]:
+    """'за эту неделю' -> Monday 00:00 .. now. Worked out here, not by the model:
+    the home model got "which date was Monday" wrong (2 of 3 history misses)."""
+    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month = day.replace(day=1)
+    spans = {
+        "last_hour": (now - timedelta(hours=1), now),
+        "last_3_hours": (now - timedelta(hours=3), now),
+        "last_24_hours": (now - timedelta(hours=24), now),
+        # Before 8 it's the night still going on; later, the one that ended this morning.
+        "last_night": (day, day + timedelta(hours=7)) if now.hour >= 8 else (day, now),
+        "today": (day, now),
+        "yesterday": (day - timedelta(days=1), day),
+        "this_week": (day - timedelta(days=now.weekday()), now),
+        "this_month": (month, now),
+        "last_month": ((month - timedelta(days=1)).replace(day=1), month),
+    }
+    return spans[period]
+
+
 def _local(at: str | None, now: datetime) -> datetime | None:
     """'2026-10-01T03:00' (local, as the model writes it) -> aware datetime."""
     if not at:
@@ -563,9 +587,15 @@ def make_more_handlers(client: HomeAssistantClient, now=lambda: datetime.now().a
     async def home_history(tool_input: dict, ctx: TurnContext) -> dict:
         what = tool_input.get("what") or "temperature"
         current = now()
+        period = tool_input.get("period")
         try:
-            end = _local(tool_input.get("end"), current) or current
-            start = _local(tool_input.get("start"), current) or end - timedelta(hours=24)
+            if period:
+                if period not in PERIODS:
+                    return {"error": f"period must be one of {', '.join(PERIODS)}."}
+                start, end = period_span(period, current)
+            else:
+                end = _local(tool_input.get("end"), current) or current
+                start = _local(tool_input.get("start"), current) or end - timedelta(hours=24)
         except ValueError:
             return {"error": "Times as local 'YYYY-MM-DDTHH:MM'."}
         if start >= end:
@@ -744,15 +774,17 @@ def register(registry: ToolRegistry, client: HomeAssistantClient | None = None) 
             name="home_history",
             description=(
                 "What the house's sensors were earlier: what temperature, humidity or co2 in a room - min and max "
-                "with when, the average; electricity - kWh used in the period (the whole house). start/end: local "
-                "'YYYY-MM-DDTHH:MM' worked out from the current time ('ночью' = last night 00:00-07:00, 'за "
-                "месяц' = from the 1st); default the last 24 h. Now is get_home_status, not this."
+                "with when, the average; electricity - kWh used in the period (the whole house). period: "
+                "last_hour, last_3_hours, last_24_hours, last_night ('ночью'), today, yesterday, this_week, "
+                "this_month, last_month - the dates are worked out for you. Only for another span: start/end as "
+                "local 'YYYY-MM-DDTHH:MM'. Now is get_home_status, not this."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "what": {"type": "string", "enum": ["temperature", "humidity", "co2", "electricity"]},
                     "room": {"type": ["string", "null"]},
+                    "period": {"type": ["string", "null"], "enum": [*PERIODS, None]},
                     "start": {"type": ["string", "null"]},
                     "end": {"type": ["string", "null"]},
                 },

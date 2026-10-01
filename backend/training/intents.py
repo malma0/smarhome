@@ -323,55 +323,35 @@ def _house_status(rng, house) -> Intent:
 
 
 def _period(rng, electricity: bool):
-    """(what the person says, start and end from the clock) - worked out here, not by a model."""
-    def day(when: datetime, days_back: int = 0) -> datetime:
-        return when.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_back)
-
-    fmt = lambda t: t.strftime("%Y-%m-%dT%H:%M")  # noqa: E731
+    """(what the person says, the numbers in it, the tool's period name). The
+    dates come from app.domains.home.period_span - the model only names it."""
     if electricity:
-        options = [
-            ("за сегодня", lambda w: (day(w), w)),
-            ("вчера", lambda w: (day(w, 1), day(w))),
-            ("за эту неделю", lambda w: (day(w, w.weekday()), w)),
-            ("за этот месяц", lambda w: (day(w).replace(day=1), w)),
-            ("за прошлый месяц", lambda w: ((day(w).replace(day=1) - timedelta(days=1)).replace(day=1),
-                                            day(w).replace(day=1))),
-        ]
+        options = [("за сегодня", "today"), ("вчера", "yesterday"), ("за эту неделю", "this_week"),
+                   ("за этот месяц", "this_month"), ("за прошлый месяц", "last_month")]
     else:
-        options = [
-            ("за последний час", lambda w: (w - timedelta(hours=1), w)),
-            ("за последние 3 часа", lambda w: (w - timedelta(hours=3), w)),
-            ("этой ночью", lambda w: (day(w), day(w) + timedelta(hours=7))
-                if w.hour >= 8 else (day(w, 1), day(w, 1) + timedelta(hours=7))),
-            ("вчера", lambda w: (day(w, 1), day(w))),
-            ("за сутки", lambda w: (w - timedelta(hours=24), w)),
-        ]
-    said, span = rng.choice(options)
+        options = [("за последний час", "last_hour"), ("за последние 3 часа", "last_3_hours"),
+                   ("этой ночью", "last_night"), ("вчера", "yesterday"), ("за сутки", "last_24_hours")]
+    said, period = rng.choice(options)
     numbers = [n for n in said.split() if n.isdigit()]  # "за последние 3 часа" - the 3 has to be said
-    return said, numbers, lambda when: tuple(fmt(t) for t in span(when))
+    return said, numbers, period
 
 
 def _history(rng, house) -> Intent:
     electricity = rng.random() < 0.3
-    said, numbers, span = _period(rng, electricity)
+    said, numbers, period = _period(rng, electricity)
     if electricity:
-        def calls(when):
-            start, end = span(when)
-            return [call("home_history", what="electricity", start=start, end=end)]
-        return Intent("history", f"человек спрашивает, сколько электричества дом потратил {said}", numbers, [],
-                      calls_at=calls, question="electricity", no_commands=True,
-                      required_any=("электр", "энерг", "свет", "квт", "кило"))
+        return Intent("history", f"человек спрашивает, сколько электричества дом потратил {said}", numbers,
+                      [call("home_history", what="electricity", period=period)], question="electricity",
+                      no_commands=True, required_any=("электр", "энерг", "свет", "квт", "кило"))
     room = rng.choice(house.rooms)
     what, word = rng.choice([("temperature", "какая была температура"), ("humidity", "какая была влажность"),
                              ("co2", "какой был CO2 (духота)")])
 
-    def calls(when):
-        start, end = span(when)
-        return [call("home_history", what=what, room=_room(room), start=start, end=end)]
     required = {"temperature": ("темпер", "градус", "тепл", "холод"), "humidity": ("влажн",),
                 "co2": ("co2", "углекисл", "душн", "воздух")}[what]
-    return Intent("history", f"человек спрашивает, {word} {said}; комната: {room.lower()}", [stem(room)] + numbers, [],
-                  calls_at=calls, question=what, no_commands=True, required_any=required)
+    return Intent("history", f"человек спрашивает, {word} {said}; комната: {room.lower()}", [stem(room)] + numbers,
+                  [call("home_history", what=what, room=_room(room), period=period)], question=what,
+                  no_commands=True, required_any=required)
 
 
 SCHEDULE_NAMES = {"schedule_good_morning": "доброе утро", "schedule_sunset_entrance": "свет на закате",
