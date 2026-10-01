@@ -69,3 +69,18 @@ def test_a_day_of_readings_becomes_evenly_spaced_values():
               {"state": "unavailable", "last_changed": "2026-10-01T13:00:00+00:00"}]
     values = series(points, start, start + timedelta(hours=24), count=5)
     assert values == [20.0, 20.0, 22.0, 22.0, 22.0]  # 00, 06, 12, 18, 24 o'clock
+
+
+def test_the_phone_app_finds_jarvis_without_a_pin_and_without_using_up_tries(tmp_path, monkeypatch):
+    client = _client()
+    for _ in range(LOCKOUT_FAILURES + 2):  # the app asks every host of the network - never a lockout
+        assert client.get("/api/hello").json() == {"app": "jarvis"}
+    assert client.get("/api/ping", headers={"X-Pin": PIN}).status_code == 200
+
+    import app.panel as panel
+
+    monkeypatch.setattr(panel, "APK", tmp_path / "jarvis.apk")
+    assert client.get("/jarvis.apk").status_code == 404  # not built yet
+    (tmp_path / "jarvis.apk").write_bytes(b"PK")
+    got = client.get("/jarvis.apk")
+    assert got.status_code == 200 and got.headers["content-type"] == "application/vnd.android.package-archive"

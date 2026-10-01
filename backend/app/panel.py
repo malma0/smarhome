@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -25,6 +25,7 @@ from app.ha_client import HomeAssistantClient, HomeAssistantError
 from app.tools.registry import TurnContext
 
 STATIC = Path(__file__).resolve().parent.parent / "static" / "panel"
+APK = Path(__file__).resolve().parents[2] / "android" / "build" / "jarvis.apk"  # android/build.py makes it
 LOCKOUT_FAILURES, LOCKOUT_SECONDS = 5, 60
 CONTROL_FIELDS = ("room", "device", "action", "brightness_pct", "position", "temperature", "confirmed")
 WEATHER_SECONDS = 600
@@ -124,6 +125,16 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
     @app.get("/")
     async def root():
         return RedirectResponse("/panel/")
+
+    @app.get("/api/hello")
+    async def hello():  # no PIN: how the phone app finds Jarvis in the home network - says nothing else
+        return {"app": "jarvis"}
+
+    @app.get("/jarvis.apk")
+    async def android_app():  # the Android app, to open on the phone and install
+        if not APK.exists():
+            raise HTTPException(404, "Приложение ещё не собрано: python android/build.py")
+        return FileResponse(APK, media_type="application/vnd.android.package-archive", filename="jarvis.apk")
 
     @app.get("/api/ping", dependencies=[api])
     async def ping():

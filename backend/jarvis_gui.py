@@ -338,7 +338,10 @@ async def _voice_main(ui: WebviewUI, commands: "queue.Queue[tuple]") -> None:
         from app import panel
 
         if panel.start_in_thread():  # the control panel for the phone / the iPad - only with APP_PIN set
-            ui.info(f"Панель управления: http://{panel.home_address() or 'localhost'}:{settings.panel_port}/panel/")
+            base = f"http://{panel.home_address() or 'localhost'}:{settings.panel_port}"
+            ui.info(f"Панель управления: {base}/panel/")
+            if panel.APK.exists():
+                ui.info(f"Приложение для Android: {base}/jarvis.apk")
         detector = voice_app.build_wake_detector(ui) if settings.voice_mode == "wake" else None
         await voice_app.run_hands_free(session, detector, commands)
     except Exception as exc:  # noqa: BLE001 - show it instead of silently dying behind the window
