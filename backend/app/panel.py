@@ -116,6 +116,15 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
     app = FastAPI(title="Jarvis panel", docs_url=None, redoc_url=None, openapi_url=None)
     api = Depends(check_pin)
 
+    @app.middleware("http")
+    async def always_fresh(request: Request, call_next):
+        # the phone's WebView would otherwise keep an old app.js / app.css for hours after an update;
+        # no-cache still lets it reuse the file when the ETag says it's the same
+        response = await call_next(request)
+        if request.url.path.startswith("/panel"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     async def run(handler, body: dict) -> dict:
         try:
             return await handler(body, TurnContext())

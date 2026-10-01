@@ -56,6 +56,7 @@ def test_the_panel_page_is_served():
     assert client.get("/", follow_redirects=False).headers["location"] == "/panel/"
     page = client.get("/panel/")
     assert page.status_code == 200 and "app.js" in page.text
+    assert page.headers["cache-control"] == "no-cache"  # an update reaches the phone at once
 
 
 def test_a_day_of_readings_becomes_evenly_spaced_values():
