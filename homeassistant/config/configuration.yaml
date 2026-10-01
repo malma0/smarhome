@@ -455,6 +455,13 @@ input_datetime:
     name: 'Расписание: время «Доброе утро»'
     has_date: false
     has_time: true
+input_text:
+  schedule_good_morning_days:
+    name: 'Расписание: дни «Доброе утро»'
+    max: 20
+  schedule_sunset_entrance_days:
+    name: 'Расписание: дни света на закате'
+    max: 20
 template:
 - light:
   - name: 'Прихожая: свет'
@@ -1801,18 +1808,13 @@ automation:
       - cover.living_room_curtains
       - cover.kitchen_curtains
 - id: schedule_good_morning
-  alias: 'Расписание: «Доброе утро» по будням'
+  alias: 'Расписание: «Доброе утро»'
   triggers:
   - trigger: time
     at: input_datetime.schedule_good_morning_time
   conditions:
-  - condition: time
-    weekday:
-    - mon
-    - tue
-    - wed
-    - thu
-    - fri
+  - condition: template
+    value_template: '{{ now().isoweekday() | string in states(''input_text.schedule_good_morning_days'').split('','') }}'
   - condition: state
     entity_id: input_boolean.security_armed
     state: 'off'
@@ -1826,6 +1828,8 @@ automation:
   - trigger: sun
     event: sunset
   conditions:
+  - condition: template
+    value_template: '{{ now().isoweekday() | string in states(''input_text.schedule_sunset_entrance_days'').split('','') }}'
   - condition: state
     entity_id: input_boolean.security_armed
     state: 'off'
