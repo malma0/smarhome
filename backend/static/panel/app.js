@@ -631,6 +631,8 @@
     drawHeader();
     placePlanIfHeaderMoved();
     if (state.room) drawSheet();
+    const shown = screens[$("app").getAttribute("data-screen")];
+    if (shown && shown.tick) shown.tick();  // the open screen redraws from the fresh house too
   }
 
   async function loadWeather() {
@@ -765,7 +767,8 @@
     if (screens[name]) screens[name].open();
   }
   // what screens.js builds on: one way to ask the server, one toast, one icon set
-  window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; } };
+  window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; },
+    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }) };
 
   // the phone's back button (the Android app asks first): close what is open, else leave the app
   window.jarvisBack = () => {

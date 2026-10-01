@@ -156,4 +156,126 @@
   scenes.node = section("screen-scenes");
   wireScenes();
   window.JV.add("scenes", { open: () => { drawScenes(); loadScenes(); } });
+
+  // ---------------------------------------------------------------- the guard, the danger sensors, the journal
+
+  const sec = { node: null, data: null, filter: "all", ticks: 0, busy: false };
+
+  const hhmm = (iso) => { const t = new Date(iso); return pad(t.getHours()) + ":" + pad(t.getMinutes()); };
+  /** the journal's time: "21:46" today, "Вчера 14:12", "28 сен 08:41". */
+  const logTime = (iso) => when(iso).replace("Сегодня, ", "").replace(", ", " ");
+
+  function sensorCards(rooms, offline) {
+    const withKey = (k) => rooms.filter((r) => k in r.dangers);
+    const fired = (k) => rooms.filter((r) => r.dangers[k]).map((r) => r.name);
+    const lower = (names) => names.map((n) => n.toLowerCase()).join(", ");
+    const cards = [];
+    const danger = (ic, name, key, quiet) => {
+      const all = withKey(key);
+      if (!all.length) return;
+      const bad = fired(key);
+      cards.push({ icon: ic, name, alarm: bad.length > 0,
+        state: bad.length ? "ТРЕВОГА: " + lower(bad) : (all.length > 1 ? all.length + " датчиков · " : all[0].name + " · ") + quiet });
+    };
+    danger("smoke", "Дым", "smoke", "норма");
+    danger("leak", "Протечка", "moisture", "сухо");
+    danger("gas", "Газ", "gas", "норма");
+    const moving = rooms.filter((r) => r.readings.motion && r.readings.motion.value).map((r) => r.name);
+    cards.push({ icon: "motion", name: "Движение", live: moving.length > 0, state: moving.length ? "Сейчас: " + lower(moving) : "Тихо" });
+    const doors = rooms.filter((r) => r.readings.door);
+    const openDoors = doors.filter((r) => r.readings.door.value);
+    const openWins = rooms.filter((r) => r.readings.window && r.readings.window.value).map((r) => r.name);
+    const doorText = !doors.length ? "" : openDoors.length ? "Дверь открыта" : "Дверь закрыта";
+    const winText = openWins.length ? "окно открыто: " + lower(openWins) : "окна закрыты";
+    cards.push({ icon: "door", name: "Двери и окна", live: openDoors.length + openWins.length > 0,
+      state: doorText ? doorText + " · " + winText : winText.charAt(0).toUpperCase() + winText.slice(1) });
+    const devices = rooms.reduce((n, r) => n + r.devices.length, 0);
+    cards.push({ icon: "hub", name: "Связь", alarm: offline, state: offline ? "Нет связи с домом" : "Дом на связи · " + devices + " устройств" });
+    return cards;
+  }
+
+  function heroHtml(d) {
+    const mode = !d ? "off" : d.armed ? "on" : d.arming ? "arming" : "off";
+    let sub = d ? "" : "Загружаю…";
+    let countdown = "";
+    if (d && mode === "on") sub = "Все датчики активны · с " + hhmm(d.since);
+    else if (d && mode === "arming") {
+      const elapsed = Math.max(0, (Date.now() - new Date(d.arming_since)) / 1000);
+      const left = Math.max(0, Math.ceil(d.arm_seconds - elapsed));
+      sub = "Охрана включится через " + Math.floor(left / 60) + ":" + pad(left % 60) + " — успейте выйти";
+      // the ring runs the real countdown: as long as the wait, started as long ago as it did
+      countdown = `<svg class="count" viewBox="0 0 92 92" width="72" height="72" aria-hidden="true"><circle cx="46" cy="46" r="44" class="bg"/>` +
+        `<circle cx="46" cy="46" r="44" class="fg" style="animation-duration:${d.arm_seconds}s;animation-delay:-${elapsed.toFixed(1)}s"/></svg>`;
+    } else if (d && d.since) sub = "Снята · с " + hhmm(d.since);
+    const title = { off: "Охрана снята", arming: "Включается…", on: "Под охраной" }[mode];
+    const btn = { off: "Поставить на охрану", arming: "Отменить", on: "Снять с охраны" }[mode];
+    return `<div class="hero ${mode}">
+        <div class="row"><span class="badge">${mode === "on" ? `<span class="ring"></span>` : ""}${countdown}<span class="disc">${icon(mode === "on" ? "shieldok" : "shield", 28)}</span></span>
+          <div class="words"><b>${title}</b><span>${esc(sub)}</span></div></div>
+        <button class="act jv-press" data-guard="${mode}"${d ? "" : " disabled"}>${btn}</button>
+      </div>`;
+  }
+
+  function journalHtml(d) {
+    let html = `<div class="seg" role="group" aria-label="Фильтр журнала">` + [["all", "Все"], ["alarm", "Тревоги"], ["guard", "Охрана"]].map((f) =>
+      `<button class="${sec.filter === f[0] ? "on" : ""}" aria-pressed="${sec.filter === f[0]}" data-filter="${f[0]}">${f[1]}</button>`).join("") + `</div>`;
+    if (!d) return html + `<p class="scr-empty">Загружаю…</p>`;
+    const rows = d.journal.filter((e) => sec.filter === "all" || e.k === sec.filter);
+    if (!rows.length) return html + `<p class="scr-empty">За двое суток — ничего.</p>`;
+    html += `<div class="log">`;
+    rows.forEach((e) => {
+      let detail = e.detail || "";
+      if (e.k === "alarm") detail = e.cleared ? "Отбой в " + hhmm(e.cleared) : "Тревога ещё идёт";
+      const acts = e.acts && e.acts.length ? `<div class="acts"><span>Что сделал дом</span>` + e.acts.map((a) =>
+        `<span class="act"><span class="ok">${icon("check", 14)}</span><span class="t">${esc(a.t)}</span><span class="at">${esc(a.at)}</span></span>`).join("") + `</div>` : "";
+      html += `<div class="item ${e.k}"><span class="ic-box">${icon(e.icon, 18)}</span><div class="body">
+        <div class="line"><span class="title">${esc(e.title)}</span><span class="time">${esc(logTime(e.at))}</span></div>
+        ${detail ? `<span class="detail">${esc(detail)}</span>` : ""}${acts}</div></div>`;
+    });
+    return html + `</div>`;
+  }
+
+  function drawSecurity() {
+    const h = window.JV.house();
+    let html = `<h1 class="scr-title">Охрана</h1>` + heroHtml(sec.data);
+    html += `<section style="display:flex;flex-direction:column;gap:10px"><h2 class="sec-label">Датчики опасности</h2><div class="sensors">`;
+    sensorCards(h.rooms || [], h.offline).forEach((c) => {
+      html += `<div class="sensor${c.live ? " live" : ""}${c.alarm ? " alarm" : ""}"><span class="top">${icon(c.icon, 20)}<span class="dot">${c.live ? `<i class="ping"></i>` : ""}<i></i></span></span>
+        <span style="display:flex;flex-direction:column;gap:2px"><span class="name">${esc(c.name)}</span><span class="state">${esc(c.state)}</span></span></div>`;
+    });
+    html += `</div></section><section style="display:flex;flex-direction:column;gap:10px"><div class="scr-h2"><h2>Журнал</h2></div>` +
+      journalHtml(sec.data) + `</section>`;
+    sec.node.innerHTML = html;
+  }
+
+  async function loadSecurity() {
+    try { sec.data = await api("GET", "/api/security"); } catch (e) { if (e.message !== "locked") toast(e.message, true); }
+    drawSecurity();
+  }
+
+  function wireSecurity() {
+    sec.node.addEventListener("click", async (e) => {
+      const f = e.target.closest("[data-filter]");
+      if (f) { sec.filter = f.dataset.filter; drawSecurity(); return; }
+      const g = e.target.closest("[data-guard]");
+      if (!g || sec.busy) return;
+      const action = { off: "arm", arming: "cancel", on: "disarm" }[g.dataset.guard];
+      sec.busy = true;
+      try {
+        const result = await api("POST", "/api/security", { action });
+        if (result.error) toast(result.error, true);
+        else { sec.data = result; toast({ arm: "Охрана включится через 2 минуты", cancel: "Отменено", disarm: "Охрана снята" }[action]); }
+      } catch (err) { if (err.message !== "locked") toast(err.message, true); }
+      sec.busy = false;
+      drawSecurity();
+    });
+  }
+
+  sec.node = section("screen-shield");
+  wireSecurity();
+  window.JV.add("shield", {
+    open: () => { sec.ticks = 0; drawSecurity(); loadSecurity(); },
+    // every refresh (5 s): the sensors from the fresh house; the journal and the countdown every third
+    tick: () => { sec.ticks += 1; if (sec.ticks % 3 === 0) loadSecurity(); else drawSecurity(); },
+  });
 })();
