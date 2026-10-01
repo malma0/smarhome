@@ -230,7 +230,15 @@ def home_address() -> str | None:
     """This computer's address in the home network (192.168.x / 10.x), for the link to show."""
     import socket
 
-    try:
+    try:  # the address the home router is reached from - a UDP "connect" sends nothing
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.168.0.1", 9))
+            routed = probe.getsockname()[0]
+        if routed.startswith(("192.168.", "10.")):
+            return routed
+    except OSError:
+        pass
+    try:  # no route: the first home-looking address (VirtualBox's 192.168.56.x can be among them)
         addresses = {info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)}
     except OSError:
         return None
