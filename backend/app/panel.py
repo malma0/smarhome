@@ -11,6 +11,7 @@ Runs inside Jarvis's own process, on a thread of its own (start_in_thread).
 import hmac
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,9 @@ from app.tools.registry import TurnContext
 STATIC = Path(__file__).resolve().parent.parent / "static" / "panel"
 LOCKOUT_FAILURES, LOCKOUT_SECONDS = 5, 60
 CONTROL_FIELDS = ("room", "device", "action", "brightness_pct", "position", "temperature", "confirmed")
+WEATHER_SECONDS = 600
+SERIES_POINTS = 25  # one an hour over the day - what the room's chart draws
+SERIES_KINDS = {"temperature": "temperature", "humidity": "humidity", "co2": "carbon_dioxide"}
 NORM_FIELDS = ("room", "temperature", "co2_max", "humidity_min")
 
 
@@ -59,6 +63,25 @@ def view(rooms: dict[str, list[dict]]) -> list[dict]:
                         item[key] = d[key]
                 room["devices"].append(item)
         out.append(room)
+    return out
+
+
+def series(points: list[dict], start: datetime, end: datetime, count: int = SERIES_POINTS) -> list[float | None]:
+    """A sensor's history -> its value at count evenly spaced moments (the last one known before each)."""
+    known = []
+    for item in points:
+        try:
+            known.append((datetime.fromisoformat(item["last_changed"]), float(item["state"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    known.sort()
+    out, i, last = [], 0, None
+    for n in range(count):
+        at = start + (end - start) * n / (count - 1)
+        while i < len(known) and known[i][0] <= at:
+            last = known[i][1]
+            i += 1
+        out.append(last if last is not None else (known[0][1] if known else None))
     return out
 
 
@@ -141,6 +164,39 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
     @app.post("/api/history", dependencies=[api])
     async def history(body: dict):
         return await run(history_h, {k: body[k] for k in ("what", "room", "period", "start", "end") if k in body})
+
+    @app.get("/api/weather", dependencies=[api])
+    async def weather():
+        """Outside now, for the header - asked once in ten minutes."""
+        cached = state.get("weather")
+        if cached and time.monotonic() - cached[0] < WEATHER_SECONDS:
+            return cached[1]
+        from app.domains.weather import make_handler
+
+        result = await make_handler(settings.weather_city)({"days": 1}, TurnContext())
+        answer = {"now": result.get("now"), "place": result.get("place")} if "now" in result else {"error": result.get("error")}
+        if "now" in answer:
+            state["weather"] = (time.monotonic(), answer)
+        return answer
+
+    @app.get("/api/series", dependencies=[api])
+    async def room_series(room: str, what: str = "temperature"):
+        """The room's sensor over the last day, as evenly spaced values for a chart."""
+        kind = SERIES_KINDS.get(what)
+        if kind is None:
+            raise HTTPException(400, "what: temperature, humidity or co2.")
+        try:
+            rooms = await home._house(client)
+            name = home.match_room(room, list(rooms))
+            sensor = next((d for d in rooms.get(name, []) if d.get("type") == "sensor" and d.get("kind") == kind), None)
+            if sensor is None:
+                return {"values": []}
+            end = datetime.now().astimezone()
+            start = end - timedelta(hours=24)
+            points = await client.get_history(sensor["entity_id"], start.isoformat(), end.isoformat())
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+        return {"values": series(points, start, end)}
 
     @app.post("/api/chat", dependencies=[api])
     async def chat(body: dict):
