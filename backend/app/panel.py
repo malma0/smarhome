@@ -8,6 +8,7 @@ PIN set - no panel. Five wrong PINs from one address lock it out a minute.
 Runs inside Jarvis's own process, on a thread of its own (start_in_thread).
 """
 
+import asyncio
 import hmac
 import threading
 import time
@@ -32,6 +33,11 @@ WEATHER_SECONDS = 600
 SERIES_POINTS = 25  # one an hour over the day - what the room's chart draws
 SERIES_KINDS = {"temperature": "temperature", "humidity": "humidity", "co2": "carbon_dioxide"}
 NORM_FIELDS = ("room", "temperature", "co2_max", "humidity_min")
+ARM_AUTOMATION = "security_arm_on_leaving"  # virtual_house.py: "Я ушёл" -> armed after ARM_DELAY
+ARM_SECONDS = 120  # its ARM_DELAY, for the countdown
+ARM_EVENT = "jarvis_arm_soon"  # starts it from the app (virtual_house.py ARM_EVENT)
+SETTLE_TRIES, SETTLE_SECONDS = 5, 0.2
+JOURNAL_HOURS = 48
 ALL_DAYS = [1, 2, 3, 4, 5, 6, 7]
 DAY_DIGITS = {str(d) for d in ALL_DAYS}
 
@@ -103,6 +109,40 @@ def schedules_view(states: list[dict]) -> list[dict]:
                           "time": (by_id.get(f"input_datetime.{slug}_time", {}).get("state") or "")[:5] or None,
                           "days": days, "days_editable": days_helper is not None})
     return schedules
+
+
+async def security_view(client: HomeAssistantClient, now: datetime | None = None) -> dict:
+    """The guard (on / arming / off, since when) and the journal with what the house did about alarms."""
+    from app import journal
+
+    now = now or datetime.now().astimezone()
+    states = await client.get_states()
+    guard = next((s for s in states if s["entity_id"] == journal.GUARD), None)
+    arming = next((s for s in states if s["entity_id"].startswith("automation.")
+                   and s.get("attributes", {}).get("id") == ARM_AUTOMATION), None)
+    follow = journal.watched(states)
+    start = now - timedelta(hours=JOURNAL_HOURS)
+    histories = await client.get_histories(sorted(follow), start.isoformat(), now.isoformat())
+    lines = journal.events(follow, histories)
+    for line in [x for x in lines if x["k"] in ("guard", "alarm")][:10]:  # the logbook only around these
+        at = datetime.fromisoformat(line["at"])
+        if line["k"] == "guard":
+            book = await client.get_logbook((at - timedelta(seconds=2)).isoformat(), (at + timedelta(seconds=2)).isoformat())
+            line["detail"] = journal.why(line, book)
+        else:
+            book = await client.get_logbook(at.isoformat(), (at + journal.ACTS_WINDOW).isoformat())
+            line["acts"] = journal.acts(line, book)
+    attrs = (arming or {}).get("attributes", {})
+    return {
+        "armed": bool(guard and guard["state"] == "on"),
+        # HA's last_changed restarts with HA; the journal's own last switch is the real "since"
+        "since": next((x["at"] for x in lines if x["k"] == "guard"), guard.get("last_changed") if guard else None),
+        "arming": bool(attrs.get("current")) and not (guard and guard["state"] == "on"),
+        "arming_since": attrs.get("last_triggered"),
+        "arm_seconds": ARM_SECONDS,
+        "can_delay": arming is not None,
+        "journal": [{k: v for k, v in line.items() if k != "entity_id"} for line in lines],
+    }
 
 
 def series(points: list[dict], start: datetime, end: datetime, count: int = SERIES_POINTS) -> list[float | None]:
@@ -246,6 +286,43 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
             return await all_schedules()
         result = await run(schedule_h, {k: body[k] for k in ("action", "name", "time") if k in body})
         return result if "error" in result else await all_schedules()
+
+    @app.get("/api/security", dependencies=[api])
+    async def security():
+        try:
+            return await security_view(client)
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
+    @app.post("/api/security", dependencies=[api])
+    async def change_security(body: dict):
+        """arm: in ARM_SECONDS, time to walk out (the "Я ушёл" automation's own wait); arm_now; disarm; cancel."""
+        action = body.get("action")
+        try:
+            states = await client.get_states()
+            arming = next((s["entity_id"] for s in states if s["entity_id"].startswith("automation.")
+                           and s.get("attributes", {}).get("id") == ARM_AUTOMATION), None)
+            if action == "arm" and arming:
+                await client.fire_event(ARM_EVENT)
+            elif action in ("arm", "arm_now"):
+                await client.call_service("input_boolean", "turn_on", "input_boolean.security_armed")
+            elif action in ("disarm", "cancel"):
+                if arming:  # stops a countdown still running, then lets it work again
+                    await client.call_service("automation", "turn_off", arming)
+                    await client.call_service("automation", "turn_on", arming)
+                await client.call_service("input_boolean", "turn_off", "input_boolean.security_armed")
+            else:
+                return {"error": "action: arm, arm_now, disarm или cancel."}
+            # the automation's "current" shows up a moment after the call - wait for it (a second at most)
+            want_on = action in ("arm", "arm_now")
+            for _ in range(SETTLE_TRIES):
+                view = await security_view(client)
+                if (view["armed"] or view["arming"]) == want_on:
+                    break
+                await asyncio.sleep(SETTLE_SECONDS)
+            return view
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
 
     @app.post("/api/history", dependencies=[api])
     async def history(body: dict):

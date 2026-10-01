@@ -119,3 +119,35 @@ def test_scenes_say_what_they_do_and_when_they_last_ran():
     scenes = _client(ha).get("/api/scenes", headers={"X-Pin": PIN}).json()["scenes"]
     assert scenes == [{"name": "Я ушёл", "does": scenes[0]["does"], "last": "2026-10-01T08:41:00+07:00"}]
     assert "Фразы" not in scenes[0]["does"] and "охрана" in scenes[0]["does"]
+
+
+def test_the_guard_arms_with_time_to_walk_out_and_disarms_stopping_the_countdown():
+    from tests.test_home_features import _state
+
+    class WithJournal(FakeHA):
+        async def get_histories(self, entity_ids, start, end):
+            return {}
+
+        async def get_logbook(self, start, end):
+            return []
+
+        async def fire_event(self, event_type, data=None):
+            self.events.append(event_type)
+
+    ha = WithJournal()
+    ha.events = []
+    ha.states.append(_state("automation.ukhod", "on", id="security_arm_on_leaving", current=0))
+    client = _client(ha)
+    view = client.get("/api/security", headers={"X-Pin": PIN}).json()
+    assert view["armed"] is False and view["arming"] is False and view["can_delay"] and view["journal"] == []
+
+    act = lambda action: client.post("/api/security", headers={"X-Pin": PIN}, json={"action": action}).json()  # noqa: E731
+    act("arm")
+    assert ha.events == ["jarvis_arm_soon"]  # the countdown starts and the call returns at once
+    act("disarm")
+    assert ha.calls[-3:] == [("automation", "turn_off", "automation.ukhod", None),
+                             ("automation", "turn_on", "automation.ukhod", None),
+                             ("input_boolean", "turn_off", "input_boolean.security_armed", None)]
+    act("arm_now")
+    assert ha.calls[-1] == ("input_boolean", "turn_on", "input_boolean.security_armed", None)
+    assert "error" in act("explode")
