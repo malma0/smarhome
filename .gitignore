@@ -50,3 +50,6 @@ backend/*.log
 backend/training/cache/
 backend/training/runs/
 *.gguf
+
+# the Android app build (android/build.py) - made, not source
+android/build/

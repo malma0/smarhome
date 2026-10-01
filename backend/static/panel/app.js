@@ -697,6 +697,13 @@
     setInterval(loadWeather, 10 * 60 * 1000);
   }
 
+  // the phone's back button (the Android app asks first): close what is open, else leave the app
+  window.jarvisBack = () => {
+    if (!$("confirm").hidden) { closeGasConfirm(); return true; }
+    if (state.room) { closeRoom(); return true; }
+    return false;
+  };
+
   wire();
   fit();
   drawSkeleton();

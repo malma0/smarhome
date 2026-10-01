@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Jarvis for Android: the control panel (backend/static/panel) in a full-screen
+     WebView, plus finding Jarvis in the home network. Built by build.py. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="ru.jarvis.home"
+    android:versionCode="1"
+    android:versionName="0.1">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- cleartext: Jarvis is reached over plain http inside the home network -->
+    <application
+        android:label="Jarvis"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Jarvis"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

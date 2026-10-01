@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- dark theme: the page sees prefers-color-scheme: dark -->
+    <style name="Jarvis" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+    <color name="bg">#07090D</color>
+</resources>

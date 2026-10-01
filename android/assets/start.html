@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&display=swap">
+<title>Jarvis</title>
+<style>
+  /* the panel's lock screen (backend/static/panel/app.css, from the design): the same orb, colors and fields */
+  :root { --bg: #F3F5F8; --surf: #FFFFFF; --line: #E1E6ED; --text: #0B1220; --text2: #4A5567; --cyan: #0891B2; --blue: #2F5BEA; --warn: #B45309; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #07090D; --surf: #0E1218; --line: #1F2630; --text: #E8EDF4; --text2: #9AA6B6; --cyan: #22D3EE; --blue: #2F5BEA; --warn: #FBBF24; }
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: Onest, "Segoe UI", system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
+  main { min-height: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; }
+  h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
+  p { margin: 0; color: var(--text2); font-size: 14px; line-height: 1.45; text-align: center; max-width: 300px; }
+  p.warn { color: var(--warn); }
+  form { display: flex; gap: 8px; width: 100%; max-width: 320px; }
+  input { flex: 1; min-width: 0; height: 52px; border-radius: 16px; border: 1px solid var(--line); background: var(--surf); color: var(--text); padding: 0 16px; font: inherit; font-size: 16px; outline: none; }
+  input:focus { border-color: var(--cyan); }
+  button { font: inherit; border: 0; cursor: pointer; transition: transform .12s ease; }
+  button:active { transform: scale(.95); }
+  .go { height: 52px; padding: 0 18px; border-radius: 16px; background: var(--blue); color: #fff; font-weight: 600; }
+  .ghost { height: 44px; padding: 0 18px; border-radius: 14px; background: none; color: var(--cyan); font-weight: 500; }
+  .row { display: flex; gap: 8px; }
+  [hidden] { display: none !important; }
+
+  .orb { position: relative; width: 60px; height: 60px; margin-bottom: 8px; }
+  .orb span { position: absolute; border-radius: 50%; }
+  .halo { inset: -10px; background: radial-gradient(circle, rgba(34,211,238,.55) 0%, rgba(47,91,234,.25) 45%, rgba(47,91,234,0) 70%); animation: halo 4.2s ease-in-out infinite; }
+  .ball { inset: 0; background: radial-gradient(circle at 34% 28%, #CFFAFE 0%, #22D3EE 26%, #2F5BEA 68%, #172554 100%); box-shadow: 0 0 0 1px rgba(165,243,252,.35) inset, 0 8px 28px rgba(47,91,234,.55); animation: breathe 4.2s ease-in-out infinite; }
+  .swirl { inset: 7px; background: conic-gradient(from 0deg, rgba(255,255,255,0) 0deg, rgba(255,255,255,.35) 60deg, rgba(255,255,255,0) 140deg, rgba(34,211,238,.25) 250deg, rgba(255,255,255,0) 360deg); animation: swirl 9s linear infinite; mix-blend-mode: screen; }
+  .busy .halo { animation-duration: 1.4s; }
+  .busy .swirl { animation-duration: 2.2s; }
+  .muted .halo, .muted .ball { filter: grayscale(1) brightness(.6); }
+  @keyframes breathe { 0%,100% { transform: scale(1); filter: brightness(1) saturate(1); } 50% { transform: scale(1.055); filter: brightness(1.18) saturate(1.1); } }
+  @keyframes halo { 0%,100% { opacity: .45; transform: scale(.92); } 50% { opacity: .9; transform: scale(1.22); } }
+  @keyframes swirl { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<main>
+  <div class="orb busy" id="orb"><span class="halo"></span><span class="ball"></span><span class="swirl"></span></div>
+  <h1 id="title">Jarvis</h1>
+  <p id="text">Подключаюсь к дому…</p>
+  <form id="manual" hidden>
+    <input id="address" inputmode="decimal" autocomplete="off" placeholder="Адрес компьютера">
+    <button class="go" type="submit">Войти</button>
+  </form>
+  <div class="row" id="actions" hidden>
+    <button class="ghost" id="retry" type="button">Повторить</button>
+    <button class="ghost" id="rescan" type="button">Искать в сети</button>
+  </div>
+</main>
+<script>
+  // Finding Jarvis: the address from last time, else the whole Wi-Fi network (MainActivity.scan),
+  // else the address typed in. The app answers through onFound / onScanDone / onFailed.
+  const app = window.JarvisApp;
+  const $ = (id) => document.getElementById(id);
+  const mode = new URLSearchParams(location.search).get("mode");
+  let found = false;
+
+  function show(title, text, opts) {
+    opts = opts || {};
+    $("title").textContent = title;
+    $("text").textContent = text;
+    $("text").className = opts.warn ? "warn" : "";
+    $("orb").className = "orb" + (opts.busy ? " busy" : "") + (opts.muted ? " muted" : "");
+    $("manual").hidden = !opts.manual;
+    $("actions").hidden = !opts.actions;
+    $("retry").hidden = !app.saved();
+  }
+
+  function connect(address) {
+    show("Jarvis", "Подключаюсь к " + address.replace(/:8765$/, "") + "…", { busy: true });
+    app.connect(address);
+  }
+
+  function scan() {
+    found = false;
+    show("Jarvis", "Ищу Джарвиса в домашней сети…", { busy: true });
+    app.scan();
+  }
+
+  function notFound(extra) {
+    show("Не нашёл Джарвиса", (extra ? extra + " " : "") +
+      "Проверь, что компьютер с Джарвисом включён, а телефон в той же Wi-Fi. Или введи адрес компьютера — он написан в окне Джарвиса.",
+      { manual: true, actions: true, muted: true });
+  }
+
+  window.onFound = (address) => { if (!found) { found = true; connect(address); } };
+  window.onScanDone = (count) => { if (!count) notFound(); };
+  window.onFailed = (address) => {
+    if (address === app.saved() && !found && mode !== "offline") { scan(); return; }  // the computer's address changed - look again
+    notFound("По адресу " + address + " Джарвис не ответил.");
+  };
+
+  $("manual").addEventListener("submit", (e) => { e.preventDefault(); const a = $("address").value.trim(); if (a) connect(a); });
+  $("retry").addEventListener("click", () => connect(app.saved()));
+  $("rescan").addEventListener("click", scan);
+
+  if (mode === "offline") {
+    show("Нет связи с домом", "Автоматика дома продолжает работать. Проверь Wi-Fi и что компьютер с Джарвисом включён.",
+      { actions: true, warn: true, muted: true });
+  } else if (app.saved()) {
+    connect(app.saved());
+  } else {
+    scan();
+  }
+</script>
+</body>
+</html>
