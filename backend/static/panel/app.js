@@ -192,6 +192,19 @@
     placePlan();
   }
 
+  // the plan starts under the header's real bottom: a two-line summary or a bigger system font
+  // makes the header taller than the mockup's 176, and the cards would cover the plan
+  let headerBottom = 0;
+  function planTop() {
+    const header = document.querySelector(".header");
+    headerBottom = header.offsetTop + header.offsetHeight;
+    return Math.max(176, headerBottom + 14);
+  }
+  function placePlanIfHeaderMoved() {
+    const header = document.querySelector(".header");
+    if (header.offsetTop + header.offsetHeight !== headerBottom && !state.room) placePlan();
+  }
+
   function placePlan() {
     const g = state.geometry;
     if (!g) return;
@@ -206,7 +219,7 @@
       stage.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${s.toFixed(3)})`;
       return;
     }
-    const top = 176, bottomGap = 100;
+    const top = planTop(), bottomGap = 100;
     const s = Math.min(0.94, (H - top - bottomGap) / g.height, 350 / g.width);
     const left = (390 - g.width * s) / 2, y = top + Math.max(0, (H - top - bottomGap - g.height * s) / 2);
     stage.style.transitionDuration = "420ms";
@@ -306,7 +319,7 @@
     if (!state.loading) return;
     let html = "";
     Object.values(LAYOUT.rooms).forEach((r) => {
-      html += `<span class="skel" style="left:${30 + r.x * 0.94}px;top:${176 + r.y * 0.94}px;width:${r.w * 0.94 - 4}px;height:${r.h * 0.94 - 4}px"></span>`;
+      html += `<span class="skel" style="left:${30 + r.x * 0.94}px;top:${planTop() + r.y * 0.94}px;width:${r.w * 0.94 - 4}px;height:${r.h * 0.94 - 4}px"></span>`;
     });
     box.innerHTML = html;
     $("headText").innerHTML = '<span class="skel-line" style="width:120px;height:12px;margin-top:2px"></span><span class="skel-line" style="width:170px;height:26px;margin-top:6px"></span>';
@@ -578,6 +591,7 @@
     drawSkeleton();
     drawPlanState();
     drawHeader();
+    placePlanIfHeaderMoved();
     if (state.room) drawSheet();
   }
 
@@ -693,7 +707,8 @@
     refresh();
     loadWeather();
     setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
-    setInterval(drawHeader, 20000);
+    setInterval(() => { drawHeader(); placePlanIfHeaderMoved(); }, 20000);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(placePlanIfHeaderMoved);  // Onest is taller than the fallback
     setInterval(loadWeather, 10 * 60 * 1000);
   }
 
