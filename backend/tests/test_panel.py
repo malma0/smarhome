@@ -55,4 +55,17 @@ def test_the_panel_page_is_served():
     client = _client()
     assert client.get("/", follow_redirects=False).headers["location"] == "/panel/"
     page = client.get("/panel/")
-    assert page.status_code == 200 and "panel.js" in page.text
+    assert page.status_code == 200 and "app.js" in page.text
+
+
+def test_a_day_of_readings_becomes_evenly_spaced_values():
+    from datetime import datetime, timedelta, timezone
+
+    from app.panel import series
+
+    start = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    points = [{"state": "20.0", "last_changed": "2026-09-30T22:00:00+00:00"},
+              {"state": "22.0", "last_changed": "2026-10-01T12:00:00+00:00"},
+              {"state": "unavailable", "last_changed": "2026-10-01T13:00:00+00:00"}]
+    values = series(points, start, start + timedelta(hours=24), count=5)
+    assert values == [20.0, 20.0, 22.0, 22.0, 22.0]  # 00, 06, 12, 18, 24 o'clock

@@ -2,66 +2,88 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Jarvis">
-<meta name="theme-color" content="#07090f">
+<meta name="theme-color" content="#07090D">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png">
-<link rel="stylesheet" href="panel.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="app.css">
 <title>Jarvis</title>
 </head>
 <body>
+<div class="jv-root" id="root">
+  <div class="jv-app" id="app">
+    <span class="ambient"></span>
+    <button class="zoom-out" id="zoomOut" aria-label="Вернуться к плану" hidden></button>
+    <div class="plan-stage" id="stage"><div class="plan" id="plan"></div></div>
+    <div id="skeleton" hidden></div>
 
-<div id="lock" class="lock" hidden>
-  <div class="lock-box">
-    <div class="brand">J A R V I S</div>
-    <p class="muted">Введи PIN панели (APP_PIN в настройках Джарвиса)</p>
-    <form id="lockForm">
-      <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">
-      <button type="submit" class="primary">Войти</button>
-    </form>
-    <p id="lockError" class="error"></p>
+    <header class="header">
+      <div class="head-row">
+        <div class="head-text" id="headText">
+          <span class="date mono" id="date"></span>
+          <h1 class="title">Квартира</h1>
+          <span class="summary" id="summary">…</span>
+        </div>
+        <button class="bell jv-press" id="bell" aria-label="Уведомления и журнал"><span data-icon="bell" data-size="20"></span><span class="dot" id="bellDot" hidden></span></button>
+      </div>
+      <div class="cards">
+        <button class="card jv-press" id="armCard" aria-pressed="false">
+          <span class="ic-wrap" data-icon="shield" data-size="20" id="armIcon"></span>
+          <span class="lines"><span class="small">Охрана</span><span class="big" id="armTxt">—</span></span>
+        </button>
+        <button class="card power jv-press" id="powerCard">
+          <span class="ic-wrap" data-icon="bolt" data-size="20"></span>
+          <span class="lines"><span class="big" id="powerNow">—</span><span class="small" id="powerDay"></span></span>
+        </button>
+        <div class="card">
+          <span class="ic-wrap" data-icon="cloud" data-size="20"></span>
+          <span class="lines"><span class="big" id="weatherT">—</span><span class="small" id="weatherW"></span></span>
+        </div>
+      </div>
+      <div class="offline" id="offline" role="status" hidden>
+        <span class="ic-wrap" data-icon="wifioff" data-size="20"></span>
+        <span class="lines"><b>Нет связи с домом</b><span id="offlineSince">автоматика дома работает</span></span>
+        <button class="retry jv-press" id="retry">Повторить</button>
+      </div>
+    </header>
+
+    <div class="back"><button class="jv-press" id="back" aria-label="Назад к плану"><span data-icon="back" data-size="20"></span>План</button></div>
+
+    <button class="orb" id="orb" aria-label="Jarvis — голосовой ассистент"><span class="halo"></span><span class="ball"></span><span class="swirl"></span></button>
+
+    <nav class="nav" id="nav" aria-label="Разделы"></nav>
+
+    <div class="sheet-wrap" id="sheetWrap"><div class="sheet" id="sheet"></div></div>
+
+    <div class="confirm" id="confirm" hidden>
+      <div class="dlg" role="alertdialog" aria-labelledby="gasTitle">
+        <span class="warn-ic" data-icon="gas" data-size="26"></span>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <h2 id="gasTitle">Открыть кран газа?</h2>
+          <p>Газ пойдёт на плиту на кухне. Датчик утечки включён: при утечке кран закроется сам.</p>
+        </div>
+        <div class="facts" id="gasFacts"></div>
+        <button class="hold" id="hold" aria-label="Удерживайте, чтобы открыть кран газа"><span class="bar"></span><span class="txt">Удерживайте 2 секунды, чтобы открыть</span></button>
+        <button class="cancel jv-press" id="cancel">Отмена</button>
+      </div>
+    </div>
+
+    <div class="lock" id="lock" hidden>
+      <div class="orb"><span class="halo"></span><span class="ball"></span><span class="swirl"></span></div>
+      <h1>Jarvis</h1>
+      <p>Введи PIN панели — его задают в настройках Джарвиса (APP_PIN)</p>
+      <form id="lockForm"><input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN"><button class="go jv-press" type="submit">Войти</button></form>
+      <span class="err" id="lockErr"></span>
+    </div>
   </div>
 </div>
-
-<div id="app" hidden>
-  <header class="top">
-    <div class="brand">J A R V I S</div>
-    <div id="status" class="muted">…</div>
-  </header>
-
-  <main>
-    <section id="tab-house" class="tab">
-      <div id="houseCard"></div>
-      <div id="rooms" class="rooms"></div>
-    </section>
-    <section id="tab-scenes" class="tab" hidden>
-      <h2>Сценарии</h2>
-      <div id="scenes" class="buttons"></div>
-      <h2>Расписания</h2>
-      <div id="schedules"></div>
-    </section>
-    <section id="tab-chat" class="tab" hidden>
-      <div id="messages" class="messages"></div>
-      <form id="chatForm" class="chat-form">
-        <input id="chatInput" type="text" autocomplete="off" placeholder="Написать Джарвису…">
-        <button type="submit" class="primary">➤</button>
-      </form>
-    </section>
-  </main>
-
-  <nav class="tabs">
-    <button data-tab="house" class="active">Дом</button>
-    <button data-tab="scenes">Сценарии</button>
-    <button data-tab="chat">Чат</button>
-  </nav>
-</div>
-
-<div id="toast" class="toast" hidden></div>
-<script src="panel.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
