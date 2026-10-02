@@ -382,12 +382,30 @@ def _schedule(rng, house) -> Intent:
                   question=action, action="on" if action == "enable" else "off", required_any=("распис",))
 
 
+NOW_READINGS = [("temperature", "сколько сейчас градусов, какая там температура"),
+                ("humidity", "какая там влажность"),
+                ("co2", "какой там воздух — уровень углекислого газа, душно ли")]
+PAST_STEMS = ("был", "ноч", "вчера", "утр", "вечер", "сутк", "недел", "месяц", "сегодня", "за ", "раньше",
+              "максим", "миним", "средн", "истори")
+
+
+def _reading_now(rng, house) -> Intent:
+    """A reading asked about with no time in it is the reading now - the status, never the history
+    (v6 answered "какая влажность в столовой" from the history)."""
+    room = rng.choice(house.rooms)
+    question, what = rng.choice(NOW_READINGS)
+    return Intent("status", f"человек спрашивает, {what} — СЕЙЧАС, без слов о времени (не «было», не «ночью», "
+                            f"не «за сутки»); комната: {room.lower()}", [stem(room)],
+                  [call("get_home_status", room=_room(room))], question=question, no_commands=True,
+                  forbidden_any=PAST_STEMS)
+
+
 # Kinds added after the main set was built: drawn only when asked for by
 # name (build_dataset --kinds), so the main set's draws - and the teacher's
 # cached phrasings for them - stay the same.
 EXTRA_KINDS: dict[str, Callable] = {
     "brightness": _brightness_relative, "curtains": _curtains, "humidifier": _humidifier, "security": _security,
-    "house_status": _house_status, "history": _history, "schedule": _schedule,
+    "house_status": _house_status, "history": _history, "schedule": _schedule, "reading_now": _reading_now,
 }
 
 

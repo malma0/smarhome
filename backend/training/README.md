@@ -45,6 +45,9 @@ python -m training.build_dataset --kinds brightness --intents 150 --phrasings 4 
 python -m training.build_dataset --kinds brightness --intents 30 --phrasings 1 --seed 778 --eval --out training/data/eval_brightness.jsonl
 python -m training.build_dataset --kinds curtains,humidifier,security,house_status,history,schedule --intents 360 --phrasings 4 --seed 21 --out training/data/train_house2.jsonl
 python -m training.build_dataset --kinds curtains,humidifier,security,house_status,history,schedule --intents 60 --phrasings 1 --seed 779 --eval --out training/data/eval_house2.jsonl
+# v7: "какая влажность в столовой" (без слов о времени) - это сейчас, не история; рядом вопросы с временем
+python -m training.build_dataset --kinds reading_now,history --intents 300 --phrasings 4 --seed 41 --out training/data/train_now.jsonl
+python -m training.build_dataset --kinds reading_now,history --intents 60 --phrasings 1 --seed 781 --eval --out training/data/eval_now.jsonl
 ```
 
 Описания инструментов, на которых собраны данные, сборка кладёт в
