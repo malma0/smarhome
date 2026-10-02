@@ -35,7 +35,7 @@ SERIES_POINTS = 25  # one an hour over the day - what the room's chart draws
 SERIES_KINDS = {"temperature": "temperature", "humidity": "humidity", "co2": "carbon_dioxide"}
 NORM_FIELDS = ("room", "temperature", "co2_max", "humidity_min")
 ARM_AUTOMATION = "security_arm_on_leaving"  # virtual_house.py: "Я ушёл" -> armed after ARM_DELAY
-ARM_SECONDS = 120  # its ARM_DELAY, for the countdown
+ARM_SECONDS = 120  # its ARM_DELAY, for the countdown - when the house has no such setting
 ARM_EVENT = "jarvis_arm_soon"  # starts it from the app (virtual_house.py ARM_EVENT)
 SETTLE_TRIES, SETTLE_SECONDS = 5, 0.2
 JOURNAL_HOURS = 48
@@ -140,7 +140,9 @@ async def security_view(client: HomeAssistantClient, now: datetime | None = None
         "since": next((x["at"] for x in lines if x["k"] == "guard"), guard.get("last_changed") if guard else None),
         "arming": bool(attrs.get("current")) and not (guard and guard["state"] == "on"),
         "arming_since": attrs.get("last_triggered"),
-        "arm_seconds": ARM_SECONDS,
+        "arm_seconds": next((int(float(s["state"])) * 60 for s in states  # the delay the resident set
+                             if s["entity_id"] == "input_number.security_arm_delay_minutes"
+                             and s["state"] not in ("unknown", "unavailable")), ARM_SECONDS),
         "can_delay": arming is not None,
         "journal": [{k: v for k, v in line.items() if k != "entity_id"} for line in lines],
     }
@@ -304,6 +306,32 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
         state[("energy", period)] = (time.monotonic(), view)
         return view
+
+    @app.get("/api/automation", dependencies=[api])
+    async def automation():
+        from app import house_settings
+
+        try:
+            return house_settings.view(await client.get_states())
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
+    @app.post("/api/automation", dependencies=[api])
+    async def change_automation(body: dict):
+        """{key, value}: one knob of the house's behaviour, or a norm for every room."""
+        from app import house_settings
+
+        try:
+            states = await client.get_states()
+            try:
+                calls = house_settings.changes(str(body.get("key")), body.get("value"), states)
+            except (ValueError, TypeError) as exc:
+                return {"error": f"Не подходит: {exc}"}
+            for domain, service, entity_id, data in calls:
+                await client.call_service(domain, service, entity_id, data or None)
+            return house_settings.view(await client.get_states())
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
 
     @app.get("/api/security", dependencies=[api])
     async def security():
