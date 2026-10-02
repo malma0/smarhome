@@ -734,10 +734,16 @@
       }
     });
     window.addEventListener("resize", fit);
-    const theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)");
-    const applyTheme = () => $("root").setAttribute("data-theme", theme && theme.matches ? "light" : "dark");
+    if (system && system.addEventListener) system.addEventListener("change", applyTheme);
     applyTheme();
-    if (theme && theme.addEventListener) theme.addEventListener("change", applyTheme);
+  }
+
+  // the theme: dark, light or the system's - chosen in Settings, kept on this device
+  const system = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)");
+  function applyTheme() {
+    const chosen = store.get("jarvis-panel-theme") || "auto";
+    const light = chosen === "light" || (chosen === "auto" && system && system.matches);
+    $("root").setAttribute("data-theme", light ? "light" : "dark");
   }
 
   let started = false;
@@ -768,7 +774,8 @@
   }
   // what screens.js builds on: one way to ask the server, one toast, one icon set
   window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; },
-    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }) };
+    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }),
+    theme: (chosen) => { if (chosen) { store.set("jarvis-panel-theme", chosen); applyTheme(); } return store.get("jarvis-panel-theme") || "auto"; } };
 
   // the phone's back button (the Android app asks first): close what is open, else leave the app
   window.jarvisBack = () => {

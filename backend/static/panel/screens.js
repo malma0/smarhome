@@ -392,4 +392,86 @@
     // the power now with every refresh; the bars and the room's day once a minute
     tick: () => { en.ticks += 1; if (en.ticks % 12 === 0) { loadEnergy(); loadRoomSeries(); } else drawEnergy(); },
   });
+
+  // ---------------------------------------------------------------- settings: where each thing is set
+
+  const set = { node: null, ping: null, counts: null };
+  const plural = (n, one, few, many) => {
+    const t = n % 10, h = n % 100;
+    return n + " " + (t === 1 && h !== 11 ? one : t >= 2 && t <= 4 && (h < 12 || h > 14) ? few : many);
+  };
+
+  function settingsRows() {
+    const c = set.counts;
+    return [
+      { title: "Дом", rows: [
+        { icon: "layout", name: "Планировка и устройства", sub: "Нарисовать комнаты, расставить устройства", go: "soon" },
+        { icon: "cycle", name: "Автоматика и нормы", sub: "Свет по движению, ночная подсветка, нормы", go: "automation" },
+        { icon: "scenes", name: "Сценарии и расписания",
+          sub: c ? plural(c.scenes, "сценарий", "сценария", "сценариев") + " · " + plural(c.schedulesOn, "расписание включено", "расписания включены", "расписаний включено") : "…", go: "scenes" },
+      ] },
+      { title: "Люди", rows: [
+        { icon: "users", name: "Жильцы и голоса", sub: "Голоса записываются в окне Джарвиса на компьютере", go: "voices" },
+        { icon: "key", name: "Гости и временный доступ", sub: "Позже", go: "soon" },
+      ] },
+      { title: "Ассистент", rows: [
+        { icon: "voice", name: "Голос ассистента", sub: "Ответы голосом пока выключены", go: "soon" },
+        { icon: "bell", name: "Уведомления", sub: "Тревоги на телефон — в следующей версии", go: "soon" },
+      ] },
+      { title: "Безопасность и связь", rows: [
+        { icon: "lock", name: "PIN-код", sub: "Задаётся на компьютере: APP_PIN в .env", go: "pin" },
+        { icon: "hub", name: "Подключение к дому",
+          sub: "Домашняя сеть · " + location.host + (set.ping != null ? " · отклик " + set.ping + " мс" : ""), go: "connection" },
+      ] },
+    ];
+  }
+
+  function drawSettings() {
+    const h = window.JV.house();
+    const rooms = (h.rooms || []);
+    const devices = rooms.reduce((n, r) => n + r.devices.length, 0);
+    let html = `<h1 class="scr-title">Настройки</h1>
+      <div class="hub${h.offline ? " off" : ""}"><span class="ball"></span><div class="words"><b>Квартира</b>
+        <span>Джарвис ${h.offline ? "не отвечает" : "в сети"} · ${plural(devices, "устройство", "устройства", "устройств")} · ${plural(rooms.length, "комната", "комнаты", "комнат")}</span></div>
+        <span class="state"><i></i>${h.offline ? "Нет связи" : "Онлайн"}</span></div>`;
+    settingsRows().forEach((g) => {
+      html += `<section style="display:flex;flex-direction:column;gap:8px"><h2 class="sec-label">${g.title}</h2><div class="rows">` +
+        g.rows.map((r) => `<button class="row" data-go="${r.go}"><span class="ic-box">${icon(r.icon, 19)}</span><span class="words"><b>${esc(r.name)}</b><span>${esc(r.sub)}</span></span><span class="chev">${icon("chev", 18)}</span></button>`).join("") +
+        `</div></section>`;
+    });
+    const theme = window.JV.theme();
+    html += `<section style="display:flex;flex-direction:column;gap:8px"><h2 class="sec-label">Оформление</h2><div class="theme-box"><span>Тема</span>
+      <div class="seg small" role="group" aria-label="Тема оформления">${[["dark", "Тёмная"], ["light", "Светлая"], ["auto", "Как в системе"]].map((m) =>
+        `<button class="${theme === m[0] ? "on" : ""}" aria-pressed="${theme === m[0]}" data-pick-theme="${m[0]}">${m[1]}</button>`).join("")}</div></div></section>`;
+    html += `<span class="version">Jarvis · пульт 0.2</span>`;
+    set.node.innerHTML = html;
+  }
+
+  async function loadSettings() {
+    const started = performance.now();
+    try {
+      await api("GET", "/api/ping");
+      set.ping = Math.round(performance.now() - started);
+      const [scn, sch] = await Promise.all([api("GET", "/api/scenes"), api("GET", "/api/schedules")]);
+      set.counts = { scenes: scn.scenes.length, schedulesOn: sch.schedules.filter((x) => x.on).length };
+    } catch (e) { if (e.message !== "locked") toast(e.message, true); }
+    drawSettings();
+  }
+
+  set.node = section("screen-sliders");
+  set.node.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-pick-theme]");
+    if (t) { window.JV.theme(t.dataset.pickTheme); drawSettings(); return; }
+    const row = e.target.closest("[data-go]");
+    if (!row) return;
+    const go = row.dataset.go;
+    if (go === "scenes" || go === "automation") { window.JV.show(go); return; }
+    if (go === "connection" && window.JarvisApp && window.JarvisApp.forget) {  // the Android app: look for the house again
+      window.JarvisApp.forget();  // (no confirm(): a bare WebView never shows it)
+      return;
+    }
+    toast({ voices: "Голоса записываются в окне Джарвиса на компьютере", pin: "PIN меняется в .env на компьютере (APP_PIN)",
+      connection: "Пульт подключён к " + location.host }[go] || "Этот раздел — в следующей версии");
+  });
+  window.JV.add("sliders", { open: () => { drawSettings(); loadSettings(); }, tick: drawSettings });
 })();
