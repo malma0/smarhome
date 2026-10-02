@@ -356,6 +356,25 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         state[("energy", period)] = (time.monotonic(), view)
         return view
 
+    @app.get("/api/layout", dependencies=[api])
+    async def get_layout():
+        from app import layout
+
+        return {"layout": layout.load()}
+
+    @app.put("/api/layout", dependencies=[api])
+    async def put_layout(body: dict):
+        """The plan from the layout editor; null resets to the app's own sketch."""
+        from app import layout
+
+        if body.get("layout") is None:
+            layout.FILE.unlink(missing_ok=True)
+            return {"layout": None}
+        try:
+            return {"layout": layout.save(body["layout"])}
+        except (ValueError, TypeError, AttributeError) as exc:
+            return {"error": f"План не сохранён: {exc}"}
+
     @app.get("/api/alerts", dependencies=[api])
     async def alerts():
         """The dangers going on now - the alarm screen, and the phone app's watcher every few seconds."""
