@@ -139,3 +139,14 @@ def test_movement_in_the_guarded_house_is_a_danger_said_out_loud():
 def test_the_new_words_reach_the_house():
     for text in ("закрой шторы", "поставь на охрану", "сколько электричества за месяц", "открыто ли окно в спальне"):
         assert "home" in router.select(text, None), text
+
+
+def test_a_question_without_a_time_is_about_now_even_if_the_model_asks_the_history():
+    ha = FakeHA()
+    history, _ = make_more_handlers(ha, now=lambda: NOW)
+    now = asyncio.run(history({"what": "temperature", "room": "спальня"}, TurnContext(said="сколько градусов в спальне")))
+    assert now["rooms"]["Спальня"]["temperature"] == "21.5 °C"  # the status, not a min/max of the day
+    earlier = asyncio.run(history({"what": "temperature", "room": "спальня"}, TurnContext(said="а ночью сколько было")))
+    assert "rooms" not in earlier  # a time named: the history (none recorded here)
+    panel = asyncio.run(history({"what": "temperature", "room": "спальня"}, TurnContext()))  # no words: the panel's chart
+    assert "rooms" not in panel

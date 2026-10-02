@@ -583,9 +583,27 @@ def _schedule_matches(asked: str, name: str) -> bool:
     return bool(said) and (said <= words or words <= said)
 
 
+# Words that put a question about the sensors in the past - word beginnings ("сейчас" is not
+# "час"). Without any of them "сколько градусов в спальне" is about now; the home model
+# sometimes reached for the history anyway.
+_PAST_STEMS = ("был", "ноч", "вчера", "позавчера", "утр", "вечер", "днем", "сутк", "недел", "месяц", "час",
+               "сегодня", "раньше", "недавно", "прошл", "максим", "миним", "средн", "самая", "самый", "поднима",
+               "опуска", "падал", "менял", "истори", "понедельн")
+_PAST_WORDS = {"за", "до", "после"}  # not "с": "как там с влажностью" is now
+
+
+def asks_about_the_past(said: str) -> bool:
+    return any(w in _PAST_WORDS or w.startswith(_PAST_STEMS) for w in _words(said).split())
+
+
 def make_more_handlers(client: HomeAssistantClient, now=lambda: datetime.now().astimezone()):
+    get_home_status = make_handlers(client)[0]
+
     async def home_history(tool_input: dict, ctx: TurnContext) -> dict:
         what = tool_input.get("what") or "temperature"
+        if what in HISTORY_KINDS and ctx.said and not asks_about_the_past(ctx.said):
+            # no time in the words: it's the reading now - the status, as for any "сколько градусов"
+            return await get_home_status({"room": tool_input.get("room")} if tool_input.get("room") else {}, ctx)
         current = now()
         period = tool_input.get("period")
         try:

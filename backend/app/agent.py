@@ -133,7 +133,7 @@ class JarvisAgent:
         groups = router.select(user_message, self._last_groups.get(session_id))
         names = None if groups is None else {n for g in groups for n in router.GROUPS[g]}
         tool_defs = self.tools.definitions(names)
-        ctx = TurnContext()
+        ctx = TurnContext(said=user_message)
         actions: list[dict] = []
         final_text = None
         local = (self.home_llm is not None and groups == {"home"} and not router.beyond_home_model(user_message)

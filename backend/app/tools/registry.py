@@ -22,6 +22,7 @@ class TurnContext:
     "room" is - domains just agree on what string they put in here."""
 
     touched: set[str] = field(default_factory=set)
+    said: str = ""  # the person's words this turn - for guards that check the model against them
 
 
 @dataclass(frozen=True)
