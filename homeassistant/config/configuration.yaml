@@ -1301,7 +1301,7 @@ utility_meter:
     name: 'Дом: электричество за месяц'
     unique_id: house_energy_month
     cycle: monthly
-automation:
+automation manual:
 - id: entrance_temperature_norm
   alias: 'Прихожая: норма температуры'
   mode: restart
@@ -2056,3 +2056,4 @@ automation:
       value: '{{ ([[states(''input_number.kitchen_humidity_sim'') | float(55) + (35 - states(''input_number.kitchen_humidity_sim'') | float(55)) * 0.01 + 0 - (0.5 if is_state(''input_boolean.kitchen_ventilation_power'',
         ''on'') else 0), 10] | max, 90] | min) | round(1) }}'
 script: !include scripts.yaml
+automation: !include automations.yaml

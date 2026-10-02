@@ -55,3 +55,6 @@ backend/training/runs/
 
 # the Android app build (android/build.py) - made, not source
 android/build/
+
+# schedules made in the app (HA writes them here) - this home's own
+homeassistant/config/automations.yaml
