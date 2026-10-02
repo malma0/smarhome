@@ -298,39 +298,39 @@ def _temperature_error(temperature: float, confirmed: bool) -> str | None:
     return None
 
 
-async def _call(client, device: dict, device_type: str, action: str, brightness_pct, temperature,
-                position=None) -> None:
-    entity_id = device["entity_id"]
+def service_for(device_type: str, action: str, brightness_pct=None, temperature=None,
+                position=None) -> tuple[str, str, dict | None]:
+    """What Home Assistant is asked for one device: (domain, service, data). The same for a
+    command now and for a scenario's step, saved as a script (app/scenes.py)."""
     if device_type == "curtains":
         if position is not None:
-            await client.call_service("cover", "set_cover_position", entity_id, {"position": position})
-        else:
-            await client.call_service("cover", "open_cover" if action == "on" else "close_cover", entity_id)
-    elif device_type == "humidifier":
-        await client.call_service("humidifier", "turn_off" if action == "off" else "turn_on", entity_id)
-    elif device_type == "security":
-        await client.call_service("input_boolean", "turn_off" if action == "off" else "turn_on", entity_id)
-    elif device_type == "light":
+            return "cover", "set_cover_position", {"position": position}
+        return "cover", "open_cover" if action == "on" else "close_cover", None
+    if device_type == "humidifier":
+        return "humidifier", "turn_off" if action == "off" else "turn_on", None
+    if device_type == "security":
+        return "input_boolean", "turn_off" if action == "off" else "turn_on", None
+    if device_type == "light":
         if action == "off":
-            await client.call_service("light", "turn_off", entity_id)
-        else:
-            data = {"brightness_pct": brightness_pct} if brightness_pct is not None else None
-            await client.call_service("light", "turn_on", entity_id, data)
-    elif device_type == "socket":
-        await client.call_service("switch", "turn_off" if action == "off" else "turn_on", entity_id)
-    elif device_type == "ventilation":
-        await client.call_service("fan", "turn_off" if action == "off" else "turn_on", entity_id)
-    elif device_type in VALVE_TYPES:
-        await client.call_service("switch", "turn_off" if action == "off" else "turn_on", entity_id)
-    elif action == "off":
-        await client.call_service("climate", "set_hvac_mode", entity_id, {"hvac_mode": "off"})
-    else:
-        data = {"hvac_mode": "cool" if device_type == "ac" else "heat"}
-        if temperature is not None:
-            data["temperature"] = temperature
-            await client.call_service("climate", "set_temperature", entity_id, data)
-        else:
-            await client.call_service("climate", "set_hvac_mode", entity_id, data)
+            return "light", "turn_off", None
+        return "light", "turn_on", {"brightness_pct": brightness_pct} if brightness_pct is not None else None
+    if device_type == "socket" or device_type in VALVE_TYPES:
+        return "switch", "turn_off" if action == "off" else "turn_on", None
+    if device_type == "ventilation":
+        return "fan", "turn_off" if action == "off" else "turn_on", None
+    if action == "off":
+        return "climate", "set_hvac_mode", {"hvac_mode": "off"}
+    data = {"hvac_mode": "cool" if device_type == "ac" else "heat"}
+    if temperature is not None:
+        data["temperature"] = temperature
+        return "climate", "set_temperature", data
+    return "climate", "set_hvac_mode", data
+
+
+async def _call(client, device: dict, device_type: str, action: str, brightness_pct, temperature,
+                position=None) -> None:
+    domain, service, data = service_for(device_type, action, brightness_pct, temperature, position)
+    await client.call_service(domain, service, device["entity_id"], data)
 
 
 def make_handlers(client: HomeAssistantClient):
