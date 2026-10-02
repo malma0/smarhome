@@ -44,6 +44,20 @@
   const DANGER = { smoke: "дым", moisture: "протечка", gas: "газ", carbon_monoxide: "угарный газ", intrusion: "движение в пустом доме" };
   const PLAN_W = 350, PLAN_H = 540, CANVAS_W = 390, REFRESH_MS = 5000;
 
+  /** The mockup's sketch as a plan like the editor saves (app/layout.py): rooms by name, devices 'room|type'. */
+  function sketch() {
+    const name = {}, haType = {};
+    Object.keys(ROOM_IDS).forEach((n) => { name[ROOM_IDS[n]] = n; });
+    Object.keys(TYPE).forEach((t) => { haType[TYPE[t]] = t; });
+    const out = { rooms: {}, devices: {}, doors: LAYOUT.doors, front: { room: name[LAYOUT.front.room], x: LAYOUT.front.x, y: LAYOUT.front.y } };
+    Object.keys(LAYOUT.rooms).forEach((id) => { const r = LAYOUT.rooms[id]; out.rooms[name[id]] = { x: r.x, y: r.y, w: r.w, h: r.h }; });
+    Object.keys(LAYOUT.devices).forEach((k) => { const [id, t] = k.split("-"); out.devices[name[id] + "|" + haType[t]] = LAYOUT.devices[k]; });
+    out.windows = LAYOUT.windows.map((w) => [w[0], w[1], w[2], w[3], name[w[4]]]);
+    return out;
+  }
+  let layout = sketch();  // replaced by the resident's own plan (GET /api/layout) once it's drawn
+  let customLayout = false;
+
   // ---------------------------------------------------------------- icons (the mockup's set)
 
   const ICONS = {  // every icon of the design's Icon component
@@ -169,23 +183,27 @@
   // ---------------------------------------------------------------- the house -> rooms with places on the plan
 
   function geometry(rooms) {
-    const known = rooms.filter((r) => ROOM_IDS[r.name] && LAYOUT.rooms[ROOM_IDS[r.name]]);
+    const known = rooms.filter((r) => layout.rooms[r.name]);
     const unknown = rooms.filter((r) => !known.includes(r));
     const placed = {};
-    known.forEach((r) => { placed[r.name] = Object.assign({ id: ROOM_IDS[r.name] }, LAYOUT.rooms[ROOM_IDS[r.name]]); });
+    known.forEach((r) => {
+      const p = layout.rooms[r.name];
+      placed[r.name] = Object.assign({ motion: [p.x + p.w - 16, p.y + 16] }, p);  // the movement dot: the top right corner
+    });
+    const right = known.length ? Math.max(...known.map((r) => placed[r.name].x + placed[r.name].w)) : PLAN_W;
     let bottom = known.length ? Math.max(...known.map((r) => placed[r.name].y + placed[r.name].h)) : 0;
-    unknown.forEach((r, i) => {  // rooms the mockup doesn't have: rows of two under the plan
-      const col = i % 2, row = Math.floor(i / 2);
-      placed[r.name] = { id: "x" + i, x: col * 175, y: bottom + row * 130, w: 175, h: 130, motion: [col * 175 + 140, bottom + row * 130 + 30] };
+    unknown.forEach((r, i) => {  // rooms not on the plan yet: rows of two under it
+      const col = i % 2, row = Math.floor(i / 2), w = Math.max(175, right / 2);
+      placed[r.name] = { unplaced: true, x: col * w, y: bottom + row * 130, w, h: 130, motion: [col * w + w - 16, bottom + row * 130 + 16] };
     });
     if (unknown.length) bottom += Math.ceil(unknown.length / 2) * 130;
-    const width = PLAN_W, height = Math.max(PLAN_H, bottom);
+    const width = Math.max(customLayout ? 100 : PLAN_W, right), height = Math.max(customLayout ? 100 : PLAN_H, bottom);
     rooms.forEach((r) => {
       const g = placed[r.name];
       let free = 0;
       g.devices = r.devices.filter((d) => TYPE[d.type]).map((d) => {
         const type = TYPE[d.type];
-        const spot = LAYOUT.devices[g.id + "-" + type];
+        const spot = !g.unplaced && layout.devices[r.name + "|" + d.type];
         const xy = spot || [g.x + 24 + (free % 4) * 38, g.y + g.h - 24 - Math.floor(free++ / 4) * 38];
         return { type, raw: d, x: xy[0], y: xy[1] };
       });
@@ -205,18 +223,18 @@
         <span class="name">${esc(r.name)}</span><span class="vals mono"><span class="t"></span><span class="h"></span></span></button>`;
     });
     html += `<div class="p-outer" style="left:-3px;top:-3px;width:${g.width + 6}px;height:${g.height + 6}px"></div>`;
-    if (!Object.values(g.placed).some((p) => p.id.startsWith("x"))) {
-      LAYOUT.doors.forEach((d) => {
+    {
+      (layout.doors || []).forEach((d) => {
         html += d[0] === "h"
           ? `<span class="p-door" style="left:${d[2]}px;top:${d[1] - 3}px;width:${d[3] - d[2]}px;height:6px"></span>`
           : `<span class="p-door" style="left:${d[1] - 3}px;top:${d[2]}px;width:6px;height:${d[3] - d[2]}px"></span>`;
       });
-      const f = LAYOUT.front;
-      html += `<span class="p-front-arc" style="left:${f.x}px;top:${f.y}px"></span><span class="p-front" id="frontDoor" style="left:${f.x}px;top:${f.y - 1}px"></span>`;
-      LAYOUT.windows.forEach((w, i) => {
+      const f = layout.front;
+      if (f) html += `<span class="p-front-arc" style="left:${f.x}px;top:${f.y}px"></span><span class="p-front" id="frontDoor" style="left:${f.x}px;top:${f.y - 1}px"></span>`;
+      (layout.windows || []).forEach((w) => {
         html += w[0] === "h"
-          ? `<span class="p-win" data-win="${w[4]}" style="left:${w[2]}px;top:${w[1] - 3}px;width:${w[3] - w[2]}px;height:6px;border-width:1.5px 0"></span>`
-          : `<span class="p-win" data-win="${w[4]}" style="left:${w[1] - 3}px;top:${w[2]}px;width:6px;height:${w[3] - w[2]}px;border-width:0 1.5px"></span>`;
+          ? `<span class="p-win" data-win="${esc(w[4])}" style="left:${w[2]}px;top:${w[1] - 3}px;width:${w[3] - w[2]}px;height:6px;border-width:1.5px 0"></span>`
+          : `<span class="p-win" data-win="${esc(w[4])}" style="left:${w[1] - 3}px;top:${w[2]}px;width:6px;height:${w[3] - w[2]}px;border-width:0 1.5px"></span>`;
       });
     }
     state.rooms.forEach((r) => {
@@ -297,7 +315,7 @@
       el.setAttribute("aria-pressed", on ? "true" : "false");
     });
     plan.querySelectorAll(".p-win").forEach((el) => {
-      const r = state.rooms.find((x) => ROOM_IDS[x.name] === el.dataset.win);
+      const r = state.rooms.find((x) => x.name === el.dataset.win);
       el.classList.toggle("open", !!(r && reading(r, "window")) && !state.offline);
       el.classList.toggle("dim", !!focus && (!r || focus !== r.name));
     });
@@ -308,7 +326,7 @@
     });
     const front = $("frontDoor");
     if (front) {
-      const hall = state.rooms.find((x) => ROOM_IDS[x.name] === LAYOUT.front.room);
+      const hall = layout.front && state.rooms.find((x) => x.name === layout.front.room);
       front.classList.toggle("open", !!(hall && reading(hall, "door")));
     }
   }
@@ -356,7 +374,7 @@
     $("stage").hidden = state.loading;
     if (!state.loading) return;
     let html = "";
-    Object.values(LAYOUT.rooms).forEach((r) => {
+    Object.values(layout.rooms).forEach((r) => {
       html += `<span class="skel" style="left:${30 + r.x * 0.94}px;top:${planTop() + r.y * 0.94}px;width:${r.w * 0.94 - 4}px;height:${r.h * 0.94 - 4}px"></span>`;
     });
     box.innerHTML = html;
@@ -747,13 +765,27 @@
     $("root").setAttribute("data-theme", light ? "light" : "dark");
   }
 
+  /** The plan to draw: the resident's own (null: the app's sketch). */
+  function applyLayout(saved) {
+    layout = saved || sketch();
+    customLayout = !!saved;
+    if (state.rooms.length) {
+      state.geometry = geometry(state.rooms);
+      buildPlan();
+      drawPlanState();
+    }
+  }
+  async function loadLayout() {
+    try { const r = await api("GET", "/api/layout"); if (r.layout) applyLayout(r.layout); } catch (e) { /* the sketch stays */ }
+  }
+
   let started = false;
   function start() {
     // the phone app watches the house while closed and shows alarms - with this PIN, unless turned off in Settings
     if (window.JarvisApp && window.JarvisApp.watch && store.get("jarvis-panel-watch") !== "off") window.JarvisApp.watch(pin);
     if (started) { refresh(); return; }
     started = true;
-    refresh();
+    refresh().then(loadLayout);
     loadWeather();
     setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
     setInterval(() => { drawHeader(); placePlanIfHeaderMoved(); }, 20000);
@@ -782,6 +814,8 @@
   // what screens.js builds on: one way to ask the server, one toast, one icon set
   window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; },
     house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }), refresh: () => refresh(), listen: (fn) => listeners.push(fn), pin: () => pin,
+    layout: () => ({ plan: JSON.parse(JSON.stringify(layout)), custom: customLayout, sketch: sketch(), rooms: state.rooms }),
+    setLayout: applyLayout, devName: (t) => NAMES[TYPE[t]] || t, devIcon: (t) => TYPE[t] || "power",
     theme: (chosen) => { if (chosen) { store.set("jarvis-panel-theme", chosen); applyTheme(); } return store.get("jarvis-panel-theme") || "auto"; } };
 
   // the phone's back button (the Android app asks first): close what is open, else leave the app
