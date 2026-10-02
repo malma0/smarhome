@@ -633,6 +633,7 @@
     if (state.room) drawSheet();
     const shown = screens[$("app").getAttribute("data-screen")];
     if (shown && shown.tick) shown.tick();  // the open screen redraws from the fresh house too
+    listeners.forEach((fn) => fn());  // whatever watches the house on every screen - the alarm
   }
 
   async function loadWeather() {
@@ -748,6 +749,8 @@
 
   let started = false;
   function start() {
+    // the phone app watches the house while closed and shows alarms - with this PIN, unless turned off in Settings
+    if (window.JarvisApp && window.JarvisApp.watch && store.get("jarvis-panel-watch") !== "off") window.JarvisApp.watch(pin);
     if (started) { refresh(); return; }
     started = true;
     refresh();
@@ -761,6 +764,7 @@
   // ---------------------------------------------------------------- the other screens (screens.js)
 
   const screens = {};
+  const listeners = [];
   function showScreen(name) {
     if (name !== "home" && !screens[name]) { toast("Раздел — в следующей версии"); return; }
     if (state.room) closeRoom();
@@ -777,7 +781,7 @@
   }
   // what screens.js builds on: one way to ask the server, one toast, one icon set
   window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; },
-    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }), refresh: () => refresh(),
+    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }), refresh: () => refresh(), listen: (fn) => listeners.push(fn), pin: () => pin,
     theme: (chosen) => { if (chosen) { store.set("jarvis-panel-theme", chosen); applyTheme(); } return store.get("jarvis-panel-theme") || "auto"; } };
 
   // the phone's back button (the Android app asks first): close what is open, else leave the app

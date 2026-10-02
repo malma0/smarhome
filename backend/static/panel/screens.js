@@ -421,7 +421,9 @@
       ] },
       { title: "Ассистент", rows: [
         { icon: "voice", name: "Голос ассистента", sub: "Ответы голосом пока выключены", go: "soon" },
-        { icon: "bell", name: "Уведомления", sub: "Тревоги на телефон — в следующей версии", go: "soon" },
+        { icon: "bell", name: "Тревоги на телефон", go: "watch",
+          sub: !(window.JarvisApp && window.JarvisApp.watch) ? "Работают в приложении Jarvis на телефоне"
+            : window.JarvisApp.watching() ? "Включены — даже когда приложение закрыто" : "Выключены — нажми, чтобы включить" },
       ] },
       { title: "Безопасность и связь", rows: [
         { icon: "lock", name: "PIN-код", sub: "Задаётся на компьютере: APP_PIN в .env", go: "pin" },
@@ -471,6 +473,19 @@
     if (!row) return;
     const go = row.dataset.go;
     if (go === "scenes" || go === "automation") { window.JV.show(go); return; }
+    if (go === "watch" && window.JarvisApp && window.JarvisApp.watch) {
+      if (window.JarvisApp.watching()) {
+        window.JarvisApp.unwatch();
+        window.JV.store.set("jarvis-panel-watch", "off");
+        toast("Тревоги на телефон выключены");
+      } else {
+        window.JV.store.set("jarvis-panel-watch", "on");
+        window.JarvisApp.watch(window.JV.pin());
+        toast("Тревоги на телефон включены");
+      }
+      drawSettings();
+      return;
+    }
     if (go === "connection" && window.JarvisApp && window.JarvisApp.forget) {  // the Android app: look for the house again
       window.JarvisApp.forget();  // (no confirm(): a bare WebView never shows it)
       return;
@@ -705,6 +720,80 @@
   ch.node.addEventListener("input", () => {  // only the send button reacts to typing
     ch.node.querySelector("#chSend").classList.toggle("ready", !!ch.node.querySelector("#chText").value.trim());
   });
+  // ---------------------------------------------------------------- the alarm: over every screen while a danger lasts
+
+  const al = { node: null, list: [], dismissed: {}, checking: false, shownKey: "" };
+  const alarmKey = (a) => a.key + "@" + a.since;
+
+  async function checkAlarm() {
+    const h = window.JV.house();
+    const danger = (h.rooms || []).some((r) => Object.keys(r.dangers).some((k) => r.dangers[k]));
+    if (!danger) { if (al.list.length) { al.list = []; drawAlarm(); } return; }
+    if (al.checking) return;
+    al.checking = true;
+    try { al.list = (await api("GET", "/api/alerts")).alerts; } catch (e) { /* next refresh tries again */ }
+    al.checking = false;
+    drawAlarm();
+  }
+
+  function drawAlarm() {
+    const shown = al.list.filter((a) => !al.dismissed[alarmKey(a)]);
+    const key = shown.map(alarmKey).join("|") + "|" + shown.map((a) => a.acts.length).join(",");
+    if (key === al.shownKey) return;  // the same alarm: its animations keep running
+    al.shownKey = key;
+    if (!shown.length) { al.node.hidden = true; al.node.innerHTML = ""; return; }
+    const a = shown[0];
+    const since = new Date(a.since);
+    const clock = pad(since.getHours()) + ":" + pad(since.getMinutes()) + ":" + pad(since.getSeconds());
+    const more = shown.length > 1 ? ` · ещё ${shown.length - 1}` : "";
+    const action = a.kind === "safety"
+      ? `<button class="call jv-press" data-alarm-disarm>${icon("shield", 20)}Снять охрану</button>`
+      : `<a class="call jv-press" href="tel:112">${icon("phone", 20)}Позвонить 112</a>`;
+    al.node.innerHTML = `<span class="glow"></span><div class="body" role="alertdialog" aria-labelledby="alTitle">
+      <div class="top"><b><i></i>Тревога${more}</b><span>${clock}</span></div>
+      <div class="what"><span class="badge"><span class="ring"></span><span class="ring"></span><span class="disc">${icon(a.icon, 36)}</span></span>
+        <h1 id="alTitle">${esc(a.title)}<br>${esc(a.where)}</h1><p class="desc">Датчик всё ещё срабатывает · с ${clock.slice(0, 5)}</p></div>
+      ${a.acts.length ? `<div class="did"><span>Дом уже сделал</span>${a.acts.map((x, i) =>
+        `<div class="act" style="animation-delay:${0.2 + i * 0.15}s"><i>${icon("check", 16)}</i><b>${esc(x.t)}</b><span>${esc(x.at)}</span></div>`).join("")}</div>` : ""}
+      <div class="place"><div class="mini" id="alMini"></div><div class="txt"><b>${esc(a.room)}</b><span>${esc(a.advice)}</span></div></div>
+      <div class="btns">${action}<button class="ok jv-press" data-alarm-ok>Понятно</button></div></div>`;
+    al.node.hidden = false;
+    const plan = document.getElementById("plan");  // the house's own plan, small, the alarm's room red on it
+    if (plan) {
+      const copy = plan.cloneNode(true);
+      copy.removeAttribute("id");
+      const w = parseFloat(plan.style.width) || 350, hgt = parseFloat(plan.style.height) || 540;
+      const holder = document.createElement("div");
+      holder.style.width = w + "px";
+      holder.style.height = hgt + "px";
+      holder.style.transform = "scale(" + Math.min(133 / w, 205 / hgt).toFixed(3) + ")";
+      holder.appendChild(copy);
+      al.node.querySelector("#alMini").appendChild(holder);
+    }
+  }
+
+  al.node = document.createElement("div");
+  al.node.className = "alarm-screen";
+  al.node.hidden = true;
+  document.getElementById("app").appendChild(al.node);
+  al.node.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-alarm-ok]")) {
+      al.list.forEach((a) => { al.dismissed[alarmKey(a)] = true; });  // until a new danger begins
+      drawAlarm();
+      return;
+    }
+    if (e.target.closest("[data-alarm-disarm]")) {
+      try { await api("POST", "/api/security", { action: "disarm" }); toast("Охрана снята"); } catch (err) { if (err.message !== "locked") toast(err.message, true); }
+      window.JV.refresh();
+    }
+  });
+  window.JV.listen(checkAlarm);
+  const backBefore = window.jarvisBack;  // the phone's back button on the alarm: "Понятно"
+  window.jarvisBack = () => {
+    if (!al.node.hidden) { al.node.querySelector("[data-alarm-ok]").click(); return true; }
+    return backBefore ? backBefore() : false;
+  };
+
   window.JV.add("chat", {
     tab: "home", back: "home",
     open: () => drawChat(),

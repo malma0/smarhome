@@ -530,3 +530,38 @@ body { -webkit-text-size-adjust: 100%; }
 .ch-input input::placeholder { color: var(--text3); }
 .ch-input button { width: 42px; height: 42px; border-radius: 13px; background: var(--surf3); color: #fff; display: flex; align-items: center; justify-content: center; transition: background-color .2s; }
 .ch-input button.ready { background: var(--blue); }
+
+/* the alarm: over everything, the design's red screen */
+@keyframes jvBgPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes jvRingA { 0% { transform: scale(.8); opacity: .85; } 100% { transform: scale(2.1); opacity: 0; } }
+@keyframes jvCheck { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+.alarm-screen { position: absolute; inset: 0; z-index: 70; overflow: hidden; background: #120406; color: #FFF5F5; }
+.alarm-screen .glow { position: absolute; left: -160px; top: -120px; width: 710px; height: 640px; border-radius: 50%; background: radial-gradient(closest-side, rgba(239,68,68,.55), rgba(239,68,68,.14) 55%, rgba(18,4,6,0)); animation: jvBgPulse 1.6s ease-in-out infinite; pointer-events: none; will-change: opacity; }
+.alarm-screen .body { position: absolute; inset: 0; padding: 40px 20px 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px; }
+.alarm-screen .top { display: flex; justify-content: space-between; align-items: center; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
+.alarm-screen .top b { display: flex; align-items: center; gap: 8px; color: #FCA5A5; font-weight: 400; }
+.alarm-screen .top b i { width: 8px; height: 8px; border-radius: 50%; background: #EF4444; box-shadow: 0 0 10px #EF4444; }
+.alarm-screen .top span { color: #FECACA; }
+.alarm-screen .what { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; animation: jvIn .45s cubic-bezier(.2,.8,.2,1); }
+.alarm-screen .badge { position: relative; width: 76px; height: 76px; display: flex; align-items: center; justify-content: center; }
+.alarm-screen .badge .ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid #EF4444; animation: jvRingA 1.6s ease-out infinite; will-change: transform, opacity; }
+.alarm-screen .badge .ring + .ring { animation-delay: .8s; }
+.alarm-screen .badge .disc { width: 76px; height: 76px; border-radius: 50%; background: #EF4444; color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 40px rgba(239,68,68,.7); }
+.alarm-screen h1 { margin: 0; font-size: 34px; line-height: 38px; font-weight: 700; letter-spacing: -0.02em; }
+.alarm-screen .desc { margin: 0; font-size: 15px; line-height: 21px; color: #FECACA; }
+.alarm-screen .did { border-radius: 22px; background: rgba(255,255,255,.06); border: 1px solid rgba(254,202,202,.18); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.alarm-screen .did > span { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: #FCA5A5; }
+.alarm-screen .did .act { display: flex; align-items: center; gap: 12px; animation: jvCheck .4s both cubic-bezier(.2,.8,.2,1); }
+.alarm-screen .did .act i { width: 28px; height: 28px; border-radius: 50%; background: #fff; color: #B91C1C; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.alarm-screen .did .act b { flex: 1; font-size: 15px; line-height: 20px; font-weight: 500; }
+.alarm-screen .did .act span { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; color: #FECACA; }
+.alarm-screen .place { flex: 1; min-height: 0; border-radius: 22px; background: rgba(0,0,0,.28); border: 1px solid rgba(254,202,202,.14); display: flex; align-items: center; gap: 14px; padding: 12px 16px; overflow: hidden; }
+.alarm-screen .mini { position: relative; width: 133px; height: 205px; flex-shrink: 0; overflow: hidden; }
+.alarm-screen .mini > div { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; }
+.alarm-screen .place .txt { display: flex; flex-direction: column; gap: 8px; }
+.alarm-screen .place .txt b { font-size: 15px; font-weight: 600; }
+.alarm-screen .place .txt span { font-size: 13px; line-height: 18px; color: #FECACA; }
+.alarm-screen .btns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.alarm-screen .btns button, .alarm-screen .btns a { height: 58px; border-radius: 18px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 600; text-decoration: none; }
+.alarm-screen .btns .call { border: 1.5px solid rgba(255,255,255,.55); color: #FFF5F5; }
+.alarm-screen .btns .ok { background: #fff; color: #7F1D1D; font-weight: 700; }
