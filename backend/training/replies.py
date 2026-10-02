@@ -11,13 +11,9 @@ feminine, like Jarvis herself ("включила").
 import json
 import random
 
+from app.words import LOCATIVE
 from training.sim_house import ROOM_CATALOG
 
-LOCATIVE = {
-    "Кухня": "на кухне", "Спальня": "в спальне", "Зал": "в зале", "Гостиная": "в гостиной", "Кабинет": "в кабинете",
-    "Коридор": "в коридоре", "Прихожая": "в прихожей", "Детская": "в детской", "Ванная": "в ванной",
-    "Балкон": "на балконе", "Гостевая": "в гостевой", "Столовая": "в столовой",
-}
 # nominative, genitive, accusative, "on" state, "off" state, verb on, verb off
 DEVICES = {
     "light": ("свет", "света", "свет", "включён", "выключен", "включила", "выключила"),
