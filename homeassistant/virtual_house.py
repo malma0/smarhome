@@ -127,6 +127,24 @@ HUMIDITY_BAND = 2  # the humidifier starts this far under the minimum
 AUTO_OFF_MINUTES = 10  # no movement this long - the room's light goes off
 ENTRY_DELAY = "00:01:00"  # movement in the armed house: this long to say "Я дома"
 ARM_DELAY = "00:02:00"  # "Я ушёл": armed after this, time to walk out
+# The automation's knobs are helpers, changed from the app (Автоматика и нормы); the
+# constants above are only what they start at. Set once - input_text.house_settings_set
+# marks it, so a later `setup` doesn't undo what the resident changed.
+SETTINGS_MARK = "input_text.house_settings_set"
+SETTINGS = {  # entity: (name, starting value, extra config)
+    "input_number.light_auto_off_minutes": ("Свет гаснет без движения, мин", AUTO_OFF_MINUTES,
+                                            {"min": 1, "max": 60, "step": 1, "unit_of_measurement": "мин"}),
+    "input_boolean.night_light": ("Ночная подсветка", True, {}),
+    "input_number.night_light_pct": ("Ночная подсветка, яркость", NIGHT_LIGHT_PCT,
+                                     {"min": 5, "max": 100, "step": 5, "unit_of_measurement": "%"}),
+    "input_datetime.night_light_start": ("Ночная подсветка с", NIGHT[0], {"has_date": False, "has_time": True}),
+    "input_datetime.night_light_end": ("Ночная подсветка до", NIGHT[1], {"has_date": False, "has_time": True}),
+    "input_text.night_light_rooms": ("Ночная подсветка, комнаты", ",".join(NIGHT_LIGHT_ROOMS), {"max": 200}),
+    "input_number.security_arm_delay_minutes": ("Охрана после «Я ушёл» через, мин", int(ARM_DELAY[3:5]),
+                                                {"min": 0, "max": 10, "step": 1, "unit_of_measurement": "мин"}),
+    "input_number.security_entry_delay_minutes": ("Время сказать «Я дома», мин", int(ENTRY_DELAY[3:5]),
+                                                  {"min": 1, "max": 5, "step": 1, "unit_of_measurement": "мин"}),
+}
 ARM_EVENT = "jarvis_arm_soon"  # the same countdown, asked for from the app
 GOOD_MORNING_TIME = "07:00:00"
 # The days each schedule runs on, Mon=1 .. Sun=7 - the starting value, then changed from the app
@@ -475,6 +493,15 @@ def _yaml() -> str:
     openings = windows + [f"binary_sensor.{slug}_door" for slug in DOORS]
     armed = "input_boolean.security_armed"
     input_boolean["security_armed"] = {"name": "Охрана"}
+    helpers = {"input_number": input_number, "input_boolean": input_boolean, "input_datetime": input_datetime,
+               "input_text": input_text}
+    for entity, (title, _, extra) in SETTINGS.items():
+        domain, object_id = entity.split(".")
+        helpers[domain][object_id] = {"name": title, **({"mode": "box"} if domain == "input_number" else {}), **extra}
+    input_text[SETTINGS_MARK.split(".")[1]] = {"name": "Параметры автоматики заданы", "max": 10}
+
+    def setting(entity: str, default: int) -> str:
+        return "{{ states('%s') | int(%d) }}" % (entity, default)
     input_datetime["schedule_good_morning_time"] = {"name": "Расписание: время «Доброе утро»", "has_date": False,
                                                     "has_time": True}
     # A schedule's days live in a helper ("1,2,3,4,5" = Mon..Fri), not in the automation:
@@ -523,17 +550,19 @@ def _yaml() -> str:
         },
         {
             "id": "night_light_on_motion",
-            "alias": f"Ночью по движению: свет на {NIGHT_LIGHT_PCT}%",
+            "alias": "Ночью по движению: мягкий свет",
             "mode": "parallel",
-            "triggers": [{"trigger": "state", "entity_id": [f"binary_sensor.{s}_motion" for s in NIGHT_LIGHT_ROOMS],
-                          "to": "on"}],
-            "conditions": [{"condition": "time", "after": NIGHT[0], "before": NIGHT[1]},
+            "triggers": [{"trigger": "state", "entity_id": motion, "to": "on"}],
+            "conditions": [{"condition": "state", "entity_id": "input_boolean.night_light", "state": "on"},
+                           {"condition": "time", "after": "input_datetime.night_light_start",
+                            "before": "input_datetime.night_light_end"},
                            {"condition": "state", "entity_id": armed, "state": "off"}],
             "variables": slug_of,
             "actions": [
-                {"condition": "template", "value_template": "{{ is_state('light.' ~ slug, 'off') }}"},
+                {"condition": "template", "value_template":
+                    "{{ slug in states('input_text.night_light_rooms').split(',') and is_state('light.' ~ slug, 'off') }}"},
                 {"action": "light.turn_on", "target": {"entity_id": "light.{{ slug }}"},
-                 "data": {"brightness_pct": NIGHT_LIGHT_PCT}},
+                 "data": {"brightness_pct": setting("input_number.night_light_pct", NIGHT_LIGHT_PCT)}},
                 {"wait_template": "{{ is_state('binary_sensor.' ~ slug ~ '_motion', 'off') }}"},
                 {"delay": "00:02:00"},
                 {"condition": "template", "value_template": "{{ is_state('binary_sensor.' ~ slug ~ '_motion', 'off') }}"},
@@ -542,9 +571,10 @@ def _yaml() -> str:
         },
         {
             "id": "empty_room_light_off",
-            "alias": f"Пустая комната: свет гаснет через {AUTO_OFF_MINUTES} минут без движения",
+            "alias": "Пустая комната: свет гаснет без движения",
             "mode": "parallel",
-            "triggers": [{"trigger": "state", "entity_id": motion, "to": "off", "for": {"minutes": AUTO_OFF_MINUTES}}],
+            "triggers": [{"trigger": "state", "entity_id": motion, "to": "off",
+                          "for": {"minutes": setting("input_number.light_auto_off_minutes", AUTO_OFF_MINUTES)}}],
             "variables": slug_of,
             "actions": [{"action": "light.turn_off", "target": {"entity_id": "light.{{ slug }}"}}],
         },
@@ -556,7 +586,7 @@ def _yaml() -> str:
             "conditions": [{"condition": "state", "entity_id": armed, "state": "on"}],
             "variables": slug_of,
             "actions": [
-                {"delay": ENTRY_DELAY},  # time to come in and say "Я дома"
+                {"delay": {"minutes": setting("input_number.security_entry_delay_minutes", 1)}},  # to say "Я дома"
                 {"condition": "state", "entity_id": armed, "state": "on"},
                 {"action": "input_boolean.turn_on", "target": {"entity_id": "input_boolean.{{ slug }}_intrusion_flag"}},
             ],
@@ -570,13 +600,14 @@ def _yaml() -> str:
         },
         {
             "id": "security_arm_on_leaving",
-            "alias": "Сценарий «Я ушёл»: охрана через 2 минуты",
+            "alias": "Сценарий «Я ушёл»: охрана с задержкой",
             "mode": "restart",
             # the app's "Поставить на охрану" fires the event - automation.trigger would hold
             # the call for the whole two minutes
             "triggers": script_ran("ya_ushel") + [{"trigger": "event", "event_type": ARM_EVENT}],
             "actions": [
-                {"wait_for_trigger": script_ran("ya_doma"), "timeout": ARM_DELAY, "continue_on_timeout": True},
+                {"wait_for_trigger": script_ran("ya_doma"), "continue_on_timeout": True,
+                 "timeout": "{{ (states('input_number.security_arm_delay_minutes') | int(2)) * 60 }}"},
                 {"condition": "template", "value_template": "{{ wait.trigger is none }}"},
                 {"action": "input_boolean.turn_on", "target": {"entity_id": armed}},
             ],
@@ -821,6 +852,9 @@ def _wanted() -> dict[tuple[str, str], tuple[str | None, str, bool]]:
     wanted[("input_datetime", "schedule_good_morning_time")] = (
         "input_datetime.schedule_good_morning_time", None, False)
     wanted[("input_boolean", "security_armed")] = ("input_boolean.security_armed", None, False)
+    for entity in [*SETTINGS, SETTINGS_MARK]:
+        domain, object_id = entity.split(".")
+        wanted[(domain, object_id)] = (entity, None, False)
     wanted[("template", "house_power")] = ("sensor.house_power", None, False)
     wanted[("integration", "house_energy")] = ("sensor.house_energy", None, False)
     for group in POWER_GROUPS:
@@ -904,11 +938,31 @@ async def setup(url: str = "ws://localhost:8123/api/websocket") -> None:
                 await call(type="call_service", domain="input_text", service="set_value",
                            service_data={"entity_id": state["entity_id"], "value": SCHEDULE_DAYS[schedule][1]})
                 print(f"{schedule}: days {SCHEDULE_DAYS[schedule][1]}")
+        await set_starting_settings(call)
 
         missing = set(wanted) - found
         if missing:
             print(f"not in Home Assistant yet (restart it after `write`?): {sorted(missing)}")
         print(f"rooms: {len(ROOMS)}, entities set up: {len(found)}")
+
+
+async def set_starting_settings(call) -> None:
+    """The automation's knobs at their starting values - once; the mark keeps the resident's changes."""
+    states = {s["entity_id"]: s["state"] for s in await call(type="get_states")}
+    if SETTINGS_MARK not in states or states[SETTINGS_MARK] == "1":
+        return
+    for entity, (_, value, _) in SETTINGS.items():
+        domain = entity.split(".")[0]
+        if domain == "input_boolean":
+            service, data = ("turn_on" if value else "turn_off"), {}
+        elif domain == "input_datetime":
+            service, data = "set_datetime", {"time": value}
+        else:
+            service, data = "set_value", {"value": value}
+        await call(type="call_service", domain=domain, service=service, service_data={"entity_id": entity, **data})
+    await call(type="call_service", domain="input_text", service="set_value",
+               service_data={"entity_id": SETTINGS_MARK, "value": "1"})
+    print("automation settings set to their starting values")
 
 
 if __name__ == "__main__":

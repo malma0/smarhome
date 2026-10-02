@@ -125,6 +125,8 @@ input_boolean:
     name: 'Кухня: тревога охраны'
   security_armed:
     name: Охрана
+  night_light:
+    name: Ночная подсветка
 input_number:
   entrance_light_brightness:
     name: 'Прихожая: яркость света'
@@ -450,12 +452,54 @@ input_number:
     max: 100
     step: 1
     unit_of_measurement: '%'
+  light_auto_off_minutes:
+    name: Свет гаснет без движения, мин
+    mode: box
+    min: 1
+    max: 60
+    step: 1
+    unit_of_measurement: мин
+  night_light_pct:
+    name: Ночная подсветка, яркость
+    mode: box
+    min: 5
+    max: 100
+    step: 5
+    unit_of_measurement: '%'
+  security_arm_delay_minutes:
+    name: Охрана после «Я ушёл» через, мин
+    mode: box
+    min: 0
+    max: 10
+    step: 1
+    unit_of_measurement: мин
+  security_entry_delay_minutes:
+    name: Время сказать «Я дома», мин
+    mode: box
+    min: 1
+    max: 5
+    step: 1
+    unit_of_measurement: мин
 input_datetime:
+  night_light_start:
+    name: Ночная подсветка с
+    has_date: false
+    has_time: true
+  night_light_end:
+    name: Ночная подсветка до
+    has_date: false
+    has_time: true
   schedule_good_morning_time:
     name: 'Расписание: время «Доброе утро»'
     has_date: false
     has_time: true
 input_text:
+  night_light_rooms:
+    name: Ночная подсветка, комнаты
+    max: 200
+  house_settings_set:
+    name: Параметры автоматики заданы
+    max: 10
   schedule_good_morning_days:
     name: 'Расписание: дни «Доброе утро»'
     max: 20
@@ -1702,30 +1746,37 @@ automation:
         data:
           hvac_mode: heat
 - id: night_light_on_motion
-  alias: 'Ночью по движению: свет на 30%'
+  alias: 'Ночью по движению: мягкий свет'
   mode: parallel
   triggers:
   - trigger: state
-    entity_id:
-    - binary_sensor.corridor_motion
+    entity_id: &id003
     - binary_sensor.entrance_motion
+    - binary_sensor.bedroom_motion
+    - binary_sensor.office_motion
+    - binary_sensor.living_room_motion
+    - binary_sensor.corridor_motion
+    - binary_sensor.kitchen_motion
     to: 'on'
   conditions:
+  - condition: state
+    entity_id: input_boolean.night_light
+    state: 'on'
   - condition: time
-    after: '23:00:00'
-    before: 07:00:00
+    after: input_datetime.night_light_start
+    before: input_datetime.night_light_end
   - condition: state
     entity_id: input_boolean.security_armed
     state: 'off'
   variables: *id002
   actions:
   - condition: template
-    value_template: '{{ is_state(''light.'' ~ slug, ''off'') }}'
+    value_template: '{{ slug in states(''input_text.night_light_rooms'').split('','') and is_state(''light.'' ~ slug, ''off'') }}'
   - action: light.turn_on
     target:
       entity_id: light.{{ slug }}
     data:
-      brightness_pct: 30
+      brightness_pct: '{{ states(''input_number.night_light_pct'') | int(30) }}'
   - wait_template: '{{ is_state(''binary_sensor.'' ~ slug ~ ''_motion'', ''off'') }}'
   - delay: 00:02:00
   - condition: template
@@ -1734,20 +1785,14 @@ automation:
     target:
       entity_id: light.{{ slug }}
 - id: empty_room_light_off
-  alias: 'Пустая комната: свет гаснет через 10 минут без движения'
+  alias: 'Пустая комната: свет гаснет без движения'
   mode: parallel
   triggers:
   - trigger: state
-    entity_id:
-    - binary_sensor.entrance_motion
-    - binary_sensor.bedroom_motion
-    - binary_sensor.office_motion
-    - binary_sensor.living_room_motion
-    - binary_sensor.corridor_motion
-    - binary_sensor.kitchen_motion
+    entity_id: *id003
     to: 'off'
     for:
-      minutes: 10
+      minutes: '{{ states(''input_number.light_auto_off_minutes'') | int(10) }}'
   variables: *id002
   actions:
   - action: light.turn_off
@@ -1777,7 +1822,8 @@ automation:
     state: 'on'
   variables: *id002
   actions:
-  - delay: 00:01:00
+  - delay:
+      minutes: '{{ states(''input_number.security_entry_delay_minutes'') | int(1) }}'
   - condition: state
     entity_id: input_boolean.security_armed
     state: 'on'
@@ -1801,7 +1847,7 @@ automation:
       - input_boolean.corridor_intrusion_flag
       - input_boolean.kitchen_intrusion_flag
 - id: security_arm_on_leaving
-  alias: 'Сценарий «Я ушёл»: охрана через 2 минуты'
+  alias: 'Сценарий «Я ушёл»: охрана с задержкой'
   mode: restart
   triggers:
   - trigger: state
@@ -1814,8 +1860,8 @@ automation:
     - trigger: state
       entity_id: script.ya_doma
       to: 'on'
-    timeout: 00:02:00
     continue_on_timeout: true
+    timeout: '{{ (states(''input_number.security_arm_delay_minutes'') | int(2)) * 60 }}'
   - condition: template
     value_template: '{{ wait.trigger is none }}'
   - action: input_boolean.turn_on
