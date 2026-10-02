@@ -4,6 +4,9 @@
     python -m training.train_lora --data training/data/train.jsonl --out training/runs/home-1.5b
     python -m training.train_lora --data training/data/pilot.jsonl --out training/runs/smoke --max-steps 20
 
+Stopped (the PC turned off, Ctrl+C)? The same command again goes on from the
+last checkpoint in --out - one is kept every SAVE_STEPS steps (~an hour on the 2060).
+
 Base: Qwen2.5-1.5B-Instruct - Apache 2.0 (the 3B isn't: its license limits
 commercial use), good at Russian, small enough to train and serve on 6 GB.
 Only Jarvis's own turns are learned - its tool calls and what it says; the
@@ -20,6 +23,7 @@ from pathlib import Path
 
 BASE = "Qwen/Qwen2.5-1.5B-Instruct"
 START, END = "<|im_start|>assistant\n", "<|im_end|>"
+SAVE_STEPS = 50  # of ~1000 for the full set: a stop loses an hour at most, not the night
 
 
 def to_template(messages: list[dict]) -> list[dict]:
@@ -106,11 +110,17 @@ def main() -> None:
             output_dir=args.out, per_device_train_batch_size=1, gradient_accumulation_steps=8,
             num_train_epochs=args.epochs, max_steps=args.max_steps, learning_rate=args.lr,
             lr_scheduler_type="cosine", warmup_ratio=0.03, fp16=True, logging_steps=10,
-            save_strategy="epoch", optim="paged_adamw_8bit", gradient_checkpointing=True,
+            save_strategy="steps", save_steps=SAVE_STEPS, save_total_limit=2,
+            optim="paged_adamw_8bit", gradient_checkpointing=True,
             report_to=[], remove_unused_columns=False,
         ),
     )
-    trainer.train()
+    from transformers.trainer_utils import get_last_checkpoint
+
+    last = get_last_checkpoint(args.out) if Path(args.out).is_dir() else None
+    if last:
+        print(f"going on from {last}")
+    trainer.train(resume_from_checkpoint=last)
     model.save_pretrained(Path(args.out) / "adapter")
     tokenizer.save_pretrained(Path(args.out) / "adapter")
     print(f"adapter saved to {Path(args.out) / 'adapter'}")
