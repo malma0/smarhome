@@ -2,6 +2,7 @@ package ru.jarvis.home;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
@@ -9,6 +10,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.provider.Settings;
+import android.net.Uri;
 import android.util.Base64;
 import android.view.View;
 import android.view.Window;
@@ -48,6 +52,7 @@ public class MainActivity extends Activity {
     static final int PORT = 8765;
     static final String START = "file:///android_asset/start.html";
     static final int MIC_PERMISSION = 1;
+    static final int NOTIFY_PERMISSION = 2;
 
     WebView web;
     SharedPreferences prefs;
@@ -71,6 +76,16 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) showStart("offline");
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri url = request.getUrl();
+                if ("tel".equals(url.getScheme())) {  // the alarm's "Позвонить 112": the dialer, the user presses call
+                    startActivity(new Intent(Intent.ACTION_DIAL, url));
+                    return true;
+                }
+                return false;
             }
         });
         setContentView(web);
@@ -126,8 +141,39 @@ public class MainActivity extends Activity {
         else js("window.onVoiceError && onVoiceError('Микрофон занят или недоступен')");
     }
 
+    // ------------------------------------------------------------ watching the house while the app is closed
+
+    void watch() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFY_PERMISSION);  // then here again
+            return;
+        }
+        WatchService.start(this);
+        askToStayAwake();
+    }
+
+    /** Once: let the watcher reach the house while the phone sleeps (else Android cuts its network). */
+    void askToStayAwake() {
+        if (Build.VERSION.SDK_INT < 23 || prefs.getBoolean("asked_battery", false)) return;
+        prefs.edit().putBoolean("asked_battery", true).apply();
+        PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+        if (power.isIgnoringBatteryOptimizations(getPackageName())) return;
+        try {
+            startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName())));
+        } catch (Exception ignored) {
+            // a phone without that screen: the user can find it in the app's battery settings
+        }
+    }
+
     @Override
     public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
+        if (code == NOTIFY_PERMISSION) {
+            boolean ok = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
+            WatchService.start(this);  // watches either way; without the permission the alarms can't show
+            if (!ok) js("window.JV && JV.toast('Уведомления запрещены — тревоги не будут приходить. Разреши их в настройках телефона', true)");
+            askToStayAwake();
+            return;
+        }
         if (code != MIC_PERMISSION) return;
         if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) listen();
         else js("window.onVoiceError && onVoiceError('Нет доступа к микрофону - разреши его в настройках телефона')");
@@ -297,6 +343,24 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void cancelListening() {
             new Thread(voice::stop).start();
+        }
+
+        /** The panel's PIN, for the watcher's own questions to the house; on = watch while closed. */
+        @JavascriptInterface
+        public void watch(String pin) {
+            prefs.edit().putString("pin", pin).putBoolean("watch", true).apply();
+            main.post(MainActivity.this::watch);
+        }
+
+        @JavascriptInterface
+        public void unwatch() {
+            prefs.edit().putBoolean("watch", false).apply();
+            WatchService.stop(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public boolean watching() {
+            return prefs.getBoolean("watch", false);
         }
 
         @JavascriptInterface
