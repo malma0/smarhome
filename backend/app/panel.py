@@ -30,6 +30,7 @@ APK = Path(__file__).resolve().parents[2] / "android" / "build" / "jarvis.apk"  
 LOCKOUT_FAILURES, LOCKOUT_SECONDS = 5, 60
 CONTROL_FIELDS = ("room", "device", "action", "brightness_pct", "position", "temperature", "confirmed")
 WEATHER_SECONDS = 600
+ENERGY_SECONDS = 60
 SERIES_POINTS = 25  # one an hour over the day - what the room's chart draws
 SERIES_KINDS = {"temperature": "temperature", "humidity": "humidity", "co2": "carbon_dioxide"}
 NORM_FIELDS = ("room", "temperature", "co2_max", "humidity_min")
@@ -286,6 +287,23 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
             return await all_schedules()
         result = await run(schedule_h, {k: body[k] for k in ("action", "name", "time") if k in body})
         return result if "error" in result else await all_schedules()
+
+    @app.get("/api/energy", dependencies=[api])
+    async def energy(period: str = "day"):
+        """kWh by hour / day for the Energy screen - asked at most once a minute per period."""
+        from app.energy import PERIODS, energy_view
+
+        if period not in PERIODS:
+            raise HTTPException(400, "period: day, week или month.")
+        cached = state.get(("energy", period))
+        if cached and time.monotonic() - cached[0] < ENERGY_SECONDS:
+            return cached[1]
+        try:
+            view = await energy_view(client, period, datetime.now().astimezone())
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+        state[("energy", period)] = (time.monotonic(), view)
+        return view
 
     @app.get("/api/security", dependencies=[api])
     async def security():
