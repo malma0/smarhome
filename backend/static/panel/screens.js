@@ -264,7 +264,12 @@
       try {
         const result = await api("POST", "/api/security", { action });
         if (result.error) toast(result.error, true);
-        else { sec.data = result; toast({ arm: "Охрана включится через 2 минуты", cancel: "Отменено", disarm: "Охрана снята" }[action]); }
+        else {
+          sec.data = result;
+          const minutes = Math.round(result.arm_seconds / 60);
+          toast({ arm: minutes ? "Охрана включится через " + plural(minutes, "минуту", "минуты", "минут") : "Охрана включена",
+            cancel: "Отменено", disarm: "Охрана снята" }[action]);
+        }
       } catch (err) { if (err.message !== "locked") toast(err.message, true); }
       sec.busy = false;
       drawSecurity();
@@ -474,4 +479,124 @@
       connection: "Пульт подключён к " + location.host }[go] || "Этот раздел — в следующей версии");
   });
   window.JV.add("sliders", { open: () => { drawSettings(); loadSettings(); }, tick: drawSettings });
+
+  // ---------------------------------------------------------------- automation and norms: the house's own behaviour
+
+  const au = { node: null, data: null };
+  const NORM_CARDS = [
+    { kind: "temperature", icon: "thermo", name: "Температура", step: 0.5, unit: "°C", digits: 1 },
+    { kind: "co2_max", icon: "co2", name: "CO₂ до", step: 50, unit: "ppm", digits: 0 },
+    { kind: "humidity_min", icon: "humid", name: "Влажность от", step: 5, unit: "%", digits: 0 },
+  ];
+
+  const stepper = (key, text) => `<div class="stepper"><button class="jv-press" aria-label="Меньше" data-step="${key}:-1">${icon("minus", 16)}</button><b>${text}</b>` +
+    `<button class="jv-press" aria-label="Больше" data-step="${key}:1">${icon("plus", 16)}</button></div>`;
+
+  function drawAutomation() {
+    const d = au.data;
+    let html = `<div class="au-head"><button class="sub-back" data-back>${icon("back", 20)}Настройки</button>
+      <h1>Автоматика и нормы</h1><span>Как дом ведёт себя сам. Меняется сразу — дом подхватывает без перезапуска.</span></div>`;
+    if (!d) { au.node.innerHTML = html + `<p class="scr-empty">Загружаю…</p>`; return; }
+    const pct = d.night_pct || 0;
+    html += `<section style="display:flex;flex-direction:column;gap:8px"><h2 class="sec-label">Свет</h2><div class="au-box">
+      <div class="au-row"><span class="words"><b>Гасить свет без движения</b><span>Если в комнате никого нет</span></span>${stepper("light_off_minutes", d.light_off_minutes + " мин")}</div>
+      <div class="night"><div class="line"><span class="words" style="flex:1;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px;font-weight:500">Ночная подсветка</b>
+        <span style="font-size:12px;color:var(--text2)">Мягкий свет по движению вместо полного</span></span>
+        <button class="switch${d.night_light ? " on" : ""}" role="switch" aria-checked="${d.night_light}" aria-label="Ночная подсветка" data-night><span class="trk"><span class="knob"></span></span></button></div>`;
+    if (d.night_light) {
+      html += `<div class="more">
+        <div class="line"><span class="lbl">Яркость</span><span class="slider"><span class="trk0"></span><span class="fill" style="width:${pct}%"></span><span class="thumb" style="left:${pct}%"></span>
+          <input type="range" min="5" max="100" step="5" value="${pct}" data-range="night_pct" aria-label="Яркость ночной подсветки"></span><span class="pct">${pct}%</span></div>
+        <div class="line"><span class="lbl">Время</span><div class="times">
+          <label>${esc(d.night_start)}<input type="time" value="${esc(d.night_start)}" data-time-key="night_start" aria-label="Начало"></label><span>—</span>
+          <label>${esc(d.night_end)}<input type="time" value="${esc(d.night_end)}" data-time-key="night_end" aria-label="Конец"></label></div></div>
+        <div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:13px;color:var(--text2)">Комнаты</span><div class="room-pills">` +
+        d.rooms.map((r) => { const on = d.night_rooms.indexOf(r.slug) >= 0; return `<button class="${on ? "on" : ""}" aria-pressed="${on}" data-night-room="${r.slug}"><i>${on ? icon("check", 11) : ""}</i>${esc(r.name)}</button>`; }).join("") +
+        `</div></div></div>`;
+    }
+    html += `</div></div></section>`;
+    html += `<section style="display:flex;flex-direction:column;gap:8px"><h2 class="sec-label">Охрана</h2><div class="au-box">
+      <div class="au-row"><span class="words"><b>Задержка постановки</b><span>Сколько ждать после «Я ушёл»</span></span>${stepper("arm_delay_minutes", d.arm_delay_minutes + " мин")}</div>
+      <div class="au-row"><span class="words"><b>Время на «Я дома»</b><span>Сколько ждать, прежде чем движение станет тревогой</span></span>${stepper("entry_delay_minutes", d.entry_delay_minutes + " мин")}</div>
+    </div></section>`;
+    html += `<section style="display:flex;flex-direction:column;gap:8px"><h2 class="sec-label">Нормы для всех комнат</h2><div class="norm-cards">` +
+      NORM_CARDS.filter((n) => d.norms[n.kind]).map((n) => {
+        const v = d.norms[n.kind];
+        return `<div class="norm-card"><span>${icon(n.icon, 20)}</span><small>${n.name}</small>
+          <b>${String(Number(v.value).toFixed(n.digits)).replace(".", ",")}<i>${n.unit}</i></b>${v.same ? "" : `<span class="mixed">в комнатах разные</span>`}
+          <div class="btns"><button class="jv-press" aria-label="${n.name}: меньше" data-norm="${n.kind}:-1">${icon("minus", 16)}</button>
+          <button class="jv-press" aria-label="${n.name}: больше" data-norm="${n.kind}:1">${icon("plus", 16)}</button></div></div>`;
+      }).join("") + `</div><span class="au-note">Ставит одно значение всем комнатам. Свою норму комнате — в её панели на плане. При выходе за норму дом сам включает отопление, кондиционер, вентиляцию или увлажнитель.</span></section>`;
+    au.node.innerHTML = html;
+  }
+
+  async function loadAutomation() {
+    try { au.data = await api("GET", "/api/automation"); } catch (e) { if (e.message !== "locked") toast(e.message, true); }
+    drawAutomation();
+  }
+
+  async function changeAutomation(key, value, ok) {
+    try {
+      const result = await api("POST", "/api/automation", { key, value });
+      if (result.error) toast(result.error, true);
+      else { au.data = result; if (ok) toast(ok); }
+    } catch (e) { if (e.message !== "locked") toast(e.message, true); }
+    drawAutomation();
+  }
+
+  const LIMITS = { light_off_minutes: [1, 60], arm_delay_minutes: [0, 10], entry_delay_minutes: [1, 5] };
+  au.node = section("screen-automation");
+  au.node.addEventListener("click", (e) => {
+    if (e.target.closest("[data-back]")) { window.JV.show("sliders"); return; }
+    const st = e.target.closest("[data-step]");
+    if (st && au.data) {
+      const [key, dir] = st.dataset.step.split(":");
+      const value = Math.min(LIMITS[key][1], Math.max(LIMITS[key][0], au.data[key] + parseInt(dir, 10)));
+      if (value === au.data[key]) return;
+      au.data[key] = value;  // at once; the house confirms
+      drawAutomation();
+      changeAutomation(key, value);
+      return;
+    }
+    if (e.target.closest("[data-night]") && au.data) {
+      au.data.night_light = !au.data.night_light;
+      drawAutomation();
+      changeAutomation("night_light", au.data.night_light, au.data.night_light ? "Ночная подсветка включена" : "Ночная подсветка выключена");
+      return;
+    }
+    const room = e.target.closest("[data-night-room]");
+    if (room && au.data) {
+      const slug = room.dataset.nightRoom;
+      const rooms = au.data.night_rooms.indexOf(slug) >= 0 ? au.data.night_rooms.filter((r) => r !== slug) : au.data.night_rooms.concat([slug]);
+      au.data.night_rooms = rooms;
+      drawAutomation();
+      changeAutomation("night_rooms", rooms);
+      return;
+    }
+    const norm = e.target.closest("[data-norm]");
+    if (norm && au.data) {
+      const [kind, dir] = norm.dataset.norm.split(":");
+      const card = NORM_CARDS.find((n) => n.kind === kind);
+      const v = au.data.norms[kind];
+      const value = Math.min(v.max, Math.max(v.min, Math.round((v.value + card.step * parseInt(dir, 10)) * 10) / 10));
+      v.value = value; v.same = true;
+      drawAutomation();
+      changeAutomation("norm_" + kind, value, card.name + ": " + String(value).replace(".", ",") + " " + card.unit + " во всех комнатах");
+    }
+  });
+  au.node.addEventListener("input", (e) => {  // the brightness slider follows the finger
+    const input = e.target.closest("[data-range]");
+    if (!input) return;
+    const s = input.closest(".slider");
+    s.querySelector(".fill").style.width = input.value + "%";
+    s.querySelector(".thumb").style.left = input.value + "%";
+    s.parentNode.querySelector(".pct").textContent = input.value + "%";
+  });
+  au.node.addEventListener("change", (e) => {
+    const range = e.target.closest("[data-range]");
+    if (range) { changeAutomation("night_pct", parseInt(range.value, 10)); return; }
+    const time = e.target.closest("[data-time-key]");
+    if (time && time.value) changeAutomation(time.dataset.timeKey, time.value);
+  });
+  window.JV.add("automation", { tab: "sliders", back: "sliders", open: () => { drawAutomation(); loadAutomation(); } });
 })();

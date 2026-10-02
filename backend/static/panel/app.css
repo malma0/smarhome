@@ -433,3 +433,44 @@ body { -webkit-text-size-adjust: 100%; }
 .theme-box { border-radius: 20px; background: var(--surf); border: 1px solid var(--line); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .theme-box > span { font-size: 15px; font-weight: 500; }
 .version { text-align: center; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--text3); }
+
+/* automation and norms */
+.jv-app[data-screen="automation"] #screen-automation { display: flex; animation: jvFadeUp .35s cubic-bezier(.2,.7,.2,1); gap: 22px; padding-top: 36px; }
+@keyframes jvBump { 0% { transform: translateY(-6px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+.sub-back { align-self: flex-start; height: 44px; padding-right: 12px; display: flex; align-items: center; gap: 4px; font-size: 14px; color: var(--text2); }
+.au-head { display: flex; flex-direction: column; gap: 8px; }
+.au-head h1 { margin: 0; padding: 0 4px; font-size: 26px; line-height: 32px; font-weight: 600; letter-spacing: -0.02em; }
+.au-head span { padding: 0 4px; font-size: 13px; line-height: 18px; color: var(--text2); }
+.au-box { border-radius: 20px; background: var(--surf); border: 1px solid var(--line); }
+.au-row { display: flex; align-items: center; gap: 12px; padding: 12px 10px 12px 16px; border-bottom: 1px solid var(--surf2); }
+.au-row:last-child { border-bottom-color: transparent; }
+.au-row .words { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.au-row .words b { font-size: 15px; font-weight: 500; }
+.au-row .words span { font-size: 12px; line-height: 16px; color: var(--text2); }
+.stepper { display: flex; align-items: center; background: var(--surf2); border-radius: 999px; padding: 2px; flex-shrink: 0; }
+.stepper button { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.stepper b { min-width: 58px; text-align: center; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.night { padding: 12px 10px 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.night .more { display: flex; flex-direction: column; gap: 14px; padding: 4px 6px 0 0; animation: jvBump .3s ease; }
+.night .line { display: flex; align-items: center; gap: 12px; }
+.night .lbl { font-size: 13px; color: var(--text2); width: 64px; flex-shrink: 0; }
+.night .pct { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; width: 40px; text-align: right; }
+.night .times { flex: 1; display: flex; align-items: center; gap: 8px; }
+.night .times label { position: relative; flex: 1; height: 44px; border-radius: 12px; background: var(--surf2); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 16px; font-weight: 500; display: flex; align-items: center; justify-content: center; }
+.night .times input { position: absolute; inset: 0; opacity: 0; width: 100%; font-size: 16px; }
+.night .times > span { color: var(--text3); }
+.room-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.room-pills button { height: 36px; padding: 0 12px 0 10px; border-radius: 999px; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; color: var(--text2); border: 1px solid var(--trkOff); transition: background-color .2s, border-color .2s; }
+.room-pills button i { width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--surf3); color: #04161B; }
+.room-pills button.on { background: rgba(34,211,238,.12); color: var(--cyanText); border-color: rgba(34,211,238,.45); }
+.room-pills button.on i { background: #22D3EE; }
+.norm-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.norm-card { border-radius: 20px; background: var(--surf); border: 1px solid var(--line); padding: 14px 8px 8px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.norm-card > span:first-child { color: var(--cyan); display: flex; }
+.norm-card small { font-size: 12px; color: var(--text2); }
+.norm-card b { font-size: 22px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.norm-card b i { font-style: normal; font-size: 12px; color: var(--text2); font-weight: 500; margin-left: 2px; }
+.norm-card .mixed { font-size: 11px; color: var(--text3); margin-top: -4px; }
+.norm-card .btns { display: flex; gap: 4px; width: 100%; }
+.norm-card .btns button { flex: 1; height: 40px; border-radius: 12px; background: var(--surf2); display: flex; align-items: center; justify-content: center; }
+.au-note { padding: 0 4px; font-size: 12px; line-height: 17px; color: var(--text2); }

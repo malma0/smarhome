@@ -765,8 +765,9 @@
     if (name !== "home" && !screens[name]) { toast("Раздел — в следующей версии"); return; }
     if (state.room) closeRoom();
     $("app").setAttribute("data-screen", name);
+    const tab = (screens[name] && screens[name].tab) || name;  // a screen inside a section lights its tab
     $("nav").querySelectorAll("button").forEach((b) => {
-      const cur = b.dataset.tab === name;
+      const cur = b.dataset.tab === tab;
       b.classList.toggle("cur", cur);
       b.setAttribute("aria-current", cur ? "page" : "false");
     });
@@ -782,7 +783,7 @@
     if (!$("confirm").hidden) { closeGasConfirm(); return true; }
     if (state.room) { closeRoom(); return true; }
     const current = $("app").getAttribute("data-screen");
-    if (current && current !== "home") { showScreen("home"); return true; }
+    if (current && current !== "home") { showScreen((screens[current] && screens[current].back) || "home"); return true; }
     return false;
   };
 
