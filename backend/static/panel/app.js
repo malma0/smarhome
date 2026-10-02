@@ -693,7 +693,7 @@
     });
     $("powerCard").addEventListener("click", () => toast("Раздел «Энергия» — в следующей версии"));
     $("bell").addEventListener("click", () => toast("Журнал событий — в следующей версии"));
-    $("orb").addEventListener("click", () => toast("Чат с Jarvis — в следующей версии"));
+    $("orb").addEventListener("click", () => showScreen("chat"));
     $("retry").addEventListener("click", refresh);
     $("cancel").addEventListener("click", closeGasConfirm);
     const hold = $("hold");
@@ -764,6 +764,8 @@
   function showScreen(name) {
     if (name !== "home" && !screens[name]) { toast("Раздел — в следующей версии"); return; }
     if (state.room) closeRoom();
+    const leaving = screens[$("app").getAttribute("data-screen")];
+    if (leaving && leaving.leave) leaving.leave();  // e.g. the chat stops listening
     $("app").setAttribute("data-screen", name);
     const tab = (screens[name] && screens[name].tab) || name;  // a screen inside a section lights its tab
     $("nav").querySelectorAll("button").forEach((b) => {
@@ -775,7 +777,7 @@
   }
   // what screens.js builds on: one way to ask the server, one toast, one icon set
   window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; },
-    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }),
+    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }), refresh: () => refresh(),
     theme: (chosen) => { if (chosen) { store.set("jarvis-panel-theme", chosen); applyTheme(); } return store.get("jarvis-panel-theme") || "auto"; } };
 
   // the phone's back button (the Android app asks first): close what is open, else leave the app

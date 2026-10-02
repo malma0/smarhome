@@ -599,4 +599,115 @@
     if (time && time.value) changeAutomation(time.dataset.timeKey, time.value);
   });
   window.JV.add("automation", { tab: "sliders", back: "sliders", open: () => { drawAutomation(); loadAutomation(); } });
+
+  // ---------------------------------------------------------------- the chat: words or voice, the same Jarvis as at home
+
+  const app = window.JarvisApp && window.JarvisApp.startListening ? window.JarvisApp : null;  // the phone app's microphone
+  const CHAT_KEY = "jarvis-panel-chat";
+  const ch = { node: null, msgs: [], mode: "idle", awaiting: false };  // mode: idle / listening / thinking
+  try { ch.msgs = JSON.parse(window.JV.store.get(CHAT_KEY) || "[]"); } catch (e) { ch.msgs = []; }
+  const CHIPS = ["Что дома?", "Я ушёл", "Спокойной ночи", "Выключи везде свет"];
+
+  function remember() { window.JV.store.set(CHAT_KEY, JSON.stringify(ch.msgs.slice(-30))); }
+
+  function chatSkeleton() {
+    ch.node.innerHTML = `<span class="ch-glow"></span>
+      <header class="ch-head"><button data-chat-back aria-label="Назад">${icon("back", 22)}</button>
+        <div class="who"><b>Jarvis</b><span id="chStatus"></span></div>
+        <button data-chat-settings aria-label="Настройки" style="color:var(--text2)">${icon("voice", 20)}</button></header>
+      <div class="ch-msgs" id="chMsgs"></div>
+      <div class="ch-bottom">
+        <button class="ch-orb" id="chOrb" aria-label="Говорить с Jarvis"><span class="halo"></span><span class="core"></span><span class="swirl"></span></button>
+        <span class="ch-hint" id="chHint"></span>
+        <div class="ch-chips">${CHIPS.map((c) => `<button class="jv-press" data-chip="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+        <form class="ch-input" id="chForm"><input id="chText" aria-label="Сообщение для Jarvis" placeholder="Напишите Jarvis…" autocomplete="off">
+          <button class="jv-press" aria-label="Отправить" id="chSend">${icon("send", 18)}</button></form>
+      </div>`;
+  }
+
+  function drawChat() {
+    const box = ch.node.querySelector("#chMsgs");
+    if (!box) return;
+    let html = `<span class="ch-day">Сегодня</span>`;
+    ch.msgs.slice(-20).forEach((m) => {
+      html += `<div class="ch-msg ${m.me ? "me" : "jv"}${m.bad ? " bad" : ""}"><div class="bubble">${m.voice ? `<span class="by-voice">${icon("mic", 12)}Голосом</span>` : ""}${esc(m.text)}</div>` +
+        (m.acts && m.acts.length ? `<div class="ch-acts">${m.acts.map((a) => `<span><i>${icon(a.icon, 12)}</i>${esc(a.t)}</span>`).join("")}</div>` : "") + `</div>`;
+    });
+    if (ch.mode === "thinking") html += `<div class="ch-dots"><i></i><i></i><i></i></div>`;
+    box.innerHTML = html;
+    box.scrollTop = box.scrollHeight;
+    const orb = ch.node.querySelector("#chOrb");
+    orb.className = "ch-orb" + (ch.mode === "listening" ? " listening" : "") + (ch.mode === "thinking" ? " thinking" : "") + (app ? "" : " muted");
+    orb.setAttribute("aria-pressed", ch.mode === "listening" ? "true" : "false");
+    orb.innerHTML = (ch.mode === "listening" ? `<span class="wave"></span><span class="wave"></span>` : "") + `<span class="halo"></span><span class="core"></span><span class="swirl"></span>`;
+    const status = ch.node.querySelector("#chStatus");
+    const offline = window.JV.house().offline;
+    status.textContent = { listening: "Слушает", thinking: "Думает…" }[ch.mode] || (offline ? "Нет связи с домом" : "На связи · дом онлайн");
+    status.className = ch.mode !== "idle" ? "live" : "";
+    ch.node.querySelector("#chHint").textContent = !app ? "Голос — в приложении Jarvis на телефоне"
+      : { listening: "Говори… нажми на шар, чтобы отправить", thinking: "" }[ch.mode] || "Нажми на шар и говори";
+    const text = ch.node.querySelector("#chText");
+    ch.node.querySelector("#chSend").classList.toggle("ready", !!text.value.trim());
+  }
+
+  function add(msg) { ch.msgs.push(msg); remember(); drawChat(); }
+
+  async function ask(path, body, voice) {
+    ch.mode = "thinking";
+    drawChat();
+    try {
+      const r = await api("POST", path, body);
+      if (r.error) add({ me: false, text: r.error, bad: true });
+      else {
+        if (voice) add({ me: true, text: r.heard, voice: true });
+        add({ me: false, text: r.response, acts: r.acts });
+        if (r.acts && r.acts.length) window.JV.refresh();  // the house changed: the plan and the cards too
+      }
+    } catch (e) {
+      if (e.message !== "locked") add({ me: false, text: "Джарвис не ответил: " + e.message, bad: true });
+    }
+    ch.mode = "idle";
+    drawChat();
+  }
+
+  function say(text) {
+    text = (text || "").trim();
+    if (!text || ch.mode !== "idle") return;
+    add({ me: true, text });
+    ask("/api/chat", { message: text });
+  }
+
+  // what the phone app's microphone says back (MainActivity)
+  window.onListening = () => { ch.mode = "listening"; drawChat(); };
+  window.onVoice = (b64) => { if (ch.awaiting) { ch.awaiting = false; ask("/api/voice", { audio: b64 }, true); } };
+  window.onVoiceError = (msg) => { ch.mode = "idle"; drawChat(); toast(msg, true); };
+
+  ch.node = section("screen-chat");
+  chatSkeleton();
+  ch.node.addEventListener("click", (e) => {
+    if (e.target.closest("[data-chat-back]")) { window.JV.show("home"); return; }
+    if (e.target.closest("[data-chat-settings]")) { window.JV.show("sliders"); return; }
+    const chip = e.target.closest("[data-chip]");
+    if (chip) { say(chip.dataset.chip); return; }
+    if (e.target.closest("#chOrb")) {
+      if (!app) { toast("Голос работает в приложении Jarvis на телефоне"); return; }
+      if (ch.mode === "idle") app.startListening();  // onListening once the microphone is open
+      else if (ch.mode === "listening") { ch.awaiting = true; ch.mode = "thinking"; drawChat(); app.stopListening(); }  // -> onVoice
+    }
+  });
+  ch.node.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = ch.node.querySelector("#chText");
+    const text = input.value;
+    input.value = "";
+    say(text);
+  });
+  ch.node.addEventListener("input", () => {  // only the send button reacts to typing
+    ch.node.querySelector("#chSend").classList.toggle("ready", !!ch.node.querySelector("#chText").value.trim());
+  });
+  window.JV.add("chat", {
+    tab: "home", back: "home",
+    open: () => drawChat(),
+    leave: () => { if (ch.mode === "listening" && app) { app.cancelListening(); ch.mode = "idle"; } },
+  });
 })();
