@@ -1,12 +1,15 @@
 package ru.jarvis.home;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.view.View;
 import android.view.Window;
 import android.webkit.JavascriptInterface;
@@ -44,11 +47,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class MainActivity extends Activity {
     static final int PORT = 8765;
     static final String START = "file:///android_asset/start.html";
+    static final int MIC_PERMISSION = 1;
 
     WebView web;
     SharedPreferences prefs;
     final Handler main = new Handler(Looper.getMainLooper());
     volatile boolean scanning;
+    final VoiceRecorder voice = new VoiceRecorder();
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -110,6 +115,36 @@ public class MainActivity extends Activity {
         paintBars();
     }
 
+    // ------------------------------------------------------------ the microphone, for the chat
+
+    void listen() {
+        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_PERMISSION);  // then onRequestPermissionsResult
+            return;
+        }
+        if (voice.start()) js("window.onListening && onListening()");
+        else js("window.onVoiceError && onVoiceError('Микрофон занят или недоступен')");
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
+        if (code != MIC_PERMISSION) return;
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) listen();
+        else js("window.onVoiceError && onVoiceError('Нет доступа к микрофону - разреши его в настройках телефона')");
+    }
+
+    /** The recording, as base64 WAV, to the page - it sends it to Jarvis with its PIN. */
+    void sendRecording() {
+        new Thread(() -> {
+            byte[] wav = voice.stop();
+            if (wav == null) {  // stopped already - the app went to the background mid-phrase
+                js("window.onVoiceError && onVoiceError('Запись прервалась - скажи ещё раз')");
+                return;
+            }
+            js("window.onVoice && onVoice(" + JSONObject.quote(Base64.encodeToString(wav, Base64.NO_WRAP)) + ")");
+        }).start();
+    }
+
     // ------------------------------------------------------------ the phone's back button
 
     @Override
@@ -132,6 +167,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (voice.recording()) voice.stop();  // no listening behind the user's back
         web.onPause();
     }
 
@@ -246,6 +282,21 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void scan() {
             MainActivity.this.scan();
+        }
+
+        @JavascriptInterface
+        public void startListening() {
+            main.post(MainActivity.this::listen);
+        }
+
+        @JavascriptInterface
+        public void stopListening() {
+            sendRecording();
+        }
+
+        @JavascriptInterface
+        public void cancelListening() {
+            new Thread(voice::stop).start();
         }
 
         @JavascriptInterface
