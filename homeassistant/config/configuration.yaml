@@ -833,21 +833,39 @@ template:
     unit_of_measurement: ppm
     device_class: carbon_dioxide
     state_class: measurement
+  - name: 'Дом: мощность, климат'
+    unique_id: power_climate
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    state: '{{ ((40 if is_state(''input_boolean.entrance_ventilation_power'', ''on'') else 0) + (40 if is_state(''input_boolean.bedroom_ventilation_power'', ''on'') else 0) + (900 if is_state(''input_boolean.bedroom_ac_compressor'',
+      ''on'') else 0) + (30 if is_state(''input_boolean.bedroom_humidifier_power'', ''on'') else 0) + (40 if is_state(''input_boolean.office_ventilation_power'', ''on'') else 0) + (900 if is_state(''input_boolean.office_ac_compressor'',
+      ''on'') else 0) + (30 if is_state(''input_boolean.office_humidifier_power'', ''on'') else 0) + (40 if is_state(''input_boolean.living_room_ventilation_power'', ''on'') else 0) + (900 if is_state(''input_boolean.living_room_ac_compressor'',
+      ''on'') else 0) + (30 if is_state(''input_boolean.living_room_humidifier_power'', ''on'') else 0) + (40 if is_state(''input_boolean.corridor_ventilation_power'', ''on'') else 0) + (40 if is_state(''input_boolean.kitchen_ventilation_power'',
+      ''on'') else 0) + (900 if is_state(''input_boolean.kitchen_ac_compressor'', ''on'') else 0)) | round(0) }}'
+  - name: 'Дом: мощность, свет'
+    unique_id: power_light
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    state: '{{ ((60 * (states(''input_number.entrance_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.entrance_light_power'', ''on'') else 0) + (60 * (states(''input_number.bedroom_light_brightness'')
+      | float(255)) / 255 if is_state(''input_boolean.bedroom_light_power'', ''on'') else 0) + (60 * (states(''input_number.office_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.office_light_power'',
+      ''on'') else 0) + (60 * (states(''input_number.living_room_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.living_room_light_power'', ''on'') else 0) + (60 * (states(''input_number.corridor_light_brightness'')
+      | float(255)) / 255 if is_state(''input_boolean.corridor_light_power'', ''on'') else 0) + (60 * (states(''input_number.kitchen_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.kitchen_light_power'',
+      ''on'') else 0)) | round(0) }}'
+  - name: 'Дом: мощность, розетки и приборы'
+    unique_id: power_sockets
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    state: '{{ ((100 if is_state(''input_boolean.bedroom_socket_power'', ''on'') else 0) + (100 if is_state(''input_boolean.office_socket_power'', ''on'') else 0) + (100 if is_state(''input_boolean.living_room_socket_power'',
+      ''on'') else 0) + (100 if is_state(''input_boolean.kitchen_socket_power'', ''on'') else 0)) | round(0) }}'
   - name: 'Дом: мощность'
     unique_id: house_power
     unit_of_measurement: W
     device_class: power
     state_class: measurement
-    state: '{{ ((60 * (states(''input_number.entrance_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.entrance_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.entrance_ventilation_power'',
-      ''on'') else 0) + (60 * (states(''input_number.bedroom_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.bedroom_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.bedroom_ventilation_power'',
-      ''on'') else 0) + (100 if is_state(''input_boolean.bedroom_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.bedroom_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.bedroom_humidifier_power'',
-      ''on'') else 0) + (60 * (states(''input_number.office_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.office_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.office_ventilation_power'',
-      ''on'') else 0) + (100 if is_state(''input_boolean.office_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.office_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.office_humidifier_power'',
-      ''on'') else 0) + (60 * (states(''input_number.living_room_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.living_room_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.living_room_ventilation_power'',
-      ''on'') else 0) + (100 if is_state(''input_boolean.living_room_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.living_room_ac_compressor'', ''on'') else 0) + (30 if is_state(''input_boolean.living_room_humidifier_power'',
-      ''on'') else 0) + (60 * (states(''input_number.corridor_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.corridor_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.corridor_ventilation_power'',
-      ''on'') else 0) + (60 * (states(''input_number.kitchen_light_brightness'') | float(255)) / 255 if is_state(''input_boolean.kitchen_light_power'', ''on'') else 0) + (40 if is_state(''input_boolean.kitchen_ventilation_power'',
-      ''on'') else 0) + (100 if is_state(''input_boolean.kitchen_socket_power'', ''on'') else 0) + (900 if is_state(''input_boolean.kitchen_ac_compressor'', ''on'') else 0)) | round(0) }}'
+    state: '{{ (states(''sensor.power_climate'') | float(0) + states(''sensor.power_light'') | float(0) + states(''sensor.power_sockets'') | float(0)) | round(0) }}'
 - binary_sensor:
   - name: 'Прихожая: дым'
     unique_id: entrance_smoke
@@ -1196,6 +1214,38 @@ sensor:
   unit_time: h
   round: 3
   method: left
+  max_sub_interval:
+    minutes: 1
+- platform: integration
+  source: sensor.power_climate
+  name: 'Дом: электричество, климат'
+  unique_id: energy_climate
+  unit_prefix: k
+  unit_time: h
+  round: 3
+  method: left
+  max_sub_interval:
+    minutes: 1
+- platform: integration
+  source: sensor.power_light
+  name: 'Дом: электричество, свет'
+  unique_id: energy_light
+  unit_prefix: k
+  unit_time: h
+  round: 3
+  method: left
+  max_sub_interval:
+    minutes: 1
+- platform: integration
+  source: sensor.power_sockets
+  name: 'Дом: электричество, розетки и приборы'
+  unique_id: energy_sockets
+  unit_prefix: k
+  unit_time: h
+  round: 3
+  method: left
+  max_sub_interval:
+    minutes: 1
 utility_meter:
   house_energy_today:
     source: sensor.house_energy

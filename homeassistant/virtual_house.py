@@ -60,7 +60,8 @@ Around the norms and dangers, the house also:
 - runs schedules ("Расписание: ..." automations): "Доброе утро" at 7:00 on
   its days (input_datetime.schedule_good_morning_time, input_text.*_days), the hall light at
   sunset;
-- meters electricity: sensor.house_power from what's on, sensor.house_energy
+- meters electricity: sensor.house_power from what's on (by group: sensor.power_climate,
+  power_light, power_sockets, each with its sensor.energy_*), sensor.house_energy
   and its day/month meters. History is kept 60 days (recorder).
 
 Rooms become HA areas - Jarvis finds "свет на кухне" by asking Home
@@ -134,6 +135,9 @@ SCHEDULE_DAYS = {"schedule_good_morning": ("«Доброе утро»", "1,2,3,4
 # Watts when on, for the electricity estimate. Heating is central (the flat's
 # utilities count it), so it uses no electricity here.
 WATTS = {"light": 60, "socket": 100, "ac": 900, "heating": 0, "ventilation": 40, "humidifier": 30}
+# Where the electricity goes, in groups - as separate meters would show it in a real flat:
+# each group its power (sensor.power_<group>) and its kWh (sensor.energy_<group>).
+POWER_GROUPS = {"climate": "климат", "light": "свет", "sockets": "розетки и приборы"}
 
 # The physics, per minute.
 OUTSIDE = 19.0  # rooms drift toward it: a cool autumn
@@ -163,7 +167,8 @@ def _yaml() -> str:
     input_boolean, input_number, input_datetime, input_text = {}, {}, {}, {}
     lights, switches, fans, sensors, climate, automations = [], [], [], [], [], []
     binary_sensors, covers, hygrostats = [], [], []
-    physics, power = [], []
+    physics = []
+    power = {group: [] for group in POWER_GROUPS}
     no_smoke = " and ".join(f"is_state('binary_sensor.{slug}_smoke', 'off')" for slug, _, _ in ROOMS)
 
     def danger_sensor(slug: str, room: str, kind: str, label: str, device_class: str) -> None:
@@ -401,14 +406,14 @@ def _yaml() -> str:
             })
 
         on = lambda helper: f"is_state('input_boolean.{slug}_{helper}', 'on')"  # noqa: E731
-        power.append(f"({WATTS['light']} * (states('input_number.{slug}_light_brightness') | float(255)) / 255 "
-                     f"if {on('light_power')} else 0)")
-        power.append(f"({WATTS['ventilation']} if {on('ventilation_power')} else 0)")
+        power["light"].append(f"({WATTS['light']} * (states('input_number.{slug}_light_brightness') | float(255)) / 255 "
+                              f"if {on('light_power')} else 0)")
+        power["climate"].append(f"({WATTS['ventilation']} if {on('ventilation_power')} else 0)")
         if full:
-            power.append(f"({WATTS['socket']} if {on('socket_power')} else 0)")
-            power.append(f"({WATTS['ac']} if {on('ac_compressor')} else 0)")
+            power["sockets"].append(f"({WATTS['socket']} if {on('socket_power')} else 0)")
+            power["climate"].append(f"({WATTS['ac']} if {on('ac_compressor')} else 0)")
         if slug in HUMIDIFIERS:
-            power.append(f"({WATTS['humidifier']} if {on('humidifier_power')} else 0)")
+            power["climate"].append(f"({WATTS['humidifier']} if {on('humidifier_power')} else 0)")
 
         # --- the physics of this room, one step a minute ---
         window_open = f"is_state('binary_sensor.{slug}_window', 'on')" if slug in WINDOWS else "false"
@@ -614,10 +619,16 @@ def _yaml() -> str:
                          "data": {"brightness_pct": 60}}],
         },
     ]
+    for group, label in POWER_GROUPS.items():
+        sensors.append({
+            "name": f"Дом: мощность, {label}", "unique_id": f"power_{group}", "unit_of_measurement": "W",
+            "device_class": "power", "state_class": "measurement",
+            "state": "{{ (" + (" + ".join(power[group]) or "0") + ") | round(0) }}",
+        })
     sensors.append({
         "name": "Дом: мощность", "unique_id": "house_power", "unit_of_measurement": "W",
         "device_class": "power", "state_class": "measurement",
-        "state": "{{ (" + " + ".join(power) + ") | round(0) }}",
+        "state": "{{ (" + " + ".join(f"states('sensor.power_{g}') | float(0)" for g in POWER_GROUPS) + ") | round(0) }}",
     })
 
     automations.append({
@@ -641,7 +652,11 @@ def _yaml() -> str:
         "generic_hygrostat": hygrostats,
         "sensor": [{"platform": "integration", "source": "sensor.house_power", "name": "Дом: электричество",
                     "unique_id": "house_energy", "unit_prefix": "k", "unit_time": "h", "round": 3,
-                    "method": "left"}],
+                    "method": "left", "max_sub_interval": {"minutes": 1}}] + [
+            {"platform": "integration", "source": f"sensor.power_{group}", "name": f"Дом: электричество, {label}",
+             "unique_id": f"energy_{group}", "unit_prefix": "k", "unit_time": "h", "round": 3, "method": "left",
+             "max_sub_interval": {"minutes": 1}}  # steady power counts too, not only at a change
+            for group, label in POWER_GROUPS.items()],
         "utility_meter": {
             "house_energy_today": {"source": "sensor.house_energy", "name": "Дом: электричество за сегодня",
                                    "unique_id": "house_energy_today", "cycle": "daily"},
@@ -808,6 +823,9 @@ def _wanted() -> dict[tuple[str, str], tuple[str | None, str, bool]]:
     wanted[("input_boolean", "security_armed")] = ("input_boolean.security_armed", None, False)
     wanted[("template", "house_power")] = ("sensor.house_power", None, False)
     wanted[("integration", "house_energy")] = ("sensor.house_energy", None, False)
+    for group in POWER_GROUPS:
+        wanted[("template", f"power_{group}")] = (f"sensor.power_{group}", None, False)
+        wanted[("integration", f"energy_{group}")] = (f"sensor.energy_{group}", None, False)
     # utility_meter adds its tariff to the unique id
     wanted[("utility_meter", "house_energy_today_single_tariff")] = ("sensor.house_energy_today", None, False)
     wanted[("utility_meter", "house_energy_month_single_tariff")] = ("sensor.house_energy_month", None, False)
