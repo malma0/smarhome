@@ -151,3 +151,54 @@ def test_the_guard_arms_with_time_to_walk_out_and_disarms_stopping_the_countdown
     act("arm_now")
     assert ha.calls[-1] == ("input_boolean", "turn_on", "input_boolean.security_armed", None)
     assert "error" in act("explode")
+
+
+class _Memory:
+    def list_resident_ids(self):
+        return ["default"]
+
+
+class _Agent:
+    memory = _Memory()
+
+    def __init__(self):
+        self.said = []
+
+    async def chat(self, session, resident, message):
+        self.said.append(message)
+        return {"response": "Готово.", "local": True, "actions": [
+            {"tool": "get_home_status", "input": {}, "result": {"rooms": {}}},
+            {"tool": "control_devices", "input": {}, "result": {"done": [
+                {"room": "Кухня", "device": "light", "action": "off"}, {"room": "Зал", "device": "curtains", "action": "on"}]}},
+            {"tool": "set_room_norm", "input": {}, "result": {"done": [{"room": "Спальня", "temperature": 21.5}]}},
+            {"tool": "run_scenario", "input": {}, "result": {"ran": "Я ушёл"}},
+        ]}
+
+
+def test_the_chat_says_what_the_house_did():
+    agent = _Agent()
+    client = TestClient(create_app(client=FakeHA(), pin=PIN, agent_factory=lambda: agent))
+    got = client.post("/api/chat", headers={"X-Pin": PIN}, json={"message": "выключи свет на кухне"}).json()
+    assert got["response"] == "Готово." and got["local"] is True
+    assert [a["t"] for a in got["acts"]] == ["Свет · Кухня — выкл", "Шторы · Зал — открыть", "Норма · Спальня — 21,5°",
+                                             "Сценарий «Я ушёл»"]
+
+
+def test_the_phone_speaks_the_same_way_the_laptop_listens():
+    import base64
+
+    agent = _Agent()
+    heard = []
+
+    async def transcriber(wav, residents):
+        heard.append((len(wav), residents))
+        return "выключи свет на кухне"
+
+    client = TestClient(create_app(client=FakeHA(), pin=PIN, agent_factory=lambda: agent, transcriber=transcriber))
+    say = lambda wav: client.post("/api/voice", headers={"X-Pin": PIN},  # noqa: E731
+                                  json={"audio": base64.b64encode(wav).decode()}).json()
+    got = say(b"\0" * 32000)
+    assert got["heard"] == "выключи свет на кухне" and agent.said == ["выключи свет на кухне"]
+    assert heard == [(32000, ["default"])] and got["acts"]
+    assert "error" in say(b"\0" * 100)  # a tap, not speech
+    assert client.post("/api/voice", headers={"X-Pin": PIN}, json={"audio": "не base64!"}).status_code == 400

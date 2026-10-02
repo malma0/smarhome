@@ -31,6 +31,8 @@ LOCKOUT_FAILURES, LOCKOUT_SECONDS = 5, 60
 CONTROL_FIELDS = ("room", "device", "action", "brightness_pct", "position", "temperature", "confirmed")
 WEATHER_SECONDS = 600
 ENERGY_SECONDS = 60
+VOICE_MIN_BYTES = 16000  # half a second of 16 kHz mono 16-bit
+VOICE_MAX_BYTES = 16000 * 2 * 60  # a minute
 SERIES_POINTS = 25  # one an hour over the day - what the room's chart draws
 SERIES_KINDS = {"temperature": "temperature", "humidity": "humidity", "co2": "carbon_dioxide"}
 NORM_FIELDS = ("room", "temperature", "co2_max", "humidity_min")
@@ -148,6 +150,52 @@ async def security_view(client: HomeAssistantClient, now: datetime | None = None
     }
 
 
+DEVICE_WORDS = {"light": ("light", "Свет"), "curtains": ("curtain", "Шторы"), "socket": ("socket", "Розетка"),
+                "ac": ("ac", "Кондиционер"), "heating": ("heat", "Отопление"), "ventilation": ("vent", "Вентиляция"),
+                "humidifier": ("humid", "Увлажнитель"), "water_valve": ("water", "Кран воды"),
+                "gas_valve": ("gas", "Кран газа"), "security": ("shield", "Охрана"), "kettle": ("kettle", "Чайник")}
+NORM_WORDS = {"temperature": ("thermo", "°"), "co2_max": ("co2", " ppm"), "humidity_min": ("humid", "%")}
+
+
+def acts_of(actions: list[dict]) -> list[dict]:
+    """What the house did this turn, as the chat's badges: [{"icon": "light", "t": "Свет · Кухня — выкл"}]."""
+    acts = []
+    for action in actions:
+        result = action.get("result") or {}
+        tool = action.get("tool")
+        if tool == "control_devices":
+            for done in result.get("done", []):
+                ic, word = DEVICE_WORDS.get(done.get("device"), ("power", str(done.get("device"))))
+                state = "вкл" if done.get("action") == "on" else "выкл"
+                if done.get("device") == "curtains":
+                    state = "открыть" if done.get("action") == "on" else "закрыть"
+                acts.append({"icon": ic, "t": f"{word} · {done.get('room')} — {state}"})
+        elif tool == "set_room_norm":
+            for done in result.get("done", []):
+                for kind, (ic, unit) in NORM_WORDS.items():
+                    if kind in done:
+                        value = f"{done[kind]:g}".replace(".", ",")
+                        acts.append({"icon": ic, "t": f"Норма · {done.get('room')} — {value}{unit}"})
+        elif tool == "run_scenario" and result.get("ran"):
+            acts.append({"icon": "scenes", "t": f"Сценарий «{result['ran']}»"})
+        elif tool == "house_schedule" and result.get("done"):
+            done = result["done"]
+            acts.append({"icon": "clock", "t": f"Расписание «{done.get('name')}» — "
+                                               + ("вкл" if done.get("on") else "выкл")})
+    return acts
+
+
+async def whisper(wav: bytes, resident_ids: list[str]) -> str:
+    """The phone's recording -> text, the same way as the laptop's microphone (voice_app):
+    Whisper with the house's words and the residents' names, noise thrown away."""
+    from app.transcript_filter import is_hallucination
+    from voice_app import build_whisper_prompt, transcribe
+
+    prompt = build_whisper_prompt(settings.whisper_vocabulary, resident_ids)
+    text = await transcribe(wav, settings.groq_api_key, settings.groq_base_url, prompt=prompt)
+    return "" if is_hallucination(text) else text
+
+
 def series(points: list[dict], start: datetime, end: datetime, count: int = SERIES_POINTS) -> list[float | None]:
     """A sensor's history -> its value at count evenly spaced moments (the last one known before each)."""
     known = []
@@ -174,7 +222,8 @@ def _number(value) -> float | None:
         return None
 
 
-def create_app(client: HomeAssistantClient | None = None, pin: str | None = None, agent_factory=None) -> FastAPI:
+def create_app(client: HomeAssistantClient | None = None, pin: str | None = None, agent_factory=None,
+               transcriber=None) -> FastAPI:
     client = client or HomeAssistantClient()
     pin = settings.app_pin if pin is None else pin
     status_h, control_h, norm_h, scenario_h = home.make_handlers(client)
@@ -412,12 +461,45 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         message = str(body.get("message") or "").strip()
         if not message:
             raise HTTPException(400, "Пустое сообщение.")
+        return await answer(message)
+
+    def agent():
         if "agent" not in state:  # built on first use, on this thread - its database connection is its own
             from app.agent import build_default_agent
 
             state["agent"] = (agent_factory or build_default_agent)()
-        result = await state["agent"].chat("panel", "default", message)
-        return {"response": result["response"]}
+        return state["agent"]
+
+    async def answer(message: str, heard: bool = False) -> dict:
+        result = await agent().chat("panel", "default", message)
+        reply = {"response": result["response"], "acts": acts_of(result.get("actions", [])),
+                 "local": bool(result.get("local"))}
+        if heard:
+            reply["heard"] = message
+        return reply
+
+    @app.post("/api/voice", dependencies=[api])
+    async def voice(body: dict):
+        """{"audio": base64 WAV} from the phone app's microphone -> what was heard and Jarvis's answer."""
+        import base64
+        import binascii
+
+        try:
+            wav = base64.b64decode(str(body.get("audio") or ""), validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(400, "Запись не читается.") from None
+        if len(wav) < VOICE_MIN_BYTES:
+            return {"error": "Слишком коротко - не расслышал."}
+        if len(wav) > VOICE_MAX_BYTES:
+            return {"error": "Слишком длинная запись."}
+        try:
+            residents = agent().memory.list_resident_ids()
+            text = await (transcriber or whisper)(wav, residents)
+        except Exception as exc:  # noqa: BLE001 - the network or the key: said, not crashed
+            return {"error": f"Не получилось распознать: {exc}"}
+        if not text:
+            return {"error": "Не расслышал - скажи ещё раз."}
+        return await answer(text, heard=True)
 
     if STATIC.exists():
         app.mount("/panel", StaticFiles(directory=STATIC, html=True), name="panel")
