@@ -57,6 +57,23 @@ class HomeAssistantClient:
         description is where a scenario keeps the phrases that start it."""
         return (await self._request("GET", f"/api/config/script/config/{object_id}")).json()
 
+    async def save_script_config(self, object_id: str, config: dict[str, Any]) -> None:
+        """Writes a script into scripts.yaml and reloads scripts - a scenario made in the app."""
+        await self._request("POST", f"/api/config/script/config/{object_id}", json=config)
+
+    async def delete_script_config(self, object_id: str) -> None:
+        await self._request("DELETE", f"/api/config/script/config/{object_id}")
+
+    async def get_automation_config(self, automation_id: str) -> dict[str, Any]:
+        """An automation from automations.yaml (the ones made in the app) - by its id, not entity id."""
+        return (await self._request("GET", f"/api/config/automation/config/{automation_id}")).json()
+
+    async def save_automation_config(self, automation_id: str, config: dict[str, Any]) -> None:
+        await self._request("POST", f"/api/config/automation/config/{automation_id}", json=config)
+
+    async def delete_automation_config(self, automation_id: str) -> None:
+        await self._request("DELETE", f"/api/config/automation/config/{automation_id}")
+
     async def get_history(self, entity_id: str, start: str, end: str) -> list[dict[str, Any]]:
         """[{"state", "last_changed"}, ...] of one entity between two ISO times."""
         response = await self._request(

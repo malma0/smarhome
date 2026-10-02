@@ -40,6 +40,7 @@ ARM_AUTOMATION = "security_arm_on_leaving"  # virtual_house.py: "Я ушёл" ->
 ARM_SECONDS = 120  # its ARM_DELAY, for the countdown - when the house has no such setting
 ARM_EVENT = "jarvis_arm_soon"  # starts it from the app (virtual_house.py ARM_EVENT)
 SETTLE_TRIES, SETTLE_SECONDS = 5, 0.2
+RELOAD_TRIES, RELOAD_SECONDS = 15, 0.2  # a script or automation just written shows up within ~3 s
 JOURNAL_HOURS = 48
 ALL_DAYS = [1, 2, 3, 4, 5, 6, 7]
 DAY_DIGITS = {str(d) for d in ALL_DAYS}
@@ -86,22 +87,34 @@ async def scenes_view(client: HomeAssistantClient) -> list[dict]:
             continue
         object_id = state["entity_id"].split(".", 1)[1]
         try:
-            description = (await client.get_script_config(object_id)).get("description") or ""
+            config = await client.get_script_config(object_id)
         except HomeAssistantError:
-            description = ""
+            config = {}
+        description = config.get("description") or ""
         attrs = state.get("attributes", {})
-        scenes.append({"name": attrs.get("friendly_name", object_id), "does": home._scenario_does(description),
-                       "last": attrs.get("last_triggered")})
+        scenes.append({"id": object_id, "name": attrs.get("friendly_name", object_id),
+                       "does": home._scenario_does(description), "phrases": home._scenario_phrases(description),
+                       "last": attrs.get("last_triggered"),
+                       "steps": (config.get("variables") or {}).get("jarvis_steps")})  # None: not made in the app
     return scenes
 
 
-def schedules_view(states: list[dict]) -> list[dict]:
-    """The schedules with their time (None: at sunset) and days (Mon=1 .. Sun=7, from input_text.<id>_days)."""
+def schedules_view(states: list[dict], made: dict[str, dict] | None = None) -> list[dict]:
+    """The schedules with their time (None: at sunset) and days (Mon=1 .. Sun=7, from input_text.<id>_days);
+    made: the app's own schedules' configs by automation id - their time and days are in there."""
     by_id = {s["entity_id"]: s for s in states}
     schedules = []
     for state in states:
-        name = state.get("attributes", {}).get("friendly_name", "")
+        attrs = state.get("attributes", {})
+        name = attrs.get("friendly_name", "")
         if not (state["entity_id"].startswith("automation.") and name.startswith(home.SCHEDULE_PREFIX)):
+            continue
+        own = (made or {}).get(attrs.get("id"))
+        if own is not None:
+            mine = (own.get("variables") or {}).get("jarvis_schedule") or {}
+            schedules.append({"id": attrs["id"], "name": mine.get("name") or name[len(home.SCHEDULE_PREFIX):].strip(),
+                              "on": state["state"] == "on", "time": mine.get("time"), "days": mine.get("days") or ALL_DAYS,
+                              "days_editable": True, "app": True, "scene": mine.get("scene")})
             continue
         slug = state["entity_id"].split(".", 1)[1]
         days_helper = by_id.get(f"input_text.{slug}_days")
@@ -310,11 +323,73 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
 
-    async def all_schedules() -> dict:
+    @app.post("/api/scenes", dependencies=[api])
+    async def save_scene(body: dict):
+        """{name, phrases, steps, id?}: a scenario made (or changed) in the app - a Home Assistant script."""
+        from app import scenes as made
+
         try:
-            return {"schedules": schedules_view(await client.get_states())}
+            current = await scenes_view(client)
+            config, _ = await made.build(client, body.get("name"), body.get("phrases") or [], body.get("steps") or [])
+            if body.get("id"):
+                scene_id = str(body["id"])
+                if not any(s["id"] == scene_id for s in current):
+                    return {"error": "Нет такого сценария."}
+            else:
+                if any(s["name"].casefold() == config["alias"].casefold() for s in current):
+                    return {"error": "Сценарий с таким названием уже есть."}
+                scene_id = made.object_id(config["alias"], {s["id"] for s in current})
+            await client.save_script_config(scene_id, config)
+            for _ in range(RELOAD_TRIES):  # Home Assistant reloads its scripts a moment after
+                listed = await scenes_view(client)
+                mine = next((x for x in listed if x["id"] == scene_id), None)
+                if mine and mine["steps"] == config["variables"]["jarvis_steps"]:
+                    break
+                await asyncio.sleep(RELOAD_SECONDS)
+            return {"scenes": listed, "id": scene_id}
+        except (ValueError, TypeError) as exc:
+            return {"error": f"Не подходит: {exc}"}
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
+    @app.delete("/api/scenes/{scene_id}", dependencies=[api])
+    async def delete_scene(scene_id: str):
+        try:
+            if not any(s["id"] == scene_id for s in await scenes_view(client)):
+                return {"error": "Нет такого сценария."}
+            await client.delete_script_config(scene_id)
+            return {"scenes": await scenes_view(client)}
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
+    async def all_schedules() -> dict:
+        from app.scenes import SCHEDULE_PREFIX
+
+        try:
+            states = await client.get_states()
+            made = {}
+            for s in states:
+                automation_id = s.get("attributes", {}).get("id") or ""
+                if s["entity_id"].startswith("automation.") and automation_id.startswith(SCHEDULE_PREFIX):
+                    made[automation_id] = await client.get_automation_config(automation_id)
+            return {"schedules": schedules_view(states, made)}
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
+    async def rewrite_schedule(found: dict, **change) -> dict:
+        """The app's own schedule with a new time or days: its automation written again."""
+        from app.scenes import schedule_config
+
+        mine = {"name": found["name"], "time": found["time"], "days": found["days"], "scene": found["scene"], **change}
+        try:
+            config = schedule_config(mine["name"], mine["time"], mine["days"], mine["scene"])
+        except ValueError as exc:
+            return {"error": f"Не подходит: {exc}"}
+        try:
+            await client.save_automation_config(found["id"], config)
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+        return await all_schedules()
 
     @app.get("/api/schedules", dependencies=[api])
     async def schedules():
@@ -322,12 +397,46 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
 
     @app.post("/api/schedules", dependencies=[api])
     async def change_schedule(body: dict):
-        """enable / disable / set_time go through the tool's own rules; set_days is the app's."""
-        if body.get("action") == "set_days":
+        """enable / disable / set_time go through the tool's own rules; set_days, create and delete are the app's."""
+        action = body.get("action")
+        if action == "create":
+            from app.scenes import SCHEDULE_PREFIX, object_id, schedule_config
+
+            current = (await all_schedules())["schedules"]
+            try:
+                config = schedule_config(body.get("name"), body.get("time"), body.get("days"), body.get("scene"))
+            except ValueError as exc:
+                return {"error": f"Не подходит: {exc}"}
+            new_id = SCHEDULE_PREFIX + object_id(str(body.get("name")), {s["id"][len(SCHEDULE_PREFIX):] for s in current
+                                                                         if s.get("app")})
+            try:
+                await client.save_automation_config(new_id, config)
+            except HomeAssistantError as exc:
+                raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+            for _ in range(RELOAD_TRIES):  # and its automations
+                listed = await all_schedules()
+                if any(x["id"] == new_id for x in listed["schedules"]):
+                    break
+                await asyncio.sleep(RELOAD_SECONDS)
+            return listed
+        found = next((s for s in (await all_schedules())["schedules"] if s["id"] == body.get("id")), None)
+        if found is not None and found.get("app"):
+            if action == "delete":
+                try:
+                    await client.delete_automation_config(found["id"])
+                except HomeAssistantError as exc:
+                    raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+                return await all_schedules()
+            if action == "set_time":
+                return await rewrite_schedule(found, time=body.get("time"))
+            if action == "set_days":
+                return await rewrite_schedule(found, days=body.get("days"))
+        if action == "delete":
+            return {"error": "Удалить можно только расписание, созданное в приложении."}
+        if action == "set_days":
             days = sorted({int(d) for d in body.get("days") or [] if str(d) in DAY_DIGITS})
             if not days:
                 return {"error": "Нужен хотя бы один день - чтобы не срабатывало, выключи расписание."}
-            found = next((s for s in (await all_schedules())["schedules"] if s["id"] == body.get("id")), None)
             if found is None or not found["days_editable"]:
                 return {"error": "Нет такого расписания с днями."}
             try:
