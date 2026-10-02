@@ -20,6 +20,7 @@ ACTS_WINDOW = timedelta(minutes=2)
 REACTIONS = ("Опасность", "Охрана:")  # aliases of the automations that answer an alarm (virtual_house.py)
 ALARM_ICONS = {"moisture": "leak", "gas": "gas", "carbon_monoxide": "gas", "smoke": "smoke", "safety": "motion"}
 STATE_WORDS = {"on": "вкл", "off": "выкл", "open": "открыт", "closed": "закрыт"}
+VALVE_WORDS = {"on": "открыт", "off": "перекрыт", "open": "открыт", "closed": "перекрыт"}
 LIMIT = 60
 
 
@@ -113,6 +114,8 @@ def acts(line: dict, logbook: list[dict]) -> list[dict]:
         if not start <= when <= start + ACTS_WINDOW or entry.get("entity_id", "").startswith("input_boolean."):
             continue
         seconds = int((when - start).total_seconds())
-        done.append({"t": f"{entry.get('name', entry.get('entity_id'))} — {STATE_WORDS.get(entry['state'], entry['state'])}",
+        name = entry.get("name", entry.get("entity_id"))
+        words = VALVE_WORDS if "кран" in name.lower() else STATE_WORDS  # a valve is shut, not "off"
+        done.append({"t": f"{name} — {words.get(entry['state'], entry['state'])}",
                      "at": f"+{seconds} с" if seconds < 60 else f"+{seconds // 60} мин"})
     return done

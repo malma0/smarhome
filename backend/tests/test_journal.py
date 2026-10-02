@@ -49,4 +49,28 @@ def test_what_the_house_did_after_the_alarm():
         {"entity_id": "fan.kitchen", "name": "Кухня: вентиляция", "state": "off", "when": "2026-10-01T10:30:00+00:00",
          "context_name": "Опасность: дым"},  # long after
     ]
-    assert journal.acts(alarm, logbook) == [{"t": "Кухня: кран воды — выкл", "at": "+2 с"}]
+    assert journal.acts(alarm, logbook) == [{"t": "Кухня: кран воды — перекрыт", "at": "+2 с"}]
+
+
+def test_an_alert_says_what_where_and_what_the_house_did():
+    import asyncio
+
+    from app import alerts
+
+    class House:
+        async def get_states(self):
+            leak = {"entity_id": "binary_sensor.kitchen_leak", "state": "on", "last_changed": T.format(10),
+                    "attributes": {"device_class": "moisture", "friendly_name": "Кухня: протечка"}}
+            quiet = {"entity_id": "binary_sensor.hall_smoke", "state": "off", "last_changed": T.format(0),
+                     "attributes": {"device_class": "smoke", "friendly_name": "Зал: дым"}}
+            return [leak, quiet]
+
+        async def get_logbook(self, start, end):
+            return [{"entity_id": "switch.kitchen_water_valve", "name": "Кухня: кран воды", "state": "off",
+                     "when": "2026-10-01T10:10:02+00:00", "context_name": "Опасность: протечка - перекрыть воду"}]
+
+    found = asyncio.run(alerts.active(House()))
+    assert len(found) == 1
+    leak = found[0]
+    assert (leak["title"], leak["where"], leak["icon"]) == ("Протечка", "на кухне", "leak")
+    assert leak["acts"] == [{"t": "Кухня: кран воды — перекрыт", "at": "+2 с"}] and leak["advice"]

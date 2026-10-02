@@ -356,6 +356,16 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         state[("energy", period)] = (time.monotonic(), view)
         return view
 
+    @app.get("/api/alerts", dependencies=[api])
+    async def alerts():
+        """The dangers going on now - the alarm screen, and the phone app's watcher every few seconds."""
+        from app import alerts as danger_now
+
+        try:
+            return {"alerts": await danger_now.active(client)}
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
     @app.get("/api/automation", dependencies=[api])
     async def automation():
         from app import house_settings
