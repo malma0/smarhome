@@ -278,4 +278,118 @@
     // every refresh (5 s): the sensors from the fresh house; the journal and the countdown every third
     tick: () => { sec.ticks += 1; if (sec.ticks % 3 === 0) loadSecurity(); else drawSecurity(); },
   });
+
+  // ---------------------------------------------------------------- electricity and the rooms' day
+
+  const SPLIT_COLORS = ["#2F5BEA", "#22D3EE", "#A9B4C2", "#4B5565"];
+  const METRICS = [
+    { key: "temperature", label: "Температура", reading: "temperature", unit: "°", digits: 1, norm: "temperature" },
+    { key: "humidity", label: "Влажность", reading: "humidity", unit: "%", digits: 0, norm: "humidity_min", normWord: "от " },
+    { key: "co2", label: "CO₂", reading: "carbon_dioxide", unit: " ppm", digits: 0, norm: "co2_max", normWord: "до " },
+  ];
+  const en = { node: null, period: "day", data: {}, room: "", metric: "temperature", series: {}, ticks: 0 };
+  const fmt = (n, d) => (n == null || isNaN(n) ? "—" : Number(n).toFixed(d === undefined ? 1 : d).replace(".", ","));
+
+  function barsHtml(d) {
+    const max = Math.max.apply(null, d.bars.map((b) => b || 0).concat([0.001]));
+    const gap = { day: 3, week: 10, month: 2 }[d.period];
+    return `<div class="en-bars" style="gap:${gap}px" role="img" aria-label="Расход, всего ${fmt(d.total)} кВт·ч">` + d.bars.map((b, i) => {
+      const cls = i === d.current ? "cur" : b == null ? "none" : "";
+      return `<span class="${cls}" style="height:${b == null ? 2 : Math.max(2, Math.round((b / max) * 100))}%"></span>`;
+    }).join("") + `</div><div class="en-axis">${d.axis.map((a) => `<span>${esc(a)}</span>`).join("")}</div>`;
+  }
+
+  function compareText(d) {
+    if (d.period !== "day") return d.per_day != null ? "В среднем " + fmt(d.per_day) + " кВт·ч в день" : "";
+    if (!d.yesterday_so_far) return "";
+    const diff = Math.round(((d.total - d.yesterday_so_far) / d.yesterday_so_far) * 100);
+    if (diff === 0) return "Столько же, сколько вчера к этому часу";
+    return "На " + Math.abs(diff) + "% " + (diff < 0 ? "меньше" : "больше") + ", чем вчера к этому часу";
+  }
+
+  function splitHtml(d) {
+    const total = d.split.reduce((n, s) => n + s.kwh, 0);
+    if (!d.split.length || total <= 0) return `<p class="scr-empty">Разбивка появится, когда счётчики групп накопят данные.</p>`;
+    const parts = d.split.map((s, i) => ({ name: s.name, p: Math.round((s.kwh / total) * 100), c: SPLIT_COLORS[i % SPLIT_COLORS.length] }));
+    return `<div class="en-split"><div class="stack">${parts.map((s) => `<span style="width:${s.p}%;background:${s.c}"></span>`).join("")}</div>
+      <div class="legend">${parts.map((s) => `<div><i style="background:${s.c}"></i><span>${esc(s.name)}</span><b>${s.p}%</b></div>`).join("")}</div></div>`;
+  }
+
+  function roomChartHtml(rooms) {
+    const m = METRICS.find((x) => x.key === en.metric);
+    const withData = rooms.filter((r) => r.readings[m.reading]);
+    if (!withData.length) return `<p class="scr-empty">В доме нет таких датчиков.</p>`;
+    if (!withData.some((r) => r.name === en.room)) en.room = withData[0].name;
+    const r = withData.find((x) => x.name === en.room);
+    const norm = r.norms[m.norm] ? r.norms[m.norm].value : null;
+    const values = (en.series[en.room + "|" + m.key] || []).filter((v) => v != null);
+    const now = parseFloat(r.readings[m.reading].value);
+    let html = `<div class="rh-now"><b>${fmt(now, m.digits)}${m.unit}</b><span>${norm != null ? "норма " + (m.normWord || "") + fmt(norm, m.digits === 1 ? 1 : 0) + m.unit : ""}</span></div>`;
+    if (values.length < 2) return html + `<p class="scr-empty">Загружаю сутки…</p>`;
+    const all = values.concat(norm != null ? [norm] : []);
+    const lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+    const margin = (hi - lo) * 0.15 || 1;
+    const y = (v) => (96 - ((v - (lo - margin)) / ((hi + margin) - (lo - margin))) * 92).toFixed(1);
+    const step = 300 / (values.length - 1);
+    const pts = values.map((v, i) => (i * step).toFixed(1) + "," + y(v)).join(" ");
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    const hour = new Date().getHours();
+    const label = (back) => pad((hour - back + 24) % 24) + ":00";
+    html += `<svg class="rh-chart" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="${esc(m.label)} за сутки, ${esc(r.name)}">
+      <polygon class="area" points="0,100 ${pts} 300,100"/>${norm != null ? `<line class="norm" x1="0" x2="300" y1="${y(norm)}" y2="${y(norm)}"/>` : ""}<polyline class="line" points="${pts}"/></svg>
+      <div class="en-axis"><span>${label(24)}</span><span>${label(18)}</span><span>${label(12)}</span><span>${label(6)}</span><span>сейчас</span></div>
+      <div class="rh-stats"><div><small>Мин</small><b>${fmt(Math.min.apply(null, values), m.digits)}${m.unit}</b></div>
+        <div><small>Средн</small><b>${fmt(avg, m.digits)}${m.unit}</b></div><div><small>Макс</small><b>${fmt(Math.max.apply(null, values), m.digits)}${m.unit}</b></div></div>`;
+    return html;
+  }
+
+  function drawEnergy() {
+    const h = window.JV.house();
+    const d = en.data[en.period];
+    const rooms = (h.rooms || []).filter((r) => r.readings.temperature || r.readings.humidity || r.readings.carbon_dioxide);
+    const watts = h.house && h.house.house && h.house.house.power_now ? parseFloat(h.house.house.power_now.value) : null;
+    const seg = (list, cur, attr, cls) => `<div class="seg ${cls}" role="group">` + list.map((f) =>
+      `<button class="${cur === f[0] ? "on" : ""}" aria-pressed="${cur === f[0]}" data-${attr}="${f[0]}">${f[1]}</button>`).join("") + `</div>`;
+    let html = `<h1 class="scr-title">Энергия</h1>` + seg([["day", "День"], ["week", "Неделя"], ["month", "Месяц"]], en.period, "period", "big");
+    html += `<div class="en-card"><div class="en-top"><div class="l"><small>${{ day: "Сегодня", week: "Эта неделя", month: "Последние 30 дней" }[en.period]}</small>
+      <span class="en-total">${d ? fmt(d.total) : "—"}<i>кВт·ч</i></span><span class="en-compare">${d ? esc(compareText(d)) : ""}</span></div>
+      <div class="r"><small>Сейчас</small><span class="en-now">${watts != null ? fmt(watts / 1000) + " кВт" : "—"}</span></div></div>
+      ${d ? barsHtml(d) : `<p class="scr-empty">Загружаю…</p>`}</div>`;
+    html += `<section style="display:flex;flex-direction:column;gap:10px"><h2 class="sec-label">На что ушло</h2>${d ? splitHtml(d) : ""}</section>`;
+    html += `<section style="display:flex;flex-direction:column;gap:10px"><div class="scr-h2"><h2>История по комнатам</h2></div>
+      <div class="chips">${rooms.map((r) => `<button class="${r.name === en.room ? "on" : ""}" aria-pressed="${r.name === en.room}" data-room="${esc(r.name)}">${esc(r.name)}</button>`).join("")}</div>
+      <div class="rh-card">${seg(METRICS.map((m) => [m.key, m.label]), en.metric, "metric", "small")}${roomChartHtml(rooms)}</div></section>`;
+    en.node.innerHTML = html;
+  }
+
+  async function loadEnergy() {
+    const period = en.period;
+    try { en.data[period] = await api("GET", "/api/energy?period=" + period); } catch (e) { if (e.message !== "locked") toast(e.message, true); }
+    drawEnergy();
+  }
+
+  async function loadRoomSeries() {
+    if (!en.room) return;
+    const key = en.room + "|" + en.metric;
+    try {
+      const r = await api("GET", "/api/series?room=" + encodeURIComponent(en.room) + "&what=" + en.metric);
+      en.series[key] = r.values;
+    } catch (e) { if (e.message !== "locked") toast(e.message, true); }
+    drawEnergy();
+  }
+
+  en.node = section("screen-chart");
+  en.node.addEventListener("click", (e) => {
+    const p = e.target.closest("[data-period]");
+    if (p) { en.period = p.dataset.period; drawEnergy(); loadEnergy(); return; }
+    const r = e.target.closest("[data-room]");
+    if (r) { en.room = r.dataset.room; drawEnergy(); loadRoomSeries(); return; }
+    const m = e.target.closest("[data-metric]");
+    if (m) { en.metric = m.dataset.metric; drawEnergy(); loadRoomSeries(); }
+  });
+  window.JV.add("chart", {
+    open: () => { en.ticks = 0; drawEnergy(); loadEnergy(); loadRoomSeries(); },  // drawing picks the first room
+    // the power now with every refresh; the bars and the room's day once a minute
+    tick: () => { en.ticks += 1; if (en.ticks % 12 === 0) { loadEnergy(); loadRoomSeries(); } else drawEnergy(); },
+  });
 })();

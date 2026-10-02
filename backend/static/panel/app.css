@@ -365,3 +365,46 @@ body { -webkit-text-size-adjust: 100%; }
 .log .act .ok { color: #22D3EE; display: flex; }
 .log .act .t { flex: 1; }
 .log .act .at { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--text3); }
+
+/* energy */
+.jv-app[data-screen="chart"] #screen-chart { display: flex; animation: jvFadeUp .35s cubic-bezier(.2,.7,.2,1); gap: 22px; }
+.seg.big button { height: 38px; }
+.en-card { border-radius: 24px; background: var(--surf); border: 1px solid var(--line); padding: 18px 16px 14px; display: flex; flex-direction: column; gap: 16px; }
+.en-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.en-top .l, .en-top .r { display: flex; flex-direction: column; gap: 2px; }
+.en-top .r { align-items: flex-end; }
+.en-top small { font-size: 12px; color: var(--text2); }
+.en-total { font-size: 40px; line-height: 44px; font-weight: 300; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.en-total i { font-style: normal; font-size: 16px; color: var(--text2); margin-left: 6px; }
+.en-compare { font-size: 12px; color: var(--cyanText); }
+.en-now { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.en-bars { height: 120px; display: flex; align-items: flex-end; }
+.en-bars span { flex: 1; min-height: 3px; border-radius: 3px 3px 1px 1px; background: var(--blue); transition: height .45s cubic-bezier(.22,.8,.24,1), background-color .3s; }
+.en-bars span.cur { background: #22D3EE; box-shadow: 0 0 14px rgba(34,211,238,.6); }
+.en-bars span.none { background: var(--surf2); }
+.en-axis { display: flex; justify-content: space-between; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px; color: var(--text3); }
+.en-split { border-radius: 20px; background: var(--surf); border: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.en-split .stack { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; }
+.en-split .legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
+.en-split .legend div { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.en-split .legend i { width: 10px; height: 10px; border-radius: 3px; }
+.en-split .legend span { flex: 1; }
+.en-split .legend b { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 400; color: var(--text2); }
+.chips { display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px; padding: 0 16px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chips button { flex-shrink: 0; height: 40px; padding: 0 16px; border-radius: 999px; font-size: 13px; font-weight: 500; background: var(--surf); color: var(--text2); border: 1px solid var(--line); transition: background-color .2s; }
+.chips button.on { background: rgba(34,211,238,.12); color: var(--cyanText); border-color: rgba(34,211,238,.45); }
+.rh-card { border-radius: 20px; background: var(--surf); border: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.seg.small { border-radius: 12px; padding: 3px; }
+.seg.small button { height: 34px; border-radius: 9px; font-size: 12px; }
+.rh-now { display: flex; justify-content: space-between; align-items: baseline; }
+.rh-now b { font-size: 26px; font-weight: 300; font-variant-numeric: tabular-nums; }
+.rh-now span { font-size: 12px; color: var(--text2); }
+.rh-chart { width: 100%; height: 110px; display: block; }
+.rh-chart .line { fill: none; stroke: #22D3EE; stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.rh-chart .area { fill: rgba(34,211,238,.08); stroke: none; }
+.rh-chart .norm { stroke: var(--text2); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.rh-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; border-top: 1px solid var(--surf2); padding-top: 12px; }
+.rh-stats div { display: flex; flex-direction: column; gap: 2px; }
+.rh-stats small { font-size: 11px; color: var(--text3); }
+.rh-stats b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
