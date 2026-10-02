@@ -410,7 +410,7 @@
     const c = set.counts;
     return [
       { title: "Дом", rows: [
-        { icon: "layout", name: "Планировка и устройства", sub: "Нарисовать комнаты, расставить устройства", go: "soon" },
+        { icon: "layout", name: "Планировка и устройства", sub: "Нарисовать комнаты, расставить устройства", go: "editor" },
         { icon: "cycle", name: "Автоматика и нормы", sub: "Свет по движению, ночная подсветка, нормы", go: "automation" },
         { icon: "scenes", name: "Сценарии и расписания",
           sub: c ? plural(c.scenes, "сценарий", "сценария", "сценариев") + " · " + plural(c.schedulesOn, "расписание включено", "расписания включены", "расписаний включено") : "…", go: "scenes" },
@@ -472,7 +472,7 @@
     const row = e.target.closest("[data-go]");
     if (!row) return;
     const go = row.dataset.go;
-    if (go === "scenes" || go === "automation") { window.JV.show(go); return; }
+    if (go === "scenes" || go === "automation" || go === "editor") { window.JV.show(go); return; }
     if (go === "watch" && window.JarvisApp && window.JarvisApp.watch) {
       if (window.JarvisApp.watching()) {
         window.JarvisApp.unwatch();
