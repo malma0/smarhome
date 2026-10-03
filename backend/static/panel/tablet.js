@@ -11,6 +11,7 @@
   const SCENE_ICONS = { "я ушёл": "exit", "я дома": "home", "спокойной ночи": "moon", "доброе утро": "sunrise" };
   const pad = (n) => (n < 10 ? "0" : "") + n;
   const tb = { aside: null, rooms: null, scenes: [], lastRun: "", loadedAt: 0 };
+  function paint(node, html) { if (node._html !== html) { node._html = html; node.innerHTML = html; } }  // only what changed
 
   function make(cls) {
     const node = document.createElement("div");
@@ -25,7 +26,7 @@
     const guard = h.house && h.house.devices.find((d) => d.type === "security");
     const armed = !!(guard && guard.on);
     const latest = tb.lastRun || (tb.scenes.filter((x) => x.last).sort((a, b) => new Date(b.last) - new Date(a.last))[0] || {}).id;
-    tb.aside.innerHTML = `<div style="display:flex;flex-direction:column;gap:2px">
+    paint(tb.aside, `<div style="display:flex;flex-direction:column;gap:2px">
         <span class="clock">${pad(now.getHours())}:${pad(now.getMinutes())}</span>
         <span class="day">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS[now.getMonth()]}</span>
         <span class="weather"><i>${icon("cloud", 18)}</i>${esc(($("weatherT").textContent || "—") + " · " + ($("weatherW").textContent || ""))}</span></div>
@@ -37,7 +38,7 @@
         <i>${icon(x.icon || SCENE_ICONS[x.name.toLowerCase()] || "play", 20)}</i><span>${esc(x.name)}</span></button>`).join("") +
       `</div></div><span style="flex:1"></span>
       <button class="talk jv-press" aria-label="Говорить с Jarvis" data-tab-talk><span class="mini-orb"><span class="h"></span><span class="b"></span></span>
-        <span><b>Скажи «Jarvis»</b><small>или нажми</small></span></button>`;
+        <span><b>Скажи «Jarvis»</b><small>или нажми</small></span></button>`);
   }
 
   function drawRooms() {
@@ -48,7 +49,7 @@
     const summary = h.offline ? "Нет связи — показаны последние данные"
       : dangers.length ? "Тревога: " + dangers.join(", ")
         : "Всё в норме" + (windows.length ? " · окно открыто: " + windows.join(", ") : "");
-    tb.rooms.innerHTML = `<div style="display:flex;flex-direction:column;gap:4px"><h1>Квартира</h1><span class="sum">${esc(summary)}</span></div><div class="list">` +
+    paint(tb.rooms, `<div style="display:flex;flex-direction:column;gap:4px"><h1>Квартира</h1><span class="sum">${esc(summary)}</span></div><div class="list">` +
       rooms.map((r) => {
         const v = (k) => (r.readings[k] ? parseFloat(r.readings[k].value) : null);
         const t = v("temperature"), hum = v("humidity"), co2 = v("carbon_dioxide");
@@ -58,7 +59,7 @@
           <span class="nums">${hum != null ? `<span>${Math.round(hum)}%</span>` : ""}${co2 != null ? `<span class="${co2 > co2Max ? "warn" : ""}">CO₂ ${Math.round(co2)}</span>` : ""}</span>
           <small class="${on ? "on" : ""}">${on ? "Включено: " + on : "Всё выключено"}</small></span>
           <span class="t">${t != null ? String(t.toFixed(1)).replace(".", ",") + "°" : "—"}</span><span class="chev">${icon("chev", 18)}</span></button>`;
-      }).join("") + `</div>`;
+      }).join("") + `</div>`);
   }
 
   async function loadScenes() {

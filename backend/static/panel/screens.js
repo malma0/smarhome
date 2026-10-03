@@ -14,6 +14,12 @@
   }
 
   const pad = (n) => (n < 10 ? "0" : "") + n;
+  /** A screen redrawn only when it changed: the 5-second refresh would restart every animation and lose taps. */
+  function paint(node, html) {
+    if (node._html === html) return;
+    node._html = html;
+    node.innerHTML = html;
+  }
   const plural = (n, one, few, many) => {
     const t = n % 10, h = n % 100;
     return n + " " + (t === 1 && h !== 11 ? one : t >= 2 && t <= 4 && (h < 12 || h > 14) ? few : many);
@@ -87,7 +93,7 @@
     const s = scenes;
     let html = `<div class="scr-head"><h1>Сценарии</h1><span>Одним касанием или голосом: «Jarvis, я ушёл»</span></div>`;
     if (!s.list) {
-      s.node.innerHTML = html + `<p class="scr-empty">Загружаю…</p>`;
+      paint(s.node, html + `<p class="scr-empty">Загружаю…</p>`);
       return;
     }
     const builtIn = s.list.filter((x) => !x.steps), mine = s.list.filter((x) => x.steps);
@@ -117,7 +123,7 @@
             <button data-menu="delete"><span>${icon("close", 20)}</span>Удалить</button></div></div>`;
     }
     if (s.ask) html += askHtml(s.ask);
-    s.node.innerHTML = html;
+    paint(s.node, html);
   }
 
   /** The design's confirm dialog: {title, text, yes, act}. */
@@ -333,7 +339,7 @@
     });
     html += `</div></section><section style="display:flex;flex-direction:column;gap:10px"><div class="scr-h2"><h2>Журнал</h2></div>` +
       journalHtml(sec.data) + `</section>`;
-    sec.node.innerHTML = html;
+    paint(sec.node, html);
   }
 
   async function loadSecurity() {
@@ -452,7 +458,7 @@
     html += `<section style="display:flex;flex-direction:column;gap:10px"><div class="scr-h2"><h2>История по комнатам</h2></div>
       <div class="chips">${rooms.map((r) => `<button class="${r.name === en.room ? "on" : ""}" aria-pressed="${r.name === en.room}" data-room="${esc(r.name)}">${esc(r.name)}</button>`).join("")}</div>
       <div class="rh-card">${seg(METRICS.map((m) => [m.key, m.label]), en.metric, "metric", "small")}${roomChartHtml(rooms)}</div></section>`;
-    en.node.innerHTML = html;
+    paint(en.node, html);
   }
 
   async function loadEnergy() {
@@ -535,7 +541,7 @@
       <div class="seg small" role="group" aria-label="Тема оформления">${[["dark", "Тёмная"], ["light", "Светлая"], ["auto", "Как в системе"]].map((m) =>
         `<button class="${theme === m[0] ? "on" : ""}" aria-pressed="${theme === m[0]}" data-pick-theme="${m[0]}">${m[1]}</button>`).join("")}</div></div></section>`;
     html += `<span class="version">Jarvis · пульт 0.2</span>`;
-    set.node.innerHTML = html;
+    paint(set.node, html);
   }
 
   async function loadSettings() {
@@ -626,7 +632,7 @@
           <div class="btns"><button class="jv-press" aria-label="${n.name}: меньше" data-norm="${n.kind}:-1">${icon("minus", 16)}</button>
           <button class="jv-press" aria-label="${n.name}: больше" data-norm="${n.kind}:1">${icon("plus", 16)}</button></div></div>`;
       }).join("") + `</div><span class="au-note">Ставит одно значение всем комнатам. Свою норму комнате — в её панели на плане. При выходе за норму дом сам включает отопление, кондиционер, вентиляцию или увлажнитель.</span></section>`;
-    au.node.innerHTML = html;
+    paint(au.node, html);
   }
 
   async function loadAutomation() {

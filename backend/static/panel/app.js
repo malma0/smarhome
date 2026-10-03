@@ -128,6 +128,9 @@
   // ---------------------------------------------------------------- small helpers
 
   const $ = (id) => document.getElementById(id);
+  // a label written only when it changed - the 5-second refresh shouldn't touch an unchanged page
+  const setText = (el, v) => { if (el.textContent !== v) el.textContent = v; };
+  const setHtml = (el, v) => { if (el._html !== v) { el._html = v; el.innerHTML = v; } };
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const num = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
   const ru1 = (n) => (Math.round(n * 10) / 10).toFixed(1).replace(".", ",");
@@ -313,8 +316,8 @@
       const r = state.rooms.find((x) => x.name === el.dataset.room);
       if (!r) return;
       const t = num(reading(r, "temperature")), h = num(reading(r, "humidity"));
-      el.querySelector(".t").textContent = state.offline || t === null ? "—" : ru1(t) + "°";
-      el.querySelector(".h").textContent = state.offline || h === null ? "" : Math.round(h) + "%";
+      setText(el.querySelector(".t"), state.offline || t === null ? "—" : ru1(t) + "°");
+      setText(el.querySelector(".h"), state.offline || h === null ? "" : Math.round(h) + "%");
       el.classList.toggle("dim", !!focus && focus !== r.name);
       el.classList.toggle("focus", focus === r.name);
       el.classList.toggle("alarm", dangersOf(r).length > 0);
@@ -352,15 +355,15 @@
     const now = new Date();
     const days = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
     const months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
-    $("date").textContent = `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} · ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    setText($("date"), `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} · ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
     const summary = $("summary");
     const alarms = [];
     state.rooms.forEach((r) => dangersOf(r).forEach((k) => alarms.push((DANGER[k] || k) + " " + at(r.name))));
-    if (state.offline) { summary.textContent = "Нет связи — показаны последние данные"; summary.className = "summary warn"; }
-    else if (alarms.length) { summary.textContent = "Тревога: " + alarms.join(", "); summary.className = "summary alarm"; }
+    if (state.offline) { setText(summary, "Нет связи — показаны последние данные"); summary.className = "summary warn"; }
+    else if (alarms.length) { setText(summary, "Тревога: " + alarms.join(", ")); summary.className = "summary alarm"; }
     else {
       const moving = state.rooms.filter((r) => reading(r, "motion")).map((r) => at(r.name));
-      summary.textContent = "Всё спокойно" + (moving.length ? " · движение " + moving.join(" и ") : "");
+      setText(summary, "Всё спокойно" + (moving.length ? " · движение " + moving.join(" и ") : ""));
       summary.className = "summary";
     }
     $("bellDot").hidden = !alarms.length;
@@ -369,17 +372,17 @@
     const card = $("armCard");
     card.classList.toggle("armed", armed);
     card.setAttribute("aria-pressed", armed ? "true" : "false");
-    $("armIcon").innerHTML = icon(armed ? "shieldok" : "shield", 20);
-    $("armTxt").textContent = state.offline || !guard ? "—" : armed ? "Под охраной" : "Снята";
+    setHtml($("armIcon"), icon(armed ? "shieldok" : "shield", 20));
+    setText($("armTxt"), state.offline || !guard ? "—" : armed ? "Под охраной" : "Снята");
     const hs = (state.house && state.house.house) || {};
     const watts = hs.power_now ? num(hs.power_now.value) : null;
     const today = hs.electricity_today ? num(hs.electricity_today.value) : null;
-    $("powerNow").textContent = state.offline || watts === null ? "— кВт" : ru1(watts / 1000) + " кВт";
-    $("powerDay").textContent = state.offline || today === null ? "нет данных" : ru1(today) + " кВт·ч сегодня";
+    setText($("powerNow"), state.offline || watts === null ? "— кВт" : ru1(watts / 1000) + " кВт");
+    setText($("powerDay"), state.offline || today === null ? "нет данных" : ru1(today) + " кВт·ч сегодня");
     const w = state.weather;
     const temp = w && num(w.temperature);
-    $("weatherT").textContent = temp === null || temp === undefined ? "—" : (temp > 0 ? "+" : "") + Math.round(temp) + "°";
-    $("weatherW").textContent = (w && w.weather) || "";
+    setText($("weatherT"), temp === null || temp === undefined ? "—" : (temp > 0 ? "+" : "") + Math.round(temp) + "°");
+    setText($("weatherW"), (w && w.weather) || "");
     $("offline").hidden = !state.offline;
     $("app").classList.toggle("muted-app", state.offline);
   }
@@ -804,6 +807,7 @@
     refresh().then(loadLayout);
     loadWeather();
     setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });  // back from the background: fresh at once
     setInterval(() => { drawHeader(); placePlanIfHeaderMoved(); }, 20000);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(placePlanIfHeaderMoved);  // Onest is taller than the fallback
     setInterval(loadWeather, 10 * 60 * 1000);
