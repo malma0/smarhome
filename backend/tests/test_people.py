@@ -157,3 +157,28 @@ def test_the_voices_shown_are_the_model_jarvis_recognizes_with(tmp_path):
     finally:
         object.__setattr__(settings, "speaker_model", was)
         speaker_id.configure("resemblyzer")
+
+
+def test_the_app_sees_sets_and_cancels_reminders_and_the_shopping_list(client, tmp_path):
+    from app.reminders import ReminderStore
+
+    owner = {"X-Pin": PIN}
+    client.post("/api/residents", headers=owner, json={"name": "Эля"})
+    at = (datetime.now().astimezone() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+    made = client.post("/api/reminders", headers=owner, json={"text": "купить хлеб", "at": at, "who": "Эля"}).json()
+    assert made["added"]["for"] == "Эля" and [r["text"] for r in made["reminders"]] == ["купить хлеб"]
+    client.post("/api/reminders", headers=owner, json={"kind": "timer", "in_seconds": 600})
+    assert "error" in client.post("/api/reminders", headers=owner, json={"text": "x", "at": "2020-01-01T08:00"}).json()
+    seen = client.get("/api/reminders?who=Эля", headers=owner).json()
+    assert [t["text"] for t in seen["timers"]] == ["Таймер на 10 минут"] and len(seen["reminders"]) == 1
+    rid = seen["reminders"][0]["id"]
+    assert client.delete(f"/api/reminders/{rid}", headers=owner).json()["reminders"] == []
+    # "Стоп" from the phone
+    store = ReminderStore(connect(str(tmp_path / "t.db")))
+    ring = store.rang(store.pending()[0], datetime.now().astimezone())
+    assert client.post("/api/reminders/stop", headers=owner, json={"ring": ring}).json() == {"stopped": True}
+    assert store.stopped_rings([ring]) == {ring}
+    # the shopping list
+    assert client.post("/api/shopping", headers=owner, json={"action": "add", "items": ["молоко", "хлеб"]}).json()["items"] == ["молоко", "хлеб"]
+    assert client.post("/api/shopping", headers=owner, json={"action": "remove", "items": ["молоко"]}).json()["items"] == ["хлеб"]
+    assert client.get("/api/shopping", headers=owner).json()["items"] == ["хлеб"]

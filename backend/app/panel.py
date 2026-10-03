@@ -665,12 +665,78 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         from app import reminders
 
         try:
-            if "reminders" not in state:
-                state["reminders"] = reminders.ReminderStore(agent().memory.connection)
-            rang = state["reminders"].rings_since(datetime.now().astimezone() - RINGS_SHOWN)
+            rang = reminder_store().rings_since(datetime.now().astimezone() - RINGS_SHOWN)
         except Exception:  # noqa: BLE001 - no database to read: the dangers still go out
             return []
         return [r for r in rang if not who or r["resident"] in reminders.NOBODY or r["resident"] == who]
+
+    def reminder_store():
+        from app import reminders
+
+        if "reminders" not in state:  # on this thread, with the agent's database connection
+            state["reminders"] = reminders.ReminderStore(agent().memory.connection)
+        return state["reminders"]
+
+    @app.post("/api/reminders/stop", dependencies=[api])
+    async def stop_ring(body: dict):
+        """{ring}: "Стоп" on the phone's notification - the chime at home goes quiet."""
+        try:
+            return {"stopped": reminder_store().stop_ring(int(body.get("ring")))}
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Нужен номер звонка.") from None
+
+    @app.get("/api/reminders", dependencies=[api])
+    async def reminders_view(who: str = ""):
+        """What's set: reminders and timers - the phone owner's and no one's in particular (all, for a phone nobody's)."""
+        from app import reminders
+
+        now = datetime.now().astimezone()
+        mine = resident_of(who) if who else ""
+        items = [reminders.public(r, now) for r in reminder_store().pending()
+                 if not mine or r["resident_id"] in reminders.NOBODY or r["resident_id"] == mine]
+        return {"reminders": [i for i in items if i["kind"] == "reminder"], "timers": [i for i in items if i["kind"] == "timer"]}
+
+    @app.post("/api/reminders", dependencies=[api])
+    async def add_reminder(body: dict):
+        """{kind, text, at 'YYYY-MM-DDTHH:MM' | in_seconds, repeat, for, who} - the same as said aloud."""
+        from app import reminders
+        from app.tools.registry import TurnContext
+
+        handler = reminders.make_handler(reminder_store(), residents=agent().memory.list_resident_ids)
+        fields = {k: body.get(k) for k in ("kind", "text", "at", "in_seconds", "repeat", "for") if body.get(k) not in (None, "")}
+        result = await handler({"action": "add", **fields}, TurnContext(resident=resident_of(body.get("who"))))
+        if "error" in result:
+            return {"error": reminders.russian_error(result["error"])}
+        return {"added": result["added"], **(await reminders_view(str(body.get("who") or "")))}
+
+    @app.delete("/api/reminders/{reminder_id}", dependencies=[api])
+    async def cancel_reminder(reminder_id: int, who: str = ""):
+        reminder_store().mark_done(reminder_id)
+        return await reminders_view(who)
+
+    def shopping_handler():
+        from app import shopping
+
+        if "shopping" not in state:
+            state["shopping"] = shopping.make_handler(shopping.ShoppingList(agent().memory.connection))
+        return state["shopping"]
+
+    @app.get("/api/shopping", dependencies=[api])
+    async def shopping_view():
+        from app.tools.registry import TurnContext
+
+        return await shopping_handler()({"action": "list"}, TurnContext())
+
+    @app.post("/api/shopping", dependencies=[api])
+    async def change_shopping(body: dict):
+        """{action: add | remove | clear, items: [...]} - the house's one list, the same as by voice."""
+        from app.tools.registry import TurnContext
+
+        action = str(body.get("action") or "")
+        if action not in ("add", "remove", "clear"):
+            return {"error": "Не понял, что сделать со списком."}
+        result = await shopping_handler()({"action": action, "items": body.get("items") or []}, TurnContext())
+        return {"error": "Напиши, что добавить."} if "error" in result else result
 
     def resident_of(who) -> str:
         """The phone's owner, if that's a resident; otherwise the panel speaks as no one in particular."""
