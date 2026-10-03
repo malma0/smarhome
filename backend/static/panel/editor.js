@@ -17,6 +17,19 @@
     drag: null, scale: 1, size: { w: 350, h: 540 }, start: false, done: false, dirty: false, firstTime: false,
   };
   const snap = (v) => Math.round(v / SNAP) * SNAP;
+  const STICK = 14;  // a wall this near another room's wall lands on it
+  /** v on the grid - or on the nearest wall of another room along that axis, when it's within STICK. */
+  function stick(v, axis, except) {
+    let best = null;
+    Object.keys(ed.plan.rooms).forEach((name) => {
+      if (name === except) return;
+      const r = ed.plan.rooms[name];
+      (axis === "x" ? [r.x, r.x + r.w] : [r.y, r.y + r.h]).forEach((edge) => {
+        if (Math.abs(edge - v) <= STICK && (best === null || Math.abs(edge - v) < Math.abs(best - v))) best = edge;
+      });
+    });
+    return best !== null ? best : snap(v);
+  }
   const metres = (v) => String((v / UNIT).toFixed(1)).replace(".", ",");
   const roomNames = () => ed.rooms.map((r) => r.name);
 
@@ -165,6 +178,18 @@
 
   // ---------------------------------------------------------------- the first time: start empty or from the sketch; the end
 
+  /** "Не нарисованы: ..." - save anyway, or go on drawing. */
+  function drawAsk() {
+    let box = ed.node.querySelector(".ed-ask");
+    if (!ed.askMissing) { if (box) box.remove(); return; }
+    if (!box) { box = document.createElement("div"); box.className = "ed-ask"; ed.node.appendChild(box); }
+    const n = ed.askMissing.length;
+    box.innerHTML = `<button class="scrim" data-ask-no aria-label="Продолжить рисовать"></button><div class="ask" role="alertdialog">
+      <div style="display:flex;flex-direction:column;gap:8px"><h2>${n === 1 ? "Одна комната не нарисована" : "Не нарисованы " + n + " комнаты"}</h2>
+      <p>${esc(ed.askMissing.join(", "))} — на главном экране ${n === 1 ? "она встанет" : "они встанут"} рядом под планом. Можно дорисовать сейчас или позже.</p></div>
+      <button class="yes jv-press" data-ask-no>Дорисовать</button><button class="no jv-press" data-ask-yes>Сохранить так</button></div>`;
+  }
+
   function drawStart() {
     const o = ed.node.querySelector(".ed-overlay");
     if (ed.start) {
@@ -213,6 +238,14 @@
     const len = kind === "door" ? DOOR : WINDOW;
     if (wall.to - wall.from < len) { toast("Стена слишком короткая", true); return; }
     const a = Math.min(Math.max(snap(wall.pos - len / 2), wall.from), wall.to - len);
+    const list = kind === "door" ? ed.plan.doors : ed.plan.windows;
+    const taken = list.findIndex((x) => x[0] === wall.dir && Math.abs(x[1] - wall.along) < 2 && x[2] < a + len && a < x[3]);
+    if (taken >= 0) {  // a tap where one already is: that one, not a second on top of it
+      ed.sel = { kind, i: taken };
+      toast(kind === "door" ? "Здесь уже есть дверь" : "Здесь уже есть окно");
+      draw();
+      return;
+    }
     remember();
     if (kind === "door") {
       ed.plan.doors.push([wall.dir, wall.along, a, a + len]);
@@ -288,7 +321,8 @@
       ed.drag = { kind: "dev", key, dx: pt.x - xy[0], dy: pt.y - xy[1] };
     } else if (ed.tool === "room") {
       if (!ed.rooms.some((r) => !ed.plan.rooms[r.name])) { toast("Все комнаты дома уже на плане"); return; }
-      ed.drag = { kind: "draw", x0: snap(pt.x), y0: snap(pt.y), rect: { x: snap(pt.x), y: snap(pt.y), w: 0, h: 0 } };
+      const x0 = stick(pt.x, "x"), y0 = stick(pt.y, "y");
+      ed.drag = { kind: "draw", x0, y0, rect: { x: x0, y: y0, w: 0, h: 0 } };
     } else if (ed.tool === "door" || ed.tool === "window") {
       addSegment(pt, ed.tool);
       return;
@@ -317,11 +351,16 @@
     const pt = toPlan(e);
     const p = ed.plan;
     if (d.kind === "draw") {
-      const x = snap(pt.x), y = snap(pt.y);
+      const x = stick(pt.x, "x"), y = stick(pt.y, "y");
       d.rect = { x: Math.min(d.x0, x), y: Math.min(d.y0, y), w: Math.abs(x - d.x0), h: Math.abs(y - d.y0) };
     } else if (d.kind === "move") {
       const r = p.rooms[d.name];
-      const nx = Math.max(0, snap(pt.x - d.dx)), ny = Math.max(0, snap(pt.y - d.dy));
+      // the room's left or right wall, top or bottom, whichever comes near a neighbour's
+      let nx = stick(pt.x - d.dx, "x", d.name), ny = stick(pt.y - d.dy, "y", d.name);
+      const rx = stick(pt.x - d.dx + r.w, "x", d.name), by = stick(pt.y - d.dy + r.h, "y", d.name);
+      if (Math.abs(rx - (pt.x - d.dx + r.w)) < Math.abs(nx - (pt.x - d.dx))) nx = rx - r.w;
+      if (Math.abs(by - (pt.y - d.dy + r.h)) < Math.abs(ny - (pt.y - d.dy))) ny = by - r.h;
+      nx = Math.max(0, nx); ny = Math.max(0, ny);
       const dx = nx - r.x, dy = ny - r.y;
       if (!dx && !dy) return;
       d.moved = true;
@@ -329,8 +368,8 @@
       Object.keys(p.devices).forEach((k) => { if (k.split("|")[0] === d.name) { p.devices[k][0] += dx; p.devices[k][1] += dy; } });
     } else if (d.kind === "resize") {
       const r = p.rooms[d.name];
-      r.w = Math.max(MIN_ROOM, snap(pt.x - r.x));
-      r.h = Math.max(MIN_ROOM, snap(pt.y - r.y));
+      r.w = Math.max(MIN_ROOM, stick(pt.x, "x", d.name) - r.x);
+      r.h = Math.max(MIN_ROOM, stick(pt.y, "y", d.name) - r.y);
     } else if (d.kind === "dev") {
       const room = d.key.split("|")[0];
       p.devices[d.key] = clampInto(room, pt.x - d.dx, pt.y - d.dy);
@@ -404,7 +443,8 @@
     ed.start = !l.custom;
     ed.firstTime = !l.custom;
     ed.done = false;
-    ed.undo = []; ed.redo = []; ed.sel = null; ed.drag = null; ed.dirty = false;
+    ed.undo = []; ed.redo = []; ed.sel = null; ed.drag = null; ed.dirty = false; ed.askMissing = null; ed.confirmedMissing = false;
+    drawAsk();
     ed.mode = "rooms"; ed.tool = "move";
     ed.plan.doors = ed.plan.doors || []; ed.plan.windows = ed.plan.windows || []; ed.plan.devices = ed.plan.devices || {};
     drawStart();
@@ -415,6 +455,13 @@
     const unnamed = Object.keys(ed.plan.rooms).filter((n) => roomNames().indexOf(n) < 0);
     if (!Object.keys(ed.plan.rooms).length) { toast("Нарисуй хотя бы одну комнату", true); return; }
     if (unnamed.length) { toast("Выбери название каждой комнате", true); return; }
+    const missing = ed.rooms.filter((r) => !ed.plan.rooms[r.name]).map((r) => r.name);
+    if (missing.length && !ed.confirmedMissing) {
+      ed.askMissing = missing;
+      drawAsk();
+      return;
+    }
+    ed.confirmedMissing = false;
     try {
       const r = await api("PUT", "/api/layout", { layout: ed.plan });
       if (r.error) { toast(r.error, true); return; }
@@ -442,6 +489,11 @@
   });
   ed.node.addEventListener("click", (e) => {
     const t = e.target;
+    if (ed.askMissing) {
+      if (t.closest("[data-ask-yes]")) { ed.askMissing = null; drawAsk(); ed.confirmedMissing = true; save(); }
+      else if (t.closest("[data-ask-no]")) { ed.askMissing = null; drawAsk(); ed.tool = "room"; draw(); }
+      return;
+    }
     if (t.closest("[data-cancel]")) { window.JV.show("sliders"); return; }
     if (t.closest("[data-done]")) { save(); return; }
     if (t.closest("[data-finish]")) { ed.done = false; drawStart(); window.JV.show("home"); return; }
