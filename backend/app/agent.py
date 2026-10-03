@@ -271,11 +271,14 @@ def build_default_agent() -> JarvisAgent:
     from app import reminders
     from app.domains import weather
 
-    reminders.register(tools, reminders.ReminderStore(memory.connection), residents=memory.list_resident_ids)
-    from app import shopping
+    reminder_store = reminders.ReminderStore(memory.connection)
+    reminders.register(tools, reminder_store, residents=memory.list_resident_ids)
+    from app import briefing, shopping
     from app.domains import booking, currency, radio, web_answer
 
-    shopping.register(tools, shopping.ShoppingList(memory.connection))
+    shopping_list = shopping.ShoppingList(memory.connection)
+    shopping.register(tools, shopping_list)
+    briefing.register(tools, reminder_store, shopping_list, weather.make_handler(settings.weather_city))  # "что у меня сегодня?"
     from app import notes
 
     notes.register(tools, memory)  # "запомни, что я пью кофе без сахара"
