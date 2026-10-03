@@ -40,10 +40,11 @@
   function fitCanvas() {
     const app = document.getElementById("app");
     const height = parseFloat(app.style.height) || 844;
-    const availW = 390 - 24, availH = height - AREA_TOP - SHEET - 16;
+    const width = ed.node.offsetWidth || 390;  // the phone's 390 points, or the tablet's column
+    const availW = width - 24, availH = height - AREA_TOP - SHEET - 16;
     ed.size = canvasSize();
     ed.scale = Math.min(availW / ed.size.w, availH / ed.size.h);
-    const left = (390 - ed.size.w * ed.scale) / 2, top = AREA_TOP + 8 + (availH - ed.size.h * ed.scale) / 2;
+    const left = (width - ed.size.w * ed.scale) / 2, top = AREA_TOP + 8 + (availH - ed.size.h * ed.scale) / 2;
     const canvas = ed.node.querySelector(".ed-canvas");
     canvas.style.transform = `translate(${left.toFixed(1)}px, ${top.toFixed(1)}px) scale(${ed.scale.toFixed(4)})`;
     const plan = ed.node.querySelector(".ed-plan");
@@ -368,7 +369,7 @@
     const [room, type] = key.split("|");
     if (!ed.plan.rooms[room]) { toast("Сначала нарисуй комнату «" + room + "»", true); return; }
     const app = document.getElementById("app");
-    const k = app.getBoundingClientRect().width / 390;  // the screen's own scale
+    const k = app.getBoundingClientRect().width / app.offsetWidth;  // the screen's own scale
     const ghost = document.createElement("div");
     ghost.className = "ed-ghost";
     ghost.innerHTML = `<i>${icon(window.JV.devIcon(type), 17)}</i><span>${esc(window.JV.devName(type))} → ${esc(room)}</span>`;

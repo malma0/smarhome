@@ -168,17 +168,25 @@
   // ---------------------------------------------------------------- the canvas: the mockup's 390 points, scaled to the screen
 
   let H = 844;
+  // A tablet on its side (the iPad on the wall) gets the design's 1280-point tablet layout:
+  // the nav on the left, the house's numbers and scenarios beside it, the plan, a room on the right.
+  let tablet = false, canvasW = CANVAS_W;
+  const TABLET_W = 1280, TABLET_PLAN = { left: 360, right: 864 };
   function fit() {
-    const scale = window.innerWidth / CANVAS_W;
+    tablet = window.innerWidth > window.innerHeight && window.innerWidth >= 900;
+    canvasW = tablet ? TABLET_W : CANVAS_W;
+    $("root").setAttribute("data-layout", tablet ? "tablet" : "phone");
+    const scale = window.innerWidth / canvasW;
     H = Math.round(window.innerHeight / scale);
     const app = $("app");
+    app.style.width = canvasW + "px";
     app.style.height = H + "px";
     app.style.transform = "scale(" + scale + ")";
     $("sheetWrap").style.height = sheetH() + "px";
     $("orb").style.bottom = "98px";
     placePlan();
   }
-  const sheetH = () => Math.round(H * 0.535);
+  const sheetH = () => (tablet ? H - 32 : Math.round(H * 0.535));  // the tablet's room: a panel on the right, full height
 
   // ---------------------------------------------------------------- the house -> rooms with places on the plan
 
@@ -265,6 +273,14 @@
     const g = state.geometry;
     if (!g) return;
     const stage = $("stage");
+    if (tablet) {  // the middle column; a room is opened on the right, the plan stays put
+      const w = TABLET_PLAN.right - TABLET_PLAN.left - 48, h = H - 64;
+      const s = Math.min(1.6, w / g.width, h / g.height);
+      const left = TABLET_PLAN.left + 24 + (w - g.width * s) / 2, top = 32 + (h - g.height * s) / 2;
+      stage.style.transitionDuration = "500ms";
+      stage.style.transform = `translate(${left.toFixed(1)}px, ${top.toFixed(1)}px) scale(${s.toFixed(3)})`;
+      return;
+    }
     const room = state.room && g.placed[state.room];
     if (room) {
       const visTop = 96, visBottom = H - sheetH() - 8;
@@ -612,7 +628,7 @@
     state.room = name;
     state.last = name;
     $("app").classList.add("zoomed");
-    $("zoomOut").hidden = false;
+    $("zoomOut").hidden = tablet;  // on the tablet another room is a tap away on the plan
     drawSheet();
     drawPlanState();
     placePlan();
@@ -813,7 +829,8 @@
   }
   // what screens.js builds on: one way to ask the server, one toast, one icon set
   window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; },
-    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }), refresh: () => refresh(), listen: (fn) => listeners.push(fn), pin: () => pin,
+    house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }), refresh: () => refresh(), listen: (fn) => listeners.push(fn), pin: () => pin, tablet: () => tablet,
+    openRoom: (name) => openRoom(name),
     layout: () => ({ plan: JSON.parse(JSON.stringify(layout)), custom: customLayout, sketch: sketch(), rooms: state.rooms }),
     setLayout: applyLayout, devName: (t) => NAMES[TYPE[t]] || t, devIcon: (t) => TYPE[t] || "power",
     theme: (chosen) => { if (chosen) { store.set("jarvis-panel-theme", chosen); applyTheme(); } return store.get("jarvis-panel-theme") || "auto"; } };

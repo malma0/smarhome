@@ -852,3 +852,85 @@ body { -webkit-text-size-adjust: 100%; }
 .sd-guard { display: flex; align-items: center; gap: 10px; padding: 4px 4px 0; }
 .sd-guard i { color: var(--text3); display: flex; }
 .sd-guard span { font-size: 13px; line-height: 18px; color: var(--text2); }
+
+/* ---------- the tablet on its side (TabletHome / TabletAlarm): app.js sets data-layout ---------- */
+.tab-aside, .tab-rooms { display: none; }
+[data-layout="tablet"] .header, [data-layout="tablet"] #orb, [data-layout="tablet"] .back, [data-layout="tablet"] .zoom-out { display: none; }
+[data-layout="tablet"] .ambient { left: 260px; top: 40px; width: 720px; height: 720px; }
+/* the nav: a column on the left */
+[data-layout="tablet"] .nav { left: 0; top: 0; bottom: 0; right: auto; width: 88px; height: auto; padding: 28px 8px; display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--bg); border-top: 0; border-right: 1px solid var(--line); transform: none !important; }
+[data-layout="tablet"] .nav button { width: 72px; height: 68px; flex: none; border-radius: 18px; gap: 5px; }
+[data-layout="tablet"] .nav button.cur { background: rgba(34,211,238,.08); }
+[data-layout="tablet"] .nav button .bar { top: 22px; left: -8px; width: 3px; height: 24px; border-radius: 2px; }
+/* the house beside it */
+[data-layout="tablet"] .tab-aside { position: absolute; left: 88px; top: 0; bottom: 0; width: 272px; padding: 28px 20px 24px 28px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px; }
+.tab-aside .clock { font-size: 76px; line-height: 80px; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.tab-aside .day { font-size: 15px; color: var(--text2); }
+.tab-aside .weather { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 14px; color: var(--text); }
+.tab-aside .weather i { color: var(--text2); display: flex; }
+.tab-aside .tcard { height: 68px; border-radius: 18px; background: var(--surf); border: 1px solid var(--line); padding: 0 16px; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color .3s; }
+.tab-aside .tcard i { display: flex; color: var(--text2); }
+.tab-aside .tcard.power i { color: #22D3EE; }
+.tab-aside .tcard span { display: flex; flex-direction: column; gap: 1px; }
+.tab-aside .tcard small { font-size: 12px; color: var(--text2); }
+.tab-aside .tcard b { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tab-aside .tcard.armed { background: var(--blue); border-color: rgba(125,211,252,.45); }
+.tab-aside .tcard.armed i, .tab-aside .tcard.armed small { color: rgba(255,255,255,.85); }
+.tab-aside .lbl { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text3); }
+.tab-aside .tscenes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tab-aside .tscene { height: 76px; border-radius: 18px; background: var(--surf); border: 1px solid var(--line); padding: 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; text-align: left; transition: background-color .3s, border-color .3s; }
+.tab-aside .tscene i { color: var(--text2); display: flex; }
+.tab-aside .tscene span { font-size: 13px; line-height: 16px; font-weight: 500; }
+.tab-aside .tscene.on { background: rgba(47,91,234,.16); border-color: rgba(34,211,238,.45); }
+.tab-aside .tscene.on i { color: #22D3EE; }
+.tab-aside .talk { height: 64px; border-radius: 999px; background: var(--surf); border: 1px solid var(--line); padding: 0 20px 0 8px; display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.tab-aside .talk .mini-orb { position: relative; width: 48px; height: 48px; flex-shrink: 0; }
+.tab-aside .talk .mini-orb span { position: absolute; border-radius: 50%; }
+.tab-aside .talk .mini-orb .h { inset: -8px; background: radial-gradient(circle, rgba(34,211,238,.5) 0%, rgba(47,91,234,.2) 45%, rgba(47,91,234,0) 70%); animation: jvHalo 4.2s ease-in-out infinite; will-change: transform, opacity; }
+.tab-aside .talk .mini-orb .b { inset: 0; background: radial-gradient(circle at 34% 28%, #CFFAFE 0%, #22D3EE 26%, #2F5BEA 68%, #172554 100%); animation: jvBreathe 4.2s ease-in-out infinite; will-change: transform; }
+.tab-aside .talk > span:last-child { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.tab-aside .talk b { font-size: 15px; font-weight: 500; }
+.tab-aside .talk small { font-size: 12px; color: var(--text2); }
+/* the right column: the rooms, or the room's panel */
+[data-layout="tablet"] .tab-rooms { position: absolute; right: 16px; top: 16px; bottom: 16px; width: 400px; border-radius: 28px; background: var(--surf); border: 1px solid var(--surf2); padding: 24px 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; animation: jvSlideIn .42s cubic-bezier(.2,.85,.25,1); }
+[data-layout="tablet"] .zoomed .tab-rooms { display: none; }
+@keyframes jvSlideIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+.tab-rooms h1 { margin: 0; font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.015em; }
+.tab-rooms .sum { font-size: 13px; color: var(--text2); }
+.tab-rooms .list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; scrollbar-width: none; }
+.tab-rooms .list::-webkit-scrollbar { display: none; }
+.tab-rooms .troom { text-align: left; border-radius: 20px; background: var(--surf2); padding: 14px 16px; display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.tab-rooms .troom .w { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.tab-rooms .troom .w b { font-size: 16px; font-weight: 600; }
+.tab-rooms .troom .w .nums { display: flex; gap: 12px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; color: var(--text2); }
+.tab-rooms .troom .w .nums .warn { color: var(--warn); }
+.tab-rooms .troom .w small { font-size: 12px; color: var(--text3); }
+.tab-rooms .troom .w small.on { color: var(--cyanText); }
+.tab-rooms .troom .t { font-size: 30px; line-height: 34px; font-weight: 300; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tab-rooms .troom .chev { color: #5F6B7C; display: flex; }
+[data-layout="tablet"] .sheet-wrap { left: auto; right: 16px; top: 16px; bottom: auto; width: 400px; transform: translateX(110%); opacity: 0; transition: transform 340ms cubic-bezier(.2,.85,.25,1), opacity .3s; }
+[data-layout="tablet"] .zoomed .sheet-wrap { transform: none; opacity: 1; transition: transform .42s cubic-bezier(.2,.85,.25,1), opacity .3s; }
+[data-layout="tablet"] .sheet { border-radius: 28px; border: 1px solid var(--surf2); box-shadow: none; }
+[data-layout="tablet"] .sheet .handle { display: none; }
+[data-layout="tablet"] .sheet-head { padding: 24px 24px 12px; }
+[data-layout="tablet"] .sheet-body { padding: 4px 20px 24px; }
+/* the other screens: a readable column beside the nav */
+[data-layout="tablet"] .screen { left: 88px; bottom: 0; padding-left: max(16px, calc((100% - 680px) / 2)); padding-right: max(16px, calc((100% - 680px) / 2)); }
+[data-layout="tablet"] #screen-chat, [data-layout="tablet"] #screen-editor, [data-layout="tablet"] #screen-scene-edit, [data-layout="tablet"] #screen-sched-edit { left: calc(88px + (100% - 88px - 640px) / 2); right: auto; width: 640px; padding: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+[data-layout="tablet"] .jv-app[data-screen="chat"] .nav, [data-layout="tablet"] .jv-app[data-screen="editor"] .nav,
+[data-layout="tablet"] .jv-app[data-screen="scene-edit"] .nav, [data-layout="tablet"] .jv-app[data-screen="sched-edit"] .nav { display: flex; }
+/* the alarm: what happened on the left, the plan on the right */
+[data-layout="tablet"] .alarm-screen .glow { left: -260px; top: -260px; width: 1100px; height: 1100px; }
+[data-layout="tablet"] .alarm-screen .body { right: auto; width: 700px; padding: 48px 56px; gap: 28px; }
+[data-layout="tablet"] .alarm-screen .top { justify-content: flex-start; gap: 16px; font-size: 13px; }
+[data-layout="tablet"] .alarm-screen .what { flex-direction: row; align-items: center; gap: 28px; }
+[data-layout="tablet"] .alarm-screen .badge, [data-layout="tablet"] .alarm-screen .badge .disc { width: 104px; height: 104px; }
+[data-layout="tablet"] .alarm-screen h1 { font-size: 52px; line-height: 56px; }
+[data-layout="tablet"] .alarm-screen .desc { display: none; }
+[data-layout="tablet"] .alarm-screen .did { border-radius: 26px; padding: 22px 24px; gap: 14px; }
+[data-layout="tablet"] .alarm-screen .did .act b { font-size: 18px; line-height: 24px; }
+[data-layout="tablet"] .alarm-screen .place { box-sizing: border-box; position: absolute; right: -540px; top: 40px; bottom: 40px; width: 500px; flex: none; border-radius: 32px; flex-direction: column; justify-content: center; padding: 24px; }
+[data-layout="tablet"] .alarm-screen .mini { width: 440px; height: 520px; }
+[data-layout="tablet"] .alarm-screen .place .txt { align-items: center; text-align: center; }
+[data-layout="tablet"] .alarm-screen .btns { margin-top: auto; gap: 12px; }
+[data-layout="tablet"] .alarm-screen .btns button, [data-layout="tablet"] .alarm-screen .btns a { height: 72px; border-radius: 22px; font-size: 19px; }

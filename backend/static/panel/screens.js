@@ -850,9 +850,11 @@
       const holder = document.createElement("div");
       holder.style.width = w + "px";
       holder.style.height = hgt + "px";
-      holder.style.transform = "scale(" + Math.min(133 / w, 205 / hgt).toFixed(3) + ")";
+      const box = al.node.querySelector("#alMini");  // the phone's small frame, or the tablet's big card
+      const bw = box.offsetWidth || 133, bh = box.offsetHeight || 205, k = Math.min(bw / w, bh / hgt);
+      holder.style.transform = `translate(${((bw - w * k) / 2).toFixed(1)}px, ${((bh - hgt * k) / 2).toFixed(1)}px) scale(${k.toFixed(3)})`;
       holder.appendChild(copy);
-      al.node.querySelector("#alMini").appendChild(holder);
+      box.appendChild(holder);
     }
   }
 
