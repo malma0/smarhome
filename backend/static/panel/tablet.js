@@ -30,6 +30,7 @@
         <span class="clock">${pad(now.getHours())}:${pad(now.getMinutes())}</span>
         <span class="day">${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS[now.getMonth()]}</span>
         <span class="weather"><i>${icon("cloud", 18)}</i>${esc(($("weatherT").textContent || "—") + " · " + ($("weatherW").textContent || ""))}</span></div>
+      ${window.JV.listsChips ? `<div class="tab-lists">${window.JV.listsChips()}</div>` : ""}
       <button class="tcard jv-press${armed ? " armed" : ""}" aria-pressed="${armed}" data-tab-arm><i>${icon(armed ? "shieldok" : "shield", 24)}</i>
         <span><small>Охрана</small><b>${h.offline || !guard ? "—" : armed ? "Под охраной" : "Снята"}</b></span></button>
       <div class="tcard power"><i>${icon("bolt", 24)}</i><span><b>${esc($("powerNow").textContent || "—")}</b><small>${esc($("powerDay").textContent || "")}</small></span></div>

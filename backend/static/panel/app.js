@@ -66,6 +66,7 @@
     back: '<path d="M15 5l-7 7 7 7"/>',
     bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
     bolt: '<path d="M13 2.5L4.5 13.5H11l-1 8 8.5-11H12z"/>',
+    cart: '<path d="M3 4h2.2l2.3 10.5h10.6l2-7.5H6.4"/><circle cx="9.5" cy="19" r="1.5"/><circle cx="17" cy="19" r="1.5"/>',
     calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
     chart: '<path d="M4 20V11M9.5 20V5M15 20v-6M20.5 20V9"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
@@ -103,6 +104,7 @@
     plus: '<path d="M12 5v14M5 12h14"/>',
     power: '<path d="M12 3v8"/><path d="M6.5 6.5a8 8 0 1 0 11 0"/>',
     redo: '<path d="M15 7l4.5 4.5L15 16"/><path d="M19.5 11.5H9a4.5 4.5 0 0 0 0 9h2"/>',
+    repeat: '<path d="M20 11a8 8 0 0 0-14.5-4.5M4 13a8 8 0 0 0 14.5 4.5"/><path d="M5 3v4h4M19 21v-4h-4"/>',
     room: '<path d="M4 4h16v16H4z"/><path d="M4 10h4M12 4v4M14 20v-5h6"/>',
     scenes: '<rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><path d="M17 14v6.5M13.8 17.2h6.5"/>',
     send: '<path d="M5 12h13M13 6l6 6-6 6"/>',
@@ -114,6 +116,7 @@
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
     sunrise: '<path d="M4 18h16M7 18a5 5 0 0 1 10 0"/><path d="M12 5v4M5.6 10.6l1.4 1.4M18.4 10.6L17 12M3 14.5h1.5M19.5 14.5H21"/>',
     thermo: '<path d="M14 14.6V5a2 2 0 0 0-4 0v9.6a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>',
+    timer: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5"/><path d="M9.5 3h5"/><path d="M18.3 6.7l1.4-1.4"/>',
     undo: '<path d="M9 7L4.5 11.5 9 16"/><path d="M4.5 11.5H15a4.5 4.5 0 0 1 0 9h-2"/>',
     user: '<circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
     users: '<circle cx="9" cy="8.5" r="3.3"/><path d="M2.8 19.5a6.2 6.2 0 0 1 12.4 0"/><path d="M15.5 5.5a3.3 3.3 0 0 1 0 6.3M17.5 14.2a6.2 6.2 0 0 1 3.7 5.3"/>',
@@ -364,7 +367,7 @@
     else {
       const moving = state.rooms.filter((r) => reading(r, "motion")).map((r) => at(r.name));
       setText(summary, "Всё спокойно" + (moving.length ? " · движение " + moving.join(" и ") : ""));
-      summary.className = "summary";
+      summary.className = "summary calm";  // hidden: the reminders' and shopping chips stand there (lists.js)
     }
     $("bellDot").hidden = !alarms.length;
     const guard = state.house && devOf(state.house, "security");
@@ -681,7 +684,7 @@
   }
 
   function restoreHeadText() {
-    $("headText").innerHTML = '<span class="date mono" id="date"></span><h1 class="title">Квартира</h1><span class="summary" id="summary"></span>';
+    $("headText").innerHTML = '<span class="date mono" id="date"></span><h1 class="title">Квартира</h1><span class="summary" id="summary"></span><div class="head-lists" id="headLists"></div>';
   }
 
   // ---------------------------------------------------------------- the PIN
@@ -834,7 +837,7 @@
   // what screens.js builds on: one way to ask the server, one toast, one icon set
   window.JV = { api, toast, icon, esc, $, store, show: showScreen, add: (name, screen) => { screens[name] = screen; },
     house: () => ({ rooms: state.rooms, house: state.house, offline: state.offline }), refresh: () => refresh(), listen: (fn) => listeners.push(fn), pin: () => pin, tablet: () => tablet,
-    openRoom: (name) => openRoom(name),
+    openRoom: (name) => openRoom(name), replan: () => placePlanIfHeaderMoved(),
     layout: () => ({ plan: JSON.parse(JSON.stringify(layout)), custom: customLayout, sketch: sketch(), rooms: state.rooms }),
     setLayout: applyLayout, devName: (t) => NAMES[TYPE[t]] || t, devIcon: (t) => TYPE[t] || "power",
     theme: (chosen) => { if (chosen) { store.set("jarvis-panel-theme", chosen); applyTheme(); } return store.get("jarvis-panel-theme") || "auto"; } };
@@ -844,11 +847,14 @@
     if (!$("confirm").hidden) { closeGasConfirm(); return true; }
     if (state.room) { closeRoom(); return true; }
     const current = $("app").getAttribute("data-screen");
+    if (screens[current] && screens[current].onBack && screens[current].onBack()) return true;  // e.g. a sheet open on it
     if (current && current !== "home") { showScreen((screens[current] && screens[current].back) || "home"); return true; }
     return false;
   };
 
   wire();
+  // the canvas never scrolls: a focused input (the phone's keyboard) would shift every sheet and bar on it
+  $("app").addEventListener("scroll", () => { if ($("app").scrollTop || $("app").scrollLeft) { $("app").scrollTop = 0; $("app").scrollLeft = 0; } });
   fit();
   drawSkeleton();
   if (pin) start(); else showLock();
