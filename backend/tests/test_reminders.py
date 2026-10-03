@@ -158,3 +158,15 @@ def test_a_reminder_is_whoever_set_it_or_for_someone_else_by_name(tmp_path):
     assert "error" in asyncio.run(handler({"kind": "timer", "in_seconds": 60, "for": "Пете"}, TurnContext()))
     assert match_resident("матвею", ["Матвей", "Эля"]) == "Матвей" and match_resident("Эля", ["Матвей", "Эля"]) == "Эля"
     assert match_resident("ма", ["Матвей", "Маша"]) is None
+
+
+def test_stop_on_a_phone_marks_that_ring_and_only_that_one(tmp_path):
+    store, handler = _setup(tmp_path)
+    _run(handler, kind="timer", in_seconds=60)
+    _run(handler, kind="timer", in_seconds=90)
+    first, second = store.pending()
+    ring1, ring2 = store.rang(first, NOW), store.rang(second, NOW)
+    assert store.stopped_rings([ring1, ring2]) == set()
+    assert store.stop_ring(ring2) and not store.stop_ring(999)
+    assert store.stopped_rings([ring1, ring2]) == {ring2} and store.stopped_rings([]) == set()
+    assert [r["stopped"] for r in store.rings_since(NOW - timedelta(minutes=1))] == [False, True]

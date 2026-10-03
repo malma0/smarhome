@@ -3,8 +3,8 @@
      WebView, plus finding Jarvis in the home network. Built by build.py. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="ru.jarvis.home"
-    android:versionCode="6"
-    android:versionName="0.6">
+    android:versionCode="7"
+    android:versionName="0.7">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -46,6 +46,7 @@
                 android:value="Home safety alarms: leak, gas, smoke, intrusion" />
         </service>
 
+        <receiver android:name=".StopReceiver" android:exported="false" />
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

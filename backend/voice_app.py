@@ -980,12 +980,20 @@ async def run_hands_free(
     def ring_due() -> None:
         now = time.monotonic()
         for item in reminder_store.due(local_now()):
-            reminder_store.rang(item, local_now())
-            ringing[item["id"]] = {"text": item["text"], "until": now + RING_SECONDS, "next": now + RING_EVERY_SECONDS}
+            ring_id = reminder_store.rang(item, local_now())
+            ringing[item["id"]] = {"text": item["text"], "until": now + RING_SECONDS, "next": now + RING_EVERY_SECONDS,
+                                   "ring": ring_id}
             ui.ring(item["text"], f"reminder:{item['id']}", True)
             announcer().say(item["text"], "chime")
+        # "Стоп" pressed on a phone (the app's notification -> /api/reminders/stop)
+        stopped = reminder_store.stopped_rings(r["ring"] for r in ringing.values()) if ringing else set()
+        if stopped and _announcer is not None:
+            _announcer.stop()  # the chime sounding right now too
         for reminder_id, ring in list(ringing.items()):
-            if now >= ring["until"]:  # nobody said stop - give up, keep it in the chat
+            if ring["ring"] in stopped:
+                del ringing[reminder_id]
+                ui.ring(ring["text"], f"reminder:{reminder_id}", False)
+            elif now >= ring["until"]:  # nobody said stop - give up, keep it in the chat
                 del ringing[reminder_id]
                 ui.ring(ring["text"], f"reminder:{reminder_id}", False)
             elif now >= ring["next"]:

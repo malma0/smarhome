@@ -128,7 +128,8 @@ class ReminderStore:
         kind TEXT NOT NULL,
         text TEXT NOT NULL,
         resident_id TEXT,
-        rung_at TEXT NOT NULL
+        rung_at TEXT NOT NULL,
+        stopped INTEGER NOT NULL DEFAULT 0
     )
     """
 
@@ -136,6 +137,8 @@ class ReminderStore:
         self._conn = conn
         conn.execute(self.SCHEMA)
         conn.execute(self.RINGS)
+        if "stopped" not in {row[1] for row in conn.execute("PRAGMA table_info(reminder_rings)")}:
+            conn.execute("ALTER TABLE reminder_rings ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0")
         columns = {row[1] for row in conn.execute("PRAGMA table_info(reminders)")}
         if "repeat" not in columns:  # a database from before repeating reminders
             conn.execute("ALTER TABLE reminders ADD COLUMN repeat TEXT")
@@ -165,23 +168,40 @@ class ReminderStore:
         self._conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (reminder_id,))
         self._conn.commit()
 
-    def rang(self, item: dict, now: datetime) -> None:
-        """A one-off is done; a repeating one moves on to its next day. Either way the ring is logged."""
-        self._conn.execute("INSERT INTO reminder_rings (reminder_id, kind, text, resident_id, rung_at) VALUES (?, ?, ?, ?, ?)",
-                           (item["id"], item["kind"], item["text"], item.get("resident_id"), now.isoformat()))
+    def rang(self, item: dict, now: datetime) -> int:
+        """A one-off is done; a repeating one moves on to its next day. Either way the ring is logged -
+        its id, for "Стоп" from a phone (stop_ring)."""
+        ring = self._conn.execute(
+            "INSERT INTO reminder_rings (reminder_id, kind, text, resident_id, rung_at) VALUES (?, ?, ?, ?, ?)",
+            (item["id"], item["kind"], item["text"], item.get("resident_id"), now.isoformat())).lastrowid
         self._conn.execute("DELETE FROM reminder_rings WHERE rung_at < ?", ((now - RINGS_KEPT).isoformat(),))
         if not item.get("repeat"):
             self.mark_done(item["id"])
-            return
+            return ring
         due = next_occurrence(item["due"], item["repeat"], now)
         self._conn.execute("UPDATE reminders SET due_at = ? WHERE id = ?", (due.isoformat(), item["id"]))
         self._conn.commit()
+        return ring
+
+    def stop_ring(self, ring_id: int) -> bool:
+        """"Стоп" on a phone's notification: the voice loop silences that ring (stopped_rings)."""
+        changed = self._conn.execute("UPDATE reminder_rings SET stopped = 1 WHERE id = ?", (int(ring_id),)).rowcount
+        self._conn.commit()
+        return bool(changed)
+
+    def stopped_rings(self, ring_ids) -> set[int]:
+        ids = [int(i) for i in ring_ids]
+        if not ids:
+            return set()
+        rows = self._conn.execute(f"SELECT id FROM reminder_rings WHERE stopped = 1 AND id IN ({','.join('?' * len(ids))})",
+                                  ids).fetchall()
+        return {r[0] for r in rows}
 
     def rings_since(self, since: datetime) -> list[dict]:
         """What rang after `since`, oldest first: {id, kind, text, at}."""
         rows = self._conn.execute("SELECT * FROM reminder_rings ORDER BY id").fetchall()
-        return [{"id": r["id"], "kind": r["kind"], "text": r["text"], "at": r["rung_at"], "resident": r["resident_id"]}
-                for r in rows if datetime.fromisoformat(r["rung_at"]) > since]
+        return [{"id": r["id"], "kind": r["kind"], "text": r["text"], "at": r["rung_at"], "resident": r["resident_id"],
+                 "stopped": bool(r["stopped"])} for r in rows if datetime.fromisoformat(r["rung_at"]) > since]
 
     @staticmethod
     def _item(row) -> dict:
@@ -194,6 +214,21 @@ def _parse_at(at: str, now: datetime) -> datetime:
     """'2026-09-26T08:00' (local, as the model writes it) -> aware datetime."""
     when = datetime.fromisoformat(at.strip().replace(" ", "T"))
     return when.replace(tzinfo=now.tzinfo) if when.tzinfo is None else when
+
+
+def russian_error(error: str) -> str:
+    """The tool's errors (for the model, in English) as the app shows them."""
+    known = {"That time has already passed": "Это время уже прошло.", "A reminder needs its text": "Напиши, о чём напомнить.",
+             "Give exactly one of": "Укажи время.", "Can't read the time": "Не понял время.",
+             "More than a year ahead": "Больше чем на год вперёд — слишком далеко.",
+             "A timer doesn't repeat": "Таймер не повторяется — сделай напоминание.",
+             "repeat must be": "Не понял, как повторять.", "No resident called": "Нет такого жильца."}
+    return next((ru for en, ru in known.items() if error.startswith(en)), "Не получилось поставить.")
+
+
+def public(item: dict, now: datetime) -> dict:
+    """For the app: the model's view plus the id and whose it is."""
+    return {**_public(item, now), "due": item["due"].isoformat()}
 
 
 def _public(item: dict, now: datetime) -> dict:

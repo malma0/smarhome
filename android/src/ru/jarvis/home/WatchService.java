@@ -154,7 +154,9 @@ public class WatchService extends Service {
                 JSONObject r = rang.getJSONObject(i);
                 long id = r.optLong("id");
                 if (id <= seen) continue;
-                manager().notify(nextId++, reminderNotification("timer".equals(r.optString("kind")) ? "Таймер" : "Напоминание", r.optString("text")));
+                int nid = nextId++;
+                manager().notify(nid, reminderNotification("timer".equals(r.optString("kind")) ? "Таймер" : "Напоминание",
+                        r.optString("text"), id, nid));
                 seen = id;
             }
             p.edit().putLong("ring_seen", seen).apply();
@@ -204,8 +206,13 @@ public class WatchService extends Service {
     }
 
     @SuppressWarnings("deprecation")
-    private Notification reminderNotification(String title, String text) {
+    private Notification reminderNotification(String title, String text, long ring, int notificationId) {
+        // "Стоп": the chime at home goes quiet (StopReceiver -> POST /api/reminders/stop)
+        Intent stop = new Intent(this, StopReceiver.class).putExtra("ring", ring).putExtra("notification", notificationId);
+        PendingIntent stopIntent = PendingIntent.getBroadcast(this, notificationId, stop,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b = builder(REMINDER_CHANNEL)
+                .addAction(new Notification.Action.Builder(null, "Стоп", stopIntent).build())
                 .setSmallIcon(android.R.drawable.ic_popup_reminder)
                 .setContentTitle(title)
                 .setContentText(text)
