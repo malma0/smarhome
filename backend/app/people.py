@@ -32,9 +32,19 @@ READ_LINES = ["Привет, Джарвис! Меня зовут {name}, зап�
 
 # ---------------------------------------------------------------- residents and their voices
 
-def residents(memory) -> list[dict]:
+def _speaker_id():
+    """app.speaker_id set to the model Jarvis recognizes voices with (SPEAKER_MODEL) - the panel can run
+    before the voice loop, or without it, and the default is the old model: Эля's ECAPA profile showed
+    as "not recorded", and a voice read into the phone would have gone into the old one."""
     from app import speaker_id
 
+    if speaker_id.active_model() is not speaker_id.MODELS.get(settings.speaker_model, speaker_id.active_model()):
+        speaker_id.configure(settings.speaker_model)
+    return speaker_id
+
+
+def residents(memory) -> list[dict]:
+    speaker_id = _speaker_id()
     enrolled = speaker_id.load_enrolled_voiceprints(memory)
     return [{"name": r, "samples": len(enrolled.get(r, []))}
             for r in sorted(memory.list_resident_ids()) if r not in HIDDEN]
@@ -53,8 +63,7 @@ def add_resident(memory, name: str) -> str:
 def remove_resident(memory, name: str) -> None:
     """Gone from Jarvis's memory with their voice profile; their recordings moved to voiceprints/_aside/,
     not deleted - a profile can be rebuilt from them if it was a mistake."""
-    from app import speaker_id
-
+    speaker_id = _speaker_id()
     if name in HIDDEN or name not in memory.list_resident_ids():
         raise ValueError("нет такого жильца")
     memory.remove_resident(name)
@@ -76,6 +85,7 @@ def learn_voice(memory, name: str, wav: bytes) -> int:
 
     if name not in memory.list_resident_ids():
         raise ValueError("нет такого жильца")
+    _speaker_id()
     with wave.open(io.BytesIO(wav)) as w:
         if w.getframerate() != voice_app.SAMPLE_RATE or w.getsampwidth() != 2:
             raise ValueError("запись не в том формате")

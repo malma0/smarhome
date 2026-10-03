@@ -139,3 +139,21 @@ def test_each_phone_gets_its_owners_reminders_and_everyones(client, tmp_path):
     texts = lambda q: [r["text"] for r in client.get("/api/alerts" + q, headers=owner).json()["reminders"]]  # noqa: E731
     assert texts("") == ["таблетки", "хлеб", "мусор"]  # a phone nobody's: all of them
     assert texts("?who=Эля") == ["хлеб", "мусор"]
+
+
+def test_the_voices_shown_are_the_model_jarvis_recognizes_with(tmp_path):
+    from app import speaker_id
+
+    memory = MemoryStore(connect(str(tmp_path / "v.db")))
+    memory.ensure_resident("Эля")
+    was = settings.speaker_model
+    object.__setattr__(settings, "speaker_model", "ecapa")
+    try:
+        speaker_id.configure("ecapa")
+        speaker_id.enroll_resident(memory, "Эля", np.ones(192))
+        speaker_id.configure("resemblyzer")  # as the panel started: the default, old model
+        assert people.residents(memory) == [{"name": "Эля", "samples": 1}]
+        assert speaker_id.active_model() is speaker_id.MODELS["ecapa"]
+    finally:
+        object.__setattr__(settings, "speaker_model", was)
+        speaker_id.configure("resemblyzer")
