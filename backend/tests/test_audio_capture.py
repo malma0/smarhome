@@ -262,3 +262,43 @@ def test_the_window_hears_when_a_phrase_starts_and_ends_before_its_transcript():
         streamer.feed(frame)
     assert edges == [True, False]
     assert finished == [2]  # the end was told before the transcript was finished
+
+
+def test_the_pause_that_ends_a_phrase_follows_the_words_heard_so_far():
+    from app.audio_capture import PhraseStreamer
+    from app.endpointing import end_silence_for
+
+    said = {"text": ""}
+
+    class Transcript:
+        def feed(self, pcm): pass
+        def so_far(self): return said["text"]
+        def finish(self): return said["text"]
+
+    def silence_until_end(text):
+        """Frames of silence after 1 s of speech before the phrase ends, with `text` heard."""
+        said["text"] = text
+        streamer = PhraseStreamer(
+            _segmenter(frame_seconds=0.03, preroll_seconds=0.09, start_seconds=0.09, end_silence_seconds=0.9,
+                       longest_end_seconds=1.4, max_seconds=15),
+            Transcript, end_for_text=lambda t: end_silence_for(t, 0.9, 0.55, 1.4))
+        speech, quiet = np.array([[1], [0]], dtype=np.int16), np.array([[0], [0]], dtype=np.int16)
+        for _ in range(34):
+            assert streamer.feed(speech) is None
+        for n in range(1, 100):
+            if streamer.feed(quiet) is not None:
+                return n
+        return None
+
+    finished, usual, hanging = silence_until_end("включи свет на кухне"), silence_until_end("включи свет"), silence_until_end("включи свет и")
+    assert finished < usual < hanging
+    assert (finished, usual, hanging) == (17, 27, 43)  # 90% of ~0.55 / 0.9 / 1.4 s of 30 ms frames
+
+
+def test_which_words_finish_a_phrase_and_which_leave_it_hanging():
+    from app.endpointing import end_silence_for
+
+    pause = lambda text: end_silence_for(text, 0.9, 0.55, 1.4)  # noqa: E731
+    assert pause("") == 0.9 and pause("какая погода") == 0.9
+    assert pause("Включи свет на кухне") == pause("стоп") == pause("сделай 22 градуса") == 0.55
+    assert pause("джарвис") == pause("включи") == pause("свет на кухне и") == pause("напомни мне ещё") == 1.4

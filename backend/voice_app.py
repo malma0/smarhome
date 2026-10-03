@@ -55,6 +55,7 @@ from app.agent import build_default_agent
 from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech, speech_seconds
 from app.config import settings
 from app.dataset import UtteranceLog
+from app.endpointing import end_silence_for
 from app.domains.radio import player as radio_player
 from app.hands_free import CUE, IGNORE, HandsFreeState, is_stop_phrase, name_heard
 from app.reminders import ReminderStore, local_now
@@ -935,6 +936,10 @@ async def run_hands_free(
         transcriber_factory=detector.stream if detector else None,
         end_silence_seconds=settings.phrase_end_silence,
         on_edge=phrase_edge,
+        # the pause follows the words: short after "...на кухне", long after "включи..."
+        end_for_text=lambda text: end_silence_for(text, settings.phrase_end_silence,
+                                                  settings.phrase_end_short, settings.phrase_end_long),
+        longest_end_seconds=settings.phrase_end_long,
     )
     Announcer.listeners.add(listener)
 

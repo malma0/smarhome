@@ -61,6 +61,8 @@ class Settings:
     wake_listen_seconds: float
     follow_up_seconds: float
     phrase_end_silence: float
+    phrase_end_short: float
+    phrase_end_long: float
 
 
 def load_settings() -> Settings:
@@ -127,6 +129,9 @@ def load_settings() -> Settings:
         follow_up_seconds=float(os.environ.get("FOLLOW_UP_SECONDS", "10")),
         # Silence that ends a phrase. 0.6 cut the resident off mid-sentence at a natural pause.
         phrase_end_silence=float(os.environ.get("PHRASE_END_SILENCE", "0.9")),
+        # ...or by the words heard so far (app.endpointing): a finished-sounding command, a hanging word
+        phrase_end_short=float(os.environ.get("PHRASE_END_SHORT", "0.55")),
+        phrase_end_long=float(os.environ.get("PHRASE_END_LONG", "1.4")),
     )
 
 

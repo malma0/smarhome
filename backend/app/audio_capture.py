@@ -162,8 +162,11 @@ class UtteranceSegmenter:
         end_silence_seconds: float = 0.6,
         end_ratio: float = 0.9,
         max_seconds: float = 15.0,
+        # the longest end_silence() may ask for (app.endpointing) - the window keeps that much
+        longest_end_seconds: float | None = None,
     ):
         self._is_speech = is_speech
+        self._frame_seconds = frame_seconds
         self._preroll: collections.deque[np.ndarray] = collections.deque(
             maxlen=max(1, round(preroll_seconds / frame_seconds))
         )
@@ -171,8 +174,10 @@ class UtteranceSegmenter:
             maxlen=max(1, round(start_seconds / frame_seconds))
         )
         self._end_window: collections.deque[bool] = collections.deque(
-            maxlen=max(1, round(end_silence_seconds / frame_seconds))
+            maxlen=max(1, round(max(end_silence_seconds, longest_end_seconds or 0) / frame_seconds))
         )
+        self._default_end = end_silence_seconds
+        self._end_frames = max(1, round(end_silence_seconds / frame_seconds))
         self._start_ratio = start_ratio
         self._end_ratio = end_ratio
         self._max_frames = round(max_seconds / frame_seconds)
@@ -183,6 +188,11 @@ class UtteranceSegmenter:
         self._start_window.clear()
         self._end_window.clear()
         self._frames: list[np.ndarray] | None = None
+        self.end_silence(self._default_end)
+
+    def end_silence(self, seconds: float) -> None:
+        """How much silence ends the current phrase - changeable while it's spoken."""
+        self._end_frames = min(self._end_window.maxlen, max(1, round(seconds / self._frame_seconds)))
 
     @property
     def in_phrase(self) -> bool:
@@ -212,9 +222,9 @@ class UtteranceSegmenter:
 
         self._frames.append(frame)
         self._end_window.append(speech)
-        window = self._end_window
-        silent = len(window) - sum(window)
-        if (self._full(window) and silent >= self._end_ratio * len(window)) or len(self._frames) >= self._max_frames:
+        recent = list(self._end_window)[-self._end_frames:]
+        silent = len(recent) - sum(recent)
+        if (len(recent) == self._end_frames and silent >= self._end_ratio * len(recent)) or len(self._frames) >= self._max_frames:
             phrase = self._frames
             self.reset()
             return phrase
@@ -257,8 +267,10 @@ class PhraseStreamer:
     LIVE_TEXT_EVERY_FRAMES = 10  # ~0.3 s
 
     def __init__(self, segmenter: UtteranceSegmenter, transcriber_factory: Callable[[], Any] | None = None,
-                 on_edge: Callable[[bool], None] | None = None):
+                 on_edge: Callable[[bool], None] | None = None, end_for_text: Callable[[str], float] | None = None):
         self._segmenter = segmenter
+        # the words so far -> the silence that ends the phrase (app.endpointing); None: always the same
+        self._end_for_text = end_for_text
         self._factory = transcriber_factory
         # True when a phrase starts, False the moment it ends - before the local
         # transcript is finished, which takes a while on a long phrase: the
@@ -293,6 +305,8 @@ class PhraseStreamer:
                 if self._frames_since_live >= self.LIVE_TEXT_EVERY_FRAMES and hasattr(self._transcript, "so_far"):
                     self._frames_since_live = 0
                     self.live_text = self._transcript.so_far()  # same thread as feed: Vosk isn't thread-safe
+                    if self._end_for_text is not None:
+                        self._segmenter.end_silence(self._end_for_text(self.live_text))
         if frames is None:
             return None
         text = self._transcript.finish() if self._transcript is not None else None
@@ -319,6 +333,8 @@ class HandsFreeListener:
         transcriber_factory: Callable[[], Any] | None = None,
         end_silence_seconds: float = 0.6,
         on_edge: Callable[[bool], None] | None = None,
+        end_for_text: Callable[[str], float] | None = None,
+        longest_end_seconds: float | None = None,
     ):
         import sounddevice as sd
 
@@ -328,9 +344,11 @@ class HandsFreeListener:
         self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=500)
         self._phrases: queue.Queue[Phrase] = queue.Queue()
         self._streamer = PhraseStreamer(
-            UtteranceSegmenter(make_vad(sample_rate), end_silence_seconds=end_silence_seconds),
+            UtteranceSegmenter(make_vad(sample_rate), end_silence_seconds=end_silence_seconds,
+                               longest_end_seconds=longest_end_seconds),
             transcriber_factory,
             on_edge=on_edge,
+            end_for_text=end_for_text,
         )
         self._muted = threading.Event()
         self._held = threading.Event()  # an alarm is sounding (hold/release)
