@@ -718,25 +718,28 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         from app import shopping
 
         if "shopping" not in state:
-            state["shopping"] = shopping.make_handler(shopping.ShoppingList(agent().memory.connection))
+            state["shopping_list"] = shopping.ShoppingList(agent().memory.connection)
+            state["shopping"] = shopping.make_handler(state["shopping_list"])
         return state["shopping"]
 
     @app.get("/api/shopping", dependencies=[api])
     async def shopping_view():
-        from app.tools.registry import TurnContext
-
-        return await shopping_handler()({"action": "list"}, TurnContext())
+        shopping_handler()  # the list is made on first use
+        return {"items": state["shopping_list"].entries()}
 
     @app.post("/api/shopping", dependencies=[api])
     async def change_shopping(body: dict):
-        """{action: add | remove | clear, items: [...]} - the house's one list, the same as by voice."""
+        """{action: add | bought | remove | clear, items: [...], who} - the house's one list, the same as by voice."""
         from app.tools.registry import TurnContext
 
         action = str(body.get("action") or "")
-        if action not in ("add", "remove", "clear"):
+        if action not in ("add", "bought", "remove", "clear"):
             return {"error": "Не понял, что сделать со списком."}
-        result = await shopping_handler()({"action": action, "items": body.get("items") or []}, TurnContext())
-        return {"error": "Напиши, что добавить."} if "error" in result else result
+        result = await shopping_handler()({"action": action, "items": body.get("items") or [], "via": "app"},
+                                          TurnContext(resident=resident_of(body.get("who"))))
+        if "error" in result:
+            return {"error": "Напиши, что добавить."}
+        return {**result, **(await shopping_view())}
 
     def resident_of(who) -> str:
         """The phone's owner, if that's a resident; otherwise the panel speaks as no one in particular."""

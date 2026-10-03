@@ -178,7 +178,10 @@ def test_the_app_sees_sets_and_cancels_reminders_and_the_shopping_list(client, t
     ring = store.rang(store.pending()[0], datetime.now().astimezone())
     assert client.post("/api/reminders/stop", headers=owner, json={"ring": ring}).json() == {"stopped": True}
     assert store.stopped_rings([ring]) == {ring}
-    # the shopping list
-    assert client.post("/api/shopping", headers=owner, json={"action": "add", "items": ["молоко", "хлеб"]}).json()["items"] == ["молоко", "хлеб"]
-    assert client.post("/api/shopping", headers=owner, json={"action": "remove", "items": ["молоко"]}).json()["items"] == ["хлеб"]
-    assert client.get("/api/shopping", headers=owner).json()["items"] == ["хлеб"]
+    # the shopping list: who added it and how, a tick takes that one line only
+    items = lambda r: [i["item"] for i in r["items"]]  # noqa: E731
+    added = client.post("/api/shopping", headers=owner, json={"action": "add", "items": ["хлеб", "хлеб бородинский"], "who": "Эля"}).json()
+    assert added["items"][0] == {"item": "хлеб", "who": "Эля", "via": "app"}
+    assert items(client.post("/api/shopping", headers=owner, json={"action": "bought", "items": ["хлеб"]}).json()) == ["хлеб бородинский"]
+    assert items(client.get("/api/shopping", headers=owner).json()) == ["хлеб бородинский"]
+    assert client.post("/api/shopping", headers=owner, json={"action": "clear"}).json()["items"] == []

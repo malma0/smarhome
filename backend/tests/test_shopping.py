@@ -35,3 +35,24 @@ def test_word_forms_match():
 def test_shopping_words_reach_the_list():
     for text in ("добавь в список молоко", "что купить?", "молоко закончилось"):
         assert "shopping" in router.select(text, None), text
+
+
+def test_who_added_it_and_how(tmp_path):
+    shopping = ShoppingList(connect(str(tmp_path / "j.db")))
+    handler = make_handler(shopping)
+    asyncio.run(handler({"action": "add", "items": ["молоко"]}, TurnContext(resident="Эля", voice="resident")))
+    asyncio.run(handler({"action": "add", "items": ["сыр"], "via": "app"}, TurnContext(resident="Матвей")))
+    asyncio.run(handler({"action": "add", "items": ["хлеб"]}, TurnContext()))  # nobody in particular
+    assert shopping.entries() == [{"item": "молоко", "who": "Эля", "via": "voice"},
+                                  {"item": "сыр", "who": "Матвей", "via": "app"}, {"item": "хлеб", "who": None, "via": None}]
+
+
+def test_a_list_from_before_gets_its_new_columns(tmp_path):
+    import sqlite3
+
+    conn = sqlite3.connect(str(tmp_path / "old.db"))
+    conn.execute("CREATE TABLE shopping (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL, added_at TEXT NOT NULL)")
+    conn.execute("INSERT INTO shopping (item, added_at) VALUES ('яйца', '2026-10-01')")
+    conn.commit()
+    conn.row_factory = sqlite3.Row
+    assert ShoppingList(conn).entries() == [{"item": "яйца", "who": None, "via": None}]

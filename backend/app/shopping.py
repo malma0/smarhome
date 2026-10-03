@@ -28,25 +28,45 @@ class ShoppingList:
     CREATE TABLE IF NOT EXISTS shopping (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         item TEXT NOT NULL,
-        added_at TEXT NOT NULL
+        added_at TEXT NOT NULL,
+        who TEXT,  -- the resident who added it, if known
+        via TEXT   -- "voice" or "app" - the app shows "Эля · голосом"
     )
     """
 
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
         conn.execute(self.SCHEMA)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(shopping)")}
+        for column in ("who", "via"):
+            if column not in columns:  # a list from before
+                conn.execute(f"ALTER TABLE shopping ADD COLUMN {column} TEXT")
         conn.commit()
 
     def items(self) -> list[str]:
         return [row["item"] for row in self._conn.execute("SELECT item FROM shopping ORDER BY id")]
 
-    def add(self, item: str) -> bool:
+    def entries(self) -> list[dict]:
+        """For the app: each item with who added it and how."""
+        return [{"item": r["item"], "who": r["who"], "via": r["via"]}
+                for r in self._conn.execute("SELECT item, who, via FROM shopping ORDER BY id")]
+
+    def add(self, item: str, who: str | None = None, via: str | None = None) -> bool:
         """False if it's already there."""
         if any(_norm(item) == _norm(existing) for existing in self.items()):
             return False
-        self._conn.execute("INSERT INTO shopping (item, added_at) VALUES (?, ?)", (item, local_now().isoformat()))
+        self._conn.execute("INSERT INTO shopping (item, added_at, who, via) VALUES (?, ?, ?, ?)",
+                           (item, local_now().isoformat(), who, via))
         self._conn.commit()
         return True
+
+    def remove_exact(self, item: str) -> list[str]:
+        """The app's tick: that one line, not everything like it ('хлеб' would take 'хлеб бородинский' too)."""
+        gone = [i for i in self.items() if _norm(i) == _norm(item)]
+        for i in gone:
+            self._conn.execute("DELETE FROM shopping WHERE item = ?", (i,))
+        self._conn.commit()
+        return gone
 
     def remove(self, query: str) -> list[str]:
         gone = [item for item in self.items() if matches(query, item)]
@@ -73,9 +93,14 @@ def make_handler(shopping: ShoppingList):
         if not items:
             return {"error": "Name the items."}
         if action == "add":
-            added = [i for i in items if shopping.add(i)]
+            who = ctx.resident if ctx.resident not in ("default", "panel", "") else None
+            via = "voice" if ctx.voice is not None else tool_input.get("via")  # said aloud, or typed / the app
+            added = [i for i in items if shopping.add(i, who, via)]
             already = [i for i in items if i not in added]
             return {"added": added, "already_there": already, "items": shopping.items()}
+        if action == "bought":  # the app's tick on one exact line
+            removed = [gone for i in items for gone in shopping.remove_exact(i)]
+            return {"removed": removed, "items": shopping.items()}
         if action == "remove":
             removed = [gone for i in items for gone in shopping.remove(i)]
             missing = [i for i in items if not any(matches(i, g) for g in removed)]
