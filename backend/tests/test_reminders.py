@@ -127,3 +127,19 @@ def test_a_one_off_is_done_when_it_rings(tmp_path):
     [item] = store.pending()
     store.rang(item, NOW)
     assert store.pending() == []
+
+
+def test_every_ring_is_logged_for_the_phones_and_old_ones_are_dropped(tmp_path):
+    store, handler = _setup(tmp_path)
+    _run(handler, kind="reminder", text="таблетки", at="2026-09-27T08:00", repeat="daily")
+    _run(handler, kind="timer", in_seconds=60)
+    reminder, timer = sorted(store.pending(), key=lambda r: r["kind"])  # "reminder" < "timer"
+    store.rang(timer, NOW)
+    store.rang(reminder, NOW + timedelta(days=1))
+    rings = store.rings_since(NOW - timedelta(minutes=1))
+    assert [(r["kind"], r["text"]) for r in rings] == [("timer", timer["text"]), ("reminder", "таблетки")]
+    assert [r["text"] for r in store.rings_since(NOW)] == ["таблетки"]  # only after the moment asked
+    store.rang(store.pending()[0], NOW + timedelta(days=4))  # two days on: the old rings are gone
+    assert [r["at"][:10] for r in store.rings_since(NOW - timedelta(days=9))] == ["2026-09-30"]
+    # a second connection (the panel's thread) sees them
+    assert len(ReminderStore(connect(str(tmp_path / "j.db"))).rings_since(NOW - timedelta(days=9))) == 1

@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from app.tools.registry import Tool, ToolRegistry, TurnContext
 
 MAX_AHEAD = timedelta(days=366)
+RINGS_KEPT = timedelta(days=2)  # the ring log: enough for a phone that was off for a while
 KINDS = ("timer", "reminder")
 
 # A reminder can repeat: rung, it moves on to the next such day, same time.
@@ -104,7 +105,8 @@ def timer_duration_words(seconds: float) -> str:
 
 
 class ReminderStore:
-    """On the voice loop's thread only - that's where its SQLite connection lives."""
+    """One per thread - an SQLite connection belongs to the thread that made it. The voice
+    loop rings them; the panel reads what rang (rings_since) for the phones."""
 
     SCHEMA = """
     CREATE TABLE IF NOT EXISTS reminders (
@@ -118,10 +120,22 @@ class ReminderStore:
         repeat TEXT
     )
     """
+    # every ring, for the phones (app/panel.py /api/alerts): rung at home, shown in the shade too
+    RINGS = """
+    CREATE TABLE IF NOT EXISTS reminder_rings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reminder_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        resident_id TEXT,
+        rung_at TEXT NOT NULL
+    )
+    """
 
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
         conn.execute(self.SCHEMA)
+        conn.execute(self.RINGS)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(reminders)")}
         if "repeat" not in columns:  # a database from before repeating reminders
             conn.execute("ALTER TABLE reminders ADD COLUMN repeat TEXT")
@@ -152,13 +166,22 @@ class ReminderStore:
         self._conn.commit()
 
     def rang(self, item: dict, now: datetime) -> None:
-        """A one-off is done; a repeating one moves on to its next day."""
+        """A one-off is done; a repeating one moves on to its next day. Either way the ring is logged."""
+        self._conn.execute("INSERT INTO reminder_rings (reminder_id, kind, text, resident_id, rung_at) VALUES (?, ?, ?, ?, ?)",
+                           (item["id"], item["kind"], item["text"], item.get("resident_id"), now.isoformat()))
+        self._conn.execute("DELETE FROM reminder_rings WHERE rung_at < ?", ((now - RINGS_KEPT).isoformat(),))
         if not item.get("repeat"):
             self.mark_done(item["id"])
             return
         due = next_occurrence(item["due"], item["repeat"], now)
         self._conn.execute("UPDATE reminders SET due_at = ? WHERE id = ?", (due.isoformat(), item["id"]))
         self._conn.commit()
+
+    def rings_since(self, since: datetime) -> list[dict]:
+        """What rang after `since`, oldest first: {id, kind, text, at}."""
+        rows = self._conn.execute("SELECT * FROM reminder_rings ORDER BY id").fetchall()
+        return [{"id": r["id"], "kind": r["kind"], "text": r["text"], "at": r["rung_at"]}
+                for r in rows if datetime.fromisoformat(r["rung_at"]) > since]
 
     @staticmethod
     def _item(row) -> dict:

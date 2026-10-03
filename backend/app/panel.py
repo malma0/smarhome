@@ -28,6 +28,7 @@ from app.tools.registry import TurnContext
 
 STATIC = Path(__file__).resolve().parent.parent / "static" / "panel"
 APK = Path(__file__).resolve().parents[2] / "android" / "build" / "jarvis.apk"  # android/build.py makes it
+RINGS_SHOWN = timedelta(minutes=15)  # a phone polling every 10 s, or back in the network a little later
 LOCKOUT_FAILURES, LOCKOUT_SECONDS = 5, 60
 CONTROL_FIELDS = ("room", "device", "action", "brightness_pct", "position", "temperature", "confirmed")
 WEATHER_SECONDS = 600
@@ -653,9 +654,21 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         from app import alerts as danger_now
 
         try:
-            return {"alerts": await danger_now.active(client)}
+            dangers = await danger_now.active(client)
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+        return {"alerts": dangers, "reminders": rang_lately()}
+
+    def rang_lately() -> list[dict]:
+        """Timers and reminders that rang at home in the last RINGS_SHOWN - the phones show them too."""
+        from app import reminders
+
+        try:
+            if "reminders" not in state:
+                state["reminders"] = reminders.ReminderStore(agent().memory.connection)
+            return state["reminders"].rings_since(datetime.now().astimezone() - RINGS_SHOWN)
+        except Exception:  # noqa: BLE001 - no database to read: the dangers still go out
+            return []
 
     @app.get("/api/automation", dependencies=[api])
     async def automation():

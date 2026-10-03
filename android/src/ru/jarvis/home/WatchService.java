@@ -27,12 +27,13 @@ import java.util.Set;
 /**
  * Watches the house while the app is closed: asks Jarvis for the dangers going on
  * (GET /api/alerts) every POLL_SECONDS and puts each new one up as a loud notification;
- * a danger that's over takes its notification away. Runs as a foreground service -
+ * a danger that's over takes its notification away. Timers and reminders that rang at
+ * home come in the same answer and go up once each, on their own channel. Runs as a foreground service -
  * Android keeps it alive, with a quiet "Jarvis следит за домом" line in the shade.
  */
 public class WatchService extends Service {
     static final int POLL_SECONDS = 10;
-    static final String WATCH_CHANNEL = "watch", ALARM_CHANNEL = "alarms";
+    static final String WATCH_CHANNEL = "watch", ALARM_CHANNEL = "alarms", REMINDER_CHANNEL = "reminders";
     static final int WATCH_ID = 1;
 
     private volatile boolean running;
@@ -142,6 +143,20 @@ public class WatchService extends Service {
         for (String key : new HashSet<>(shown.keySet())) {
             if (!now.contains(key)) manager().cancel(shown.remove(key));  // the sensor went quiet
         }
+        JSONArray rang = new JSONObject(body.toString("UTF-8")).optJSONArray("reminders");
+        if (rang != null) {
+            // each ring once, even across a restart of the service: the last one shown is remembered
+            SharedPreferences p = prefs(this);
+            long seen = p.getLong("ring_seen", 0);
+            for (int i = 0; i < rang.length(); i++) {
+                JSONObject r = rang.getJSONObject(i);
+                long id = r.optLong("id");
+                if (id <= seen) continue;
+                manager().notify(nextId++, reminderNotification("timer".equals(r.optString("kind")) ? "Таймер" : "Напоминание", r.optString("text")));
+                seen = id;
+            }
+            p.edit().putLong("ring_seen", seen).apply();
+        }
         return code;
     }
 
@@ -159,8 +174,11 @@ public class WatchService extends Service {
         alarms.enableVibration(true);
         alarms.setVibrationPattern(new long[]{0, 600, 300, 600, 300, 600});
         alarms.setBypassDnd(true);
+        NotificationChannel reminders = new NotificationChannel(REMINDER_CHANNEL, "Напоминания и таймеры", NotificationManager.IMPORTANCE_HIGH);
+        reminders.enableVibration(true);
         manager().createNotificationChannel(watch);
         manager().createNotificationChannel(alarms);
+        manager().createNotificationChannel(reminders);
     }
 
     private PendingIntent openApp() {
@@ -181,6 +199,20 @@ public class WatchService extends Service {
                 .setOngoing(true)
                 .setContentIntent(openApp())
                 .build();
+    }
+
+    @SuppressWarnings("deprecation")
+    private Notification reminderNotification(String title, String text) {
+        Notification.Builder b = builder(REMINDER_CHANNEL)
+                .setSmallIcon(android.R.drawable.ic_popup_reminder)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setCategory(Notification.CATEGORY_REMINDER)
+                .setAutoCancel(true)
+                .setContentIntent(openApp());
+        if (Build.VERSION.SDK_INT < 26) b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL);
+        return b.build();
     }
 
     @SuppressWarnings("deprecation")

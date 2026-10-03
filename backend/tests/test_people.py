@@ -114,3 +114,15 @@ def test_jarvis_answers_aloud_or_not_at_once_and_after_a_restart(tmp_path, monke
         assert settings.tts_enabled is False and "JARVIS_TTS_ENABLED=false" in env.read_text(encoding="utf-8")
     finally:
         object.__setattr__(settings, "tts_enabled", was)  # the settings are frozen for everyone else
+
+
+def test_the_phones_get_the_reminders_that_rang_at_home(client, tmp_path):
+    from app.reminders import ReminderStore
+
+    owner = {"X-Pin": PIN}
+    assert client.get("/api/alerts", headers=owner).json()["reminders"] == []
+    store = ReminderStore(connect(str(tmp_path / "t.db")))  # the voice loop's own connection to the same file
+    now = datetime.now().astimezone()
+    store.rang(store.add("reminder", "выключить духовку", now), now)
+    rings = client.get("/api/alerts", headers=owner).json()["reminders"]
+    assert [(r["kind"], r["text"]) for r in rings] == [("reminder", "выключить духовку")] and rings[0]["id"] >= 1
