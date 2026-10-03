@@ -131,6 +131,12 @@ class JarvisAgent:
         history.append({"role": "user", "content": f"{user_message}\n\n[{current_time_note()}]"})
 
         system_prompt = self._build_system_prompt(resident_id, spoken=spoken)
+        # What the residents asked to remember - for the main model; the own home model keeps the
+        # prompt it was trained on.
+        from app import notes
+
+        remembered = notes.prompt_note(self.memory, resident_id)
+        main_prompt = f"{system_prompt}\n\n{remembered}" if remembered else system_prompt
         groups = router.select(user_message, self._last_groups.get(session_id))
         names = None if groups is None else {n for g in groups for n in router.GROUPS[g]}
         tool_defs = self.tools.definitions(names)
@@ -153,7 +159,7 @@ class JarvisAgent:
                     self._home_llm_down_until = time.monotonic() + HOME_LLM_RETRY_SECONDS
             if response is None:
                 response = await self.llm.generate(
-                    system=system_prompt, messages=recent_turns(history, MAX_HISTORY_TURNS), tools=tool_defs
+                    system=main_prompt, messages=recent_turns(history, MAX_HISTORY_TURNS), tools=tool_defs
                 )
             history.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
 
@@ -270,6 +276,9 @@ def build_default_agent() -> JarvisAgent:
     from app.domains import booking, currency, radio, web_answer
 
     shopping.register(tools, shopping.ShoppingList(memory.connection))
+    from app import notes
+
+    notes.register(tools, memory)  # "запомни, что я пью кофе без сахара"
     radio.register(tools)
     currency.register(tools)
     web_answer.register(tools)
