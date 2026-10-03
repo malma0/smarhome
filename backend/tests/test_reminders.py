@@ -170,3 +170,14 @@ def test_stop_on_a_phone_marks_that_ring_and_only_that_one(tmp_path):
     assert store.stop_ring(ring2) and not store.stop_ring(999)
     assert store.stopped_rings([ring1, ring2]) == {ring2} and store.stopped_rings([]) == set()
     assert [r["stopped"] for r in store.rings_since(NOW - timedelta(minutes=1))] == [False, True]
+
+
+def test_for_everyone_is_no_ones_and_a_timer_knows_when_it_started(tmp_path):
+    from app.reminders import public
+
+    store = ReminderStore(connect(str(tmp_path / "j.db")))
+    handler = make_handler(store, now=lambda: NOW, residents=lambda: ["Матвей"])
+    added = asyncio.run(handler({"kind": "reminder", "text": "мусор", "in_seconds": 600, "for": "Всем"},
+                                TurnContext(resident="Матвей")))["added"]
+    assert "for" not in added and store.pending()[0]["resident_id"] is None
+    assert public(store.pending()[0], NOW)["created"]

@@ -207,7 +207,7 @@ class ReminderStore:
     def _item(row) -> dict:
         return {"id": row["id"], "kind": row["kind"], "text": row["text"],
                 "due": datetime.fromisoformat(row["due_at"]), "resident_id": row["resident_id"],
-                "repeat": row["repeat"]}
+                "repeat": row["repeat"], "created": row["created_at"]}
 
 
 def _parse_at(at: str, now: datetime) -> datetime:
@@ -228,7 +228,7 @@ def russian_error(error: str) -> str:
 
 def public(item: dict, now: datetime) -> dict:
     """For the app: the model's view plus the id and whose it is."""
-    return {**_public(item, now), "due": item["due"].isoformat()}
+    return {**_public(item, now), "due": item["due"].isoformat(), "created": item.get("created")}
 
 
 def _public(item: dict, now: datetime) -> dict:
@@ -242,7 +242,8 @@ def _public(item: dict, now: datetime) -> dict:
     return public
 
 
-NOBODY = (None, "", "default", "panel")  # a reminder no one in particular set: every phone gets it
+NOBODY = (None, "", "default", "panel")
+EVERYONE = {"все", "всем", "всех", "дом", "семья", "everyone", "all"}  # a reminder no one in particular set: every phone gets it
 
 
 def match_resident(asked: str, residents: list[str]) -> str | None:
@@ -312,7 +313,9 @@ def make_handler(store: ReminderStore, now=local_now, residents=None):
         elif not text:
             return {"error": "A reminder needs its text - what to remind about."}
         owner = ctx.resident
-        if tool_input.get("for"):  # "напомни Эле": hers - her phone gets it
+        if str(tool_input.get("for") or "").strip().casefold() in EVERYONE:
+            owner = None  # "напомни всем": no one's in particular - every phone
+        elif tool_input.get("for"):  # "напомни Эле": hers - her phone gets it
             people = residents() if residents else []
             owner = match_resident(str(tool_input["for"]), people)
             if owner is None:
