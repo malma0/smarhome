@@ -267,6 +267,7 @@ body { -webkit-text-size-adjust: 100%; }
 .screen > * { flex-shrink: 0; }  /* a scrolling column: its blocks keep their height instead of squeezing to fit */
 .jv-app:not([data-screen="home"]) .header, .jv-app:not([data-screen="home"]) .plan-stage, .jv-app:not([data-screen="home"]) #orb,
 .jv-app:not([data-screen="home"]) #skeleton, .jv-app:not([data-screen="home"]) .back, .jv-app:not([data-screen="home"]) .zoom-out { display: none; }
+.jv-app:not([data-screen="home"]) .tab-aside, .jv-app:not([data-screen="home"]) .tab-rooms { display: none; }  /* the tablet's house columns: the home screen's only */
 .jv-app[data-screen="scenes"] #screen-scenes { display: flex; animation: jvFadeUp .35s cubic-bezier(.2,.7,.2,1); }
 .scr-head { display: flex; flex-direction: column; gap: 4px; padding: 0 4px; }
 .scr-head h1 { margin: 0; font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; }
