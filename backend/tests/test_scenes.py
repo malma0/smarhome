@@ -139,3 +139,38 @@ def test_deleting_a_scenario_switches_off_the_schedules_that_ran_it():
     assert ha.automations["app_kino"]["variables"]["jarvis_schedule"]["name"] == "Кино по пятницам"
     client.delete("/api/scenes/kino", headers=h)
     assert ha.calls[-1][:2] == ("automation", "turn_off")
+
+
+def test_switching_a_schedule_off_switches_that_one_even_with_the_same_name():
+    ha = Made()
+    client = TestClient(create_app(client=ha, pin=PIN))
+    h = {"X-Pin": PIN}
+    client.post("/api/scenes", headers=h, json={"name": "Кино", "steps": [{"room": "Спальня", "device": "light", "action": "off"}]})
+    client.post("/api/schedules", headers=h, json={"action": "create", "name": "Доброе утро", "time": "08:00", "days": [1], "scene": "kino"})
+    client.post("/api/schedules", headers=h, json={"action": "disable", "id": "app_dobroe_utro", "name": "Доброе утро"})
+    assert ha.calls[-1] == ("automation", "turn_off", "automation.app_dobroe_utro", None)  # not the house's «Доброе утро»
+    client.post("/api/schedules", headers=h, json={"action": "enable", "id": "schedule_good_morning"})
+    assert ha.calls[-1] == ("automation", "turn_on", "automation.schedule_good_morning", None)
+
+
+def test_the_houses_own_scenario_keeps_its_actions_and_takes_new_steps():
+    ha = Made()
+    ha.scripts["dobroe_utro"] = {"alias": "Доброе утро", "description": "Фразы: доброе утро. Возвращает норму спальни.",
+                                 "sequence": [{"action": "scene.turn_on", "target": {"entity_id": "scene.before_night"}}]}
+    ha.states.append(_state("script.dobroe_utro", "off", friendly_name="Доброе утро"))
+    client = TestClient(create_app(client=ha, pin=PIN))
+    h = {"X-Pin": PIN}
+    listed = client.get("/api/scenes", headers=h).json()["scenes"][0]
+    assert listed["builtin"] and listed["keep_base"] and listed["base_does"] == "Возвращает норму спальни."
+    client.post("/api/scenes", headers=h, json={"id": "dobroe_utro", "name": "Доброе утро", "phrases": ["доброе утро", "я встал"],
+                                                "steps": [{"room": "Спальня", "device": "light", "action": "on"}]})
+    saved = ha.scripts["dobroe_utro"]
+    assert [a["action"] for a in saved["sequence"]] == ["scene.turn_on", "light.turn_on"]  # its own first, then the new step
+    assert saved["description"].startswith("Фразы: доброе утро, я встал. Возвращает норму спальни.")
+    after = client.get("/api/scenes", headers=h).json()["scenes"][0]
+    assert after["builtin"] and after["steps"] and after["base_does"] == "Возвращает норму спальни."  # still the house's own
+    client.post("/api/scenes", headers=h, json={"id": "dobroe_utro", "name": "Доброе утро", "keep_base": False,
+                                                "steps": [{"room": "Спальня", "device": "light", "action": "on"}]})
+    assert [a["action"] for a in ha.scripts["dobroe_utro"]["sequence"]] == ["light.turn_on"]
+    client.post("/api/scenes", headers=h, json={"id": "dobroe_utro", "name": "Доброе утро", "keep_base": True, "steps": []})
+    assert [a["action"] for a in ha.scripts["dobroe_utro"]["sequence"]] == ["scene.turn_on"]  # its own actions came back

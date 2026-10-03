@@ -14,6 +14,9 @@ __pycache__/
 backend/*.db
 # the flat's plan drawn in the app (app/layout.py) - this home's own
 backend/layout.json
+backend/layout.backup.json
+# guests' codes made in the app (app/people.py) - this home's own
+backend/guests.json
 
 # downloaded Piper voice models (tens of MB, fetched by README instructions)
 backend/voices/

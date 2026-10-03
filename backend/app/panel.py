@@ -93,11 +93,17 @@ async def scenes_view(client: HomeAssistantClient) -> list[dict]:
             config = {}
         description = config.get("description") or ""
         attrs = state.get("attributes", {})
+        variables = config.get("variables") or {}
+        builtin = "jarvis_steps" not in variables or bool(variables.get("jarvis_builtin"))
+        base_does = variables.get("jarvis_base_does") or home._scenario_does(description)
         scenes.append({"id": object_id, "name": attrs.get("friendly_name", object_id),
                        "does": home._scenario_does(description), "phrases": home._scenario_phrases(description),
                        "last": attrs.get("last_triggered"),
-                       "steps": (config.get("variables") or {}).get("jarvis_steps"),  # None: not made in the app
-                       "icon": (config.get("variables") or {}).get("jarvis_icon")})
+                       "steps": variables.get("jarvis_steps"),  # None: never edited in the app
+                       "icon": variables.get("jarvis_icon"),
+                       # the house's own: its smart actions (restoring norms...) stay a block, kept or taken out
+                       "builtin": builtin, "base_does": base_does if builtin else None,
+                       "keep_base": builtin and variables.get("jarvis_keep", True)})
     return scenes
 
 
@@ -254,14 +260,28 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         if len(recent) >= LOCKOUT_FAILURES:
             raise HTTPException(429, "Слишком много неверных PIN - подожди минуту.")
         given = request.headers.get("x-pin", "")
-        if not pin or not hmac.compare_digest(given.encode(), pin.encode()):
+        request.state.guest = None
+        if pin and hmac.compare_digest(given.encode(), pin.encode()):
+            return
+        from app import people
+
+        guest = people.guest_by_code(given, datetime.now().astimezone()) if pin else None
+        if guest is None:
             recent.append(now)
             raise HTTPException(401, "Неверный PIN.")
+        request.state.guest = guest  # a guest's code: the house yes, its setup no (see owner_only)
+
+    def owner_only(request: Request) -> None:
+        """How the house is set up - scenarios, schedules, automation, the plan, people - is the residents' business."""
+        check_pin(request)
+        if request.state.guest is not None:
+            raise HTTPException(403, "Гостевой доступ: это могут менять только жильцы.")
 
     app = FastAPI(title="Jarvis panel", docs_url=None, redoc_url=None, openapi_url=None)
     # the page, its scripts and styles go about five times smaller - an old phone on Wi-Fi opens it sooner
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     api = Depends(check_pin)
+    owner = Depends(owner_only)
 
     @app.middleware("http")
     async def always_fresh(request: Request, call_next):
@@ -295,8 +315,79 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         return FileResponse(APK, media_type="application/vnd.android.package-archive", filename="jarvis.apk")
 
     @app.get("/api/ping", dependencies=[api])
-    async def ping():
-        return {"ok": True}
+    async def ping(request: Request):
+        guest = request.state.guest
+        return {"ok": True, "guest": {"name": guest["name"], "until": guest["until"]} if guest else None}
+
+    @app.get("/api/people", dependencies=[owner])
+    async def people_view():
+        """Settings' people: the residents with their voices, the guests' codes, whether Jarvis speaks."""
+        from app import people
+
+        return {"residents": people.residents(agent().memory), "guests": people.guests(datetime.now().astimezone()),
+                "voice": people.voice(), "read_lines": people.READ_LINES, "guest_hours": list(people.GUEST_HOURS)}
+
+    @app.post("/api/residents", dependencies=[owner])
+    async def add_resident(body: dict):
+        from app import people
+
+        try:
+            people.add_resident(agent().memory, body.get("name"))
+        except ValueError as exc:
+            return {"error": f"Не подходит: {exc}"}
+        return await people_view()
+
+    @app.delete("/api/residents/{name}", dependencies=[owner])
+    async def remove_resident(name: str):
+        from app import people
+
+        try:
+            people.remove_resident(agent().memory, name)
+        except ValueError as exc:
+            return {"error": f"Не получилось: {exc}"}
+        return await people_view()
+
+    @app.post("/api/residents/voice", dependencies=[owner])
+    async def resident_voice(body: dict):
+        """{name, audio}: one phrase read into the phone - samples for that resident's voice profile."""
+        import base64
+        import binascii
+
+        from app import people
+
+        try:
+            wav = base64.b64decode(str(body.get("audio") or ""), validate=True)
+            # here, not in a worker thread: the memory's sqlite connection lives on this one (about a second)
+            added = people.learn_voice(agent().memory, str(body.get("name") or ""), wav)
+        except (binascii.Error, ValueError) as exc:
+            return {"error": f"Не получилось: {exc}"}
+        if not added:
+            return {"error": "Слишком тихо или коротко — прочитай фразу целиком ещё раз."}
+        return {"added": added, **(await people_view())}
+
+    @app.post("/api/guests", dependencies=[owner])
+    async def add_guest(body: dict):
+        from app import people
+
+        try:
+            guest = people.add_guest(body.get("name"), int(body.get("hours") or 0), datetime.now().astimezone(), pin or "")
+        except (ValueError, TypeError) as exc:
+            return {"error": f"Не подходит: {exc}"}
+        return {"guest": guest, **(await people_view())}
+
+    @app.delete("/api/guests/{code}", dependencies=[owner])
+    async def remove_guest(code: str):
+        from app import people
+
+        people.remove_guest(code, datetime.now().astimezone())
+        return await people_view()
+
+    @app.post("/api/voice-settings", dependencies=[owner])
+    async def voice_settings(body: dict):
+        from app import people
+
+        people.set_voice(bool(body.get("enabled")))
+        return await people_view()
 
     @app.get("/api/house", dependencies=[api])
     async def house():
@@ -329,19 +420,23 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
 
-    @app.post("/api/scenes", dependencies=[api])
+    @app.post("/api/scenes", dependencies=[owner])
     async def save_scene(body: dict):
         """{name, phrases, steps, id?}: a scenario made (or changed) in the app - a Home Assistant script."""
         from app import scenes as made
 
         try:
             current = await scenes_view(client)
-            config, _ = await made.build(client, body.get("name"), body.get("phrases") or [], body.get("steps") or [],
-                                         str(body.get("icon") or "play"))
+            mine = next((s for s in current if s["id"] == str(body.get("id"))), None) if body.get("id") else None
+            if body.get("id") and mine is None:
+                return {"error": "Нет такого сценария."}
+            if mine is not None and mine["builtin"]:
+                config = await builtin_config(mine, body)
+            else:
+                config, _ = await made.build(client, body.get("name"), body.get("phrases") or [], body.get("steps") or [],
+                                             str(body.get("icon") or "play"))
             if body.get("id"):
                 scene_id = str(body["id"])
-                if not any(s["id"] == scene_id for s in current):
-                    return {"error": "Нет такого сценария."}
             else:
                 if any(s["name"].casefold() == config["alias"].casefold() for s in current):
                     return {"error": "Сценарий с таким названием уже есть."}
@@ -359,6 +454,32 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
 
+    async def builtin_config(scene: dict, body: dict) -> dict:
+        """The house's own scenario changed in the app: its own actions (saved aside on the first edit, so they
+        can come back) unless taken out, then the steps added; its name, phrases and badge."""
+        from app import scenes as made
+
+        config = await client.get_script_config(scene["id"])
+        variables = dict(config.get("variables") or {})
+        base = variables["jarvis_base"] if "jarvis_base" in variables else (config.get("sequence") or [])
+        keep = bool(body.get("keep_base", True))
+        steps = body.get("steps") or []
+        if not keep and not steps:
+            raise ValueError("без встроенных действий нужен хотя бы один шаг")
+        extra, extra_does = await made.build(client, "шаги", [], steps) if steps else ({"sequence": []}, "")
+        name = str(body.get("name") or scene["name"]).strip()[:40]
+        if not name:
+            raise ValueError("нужно название")
+        phrases = made._phrases(body.get("phrases") or []) or [name.casefold()]
+        does = " ".join(x for x in ((scene["base_does"].rstrip(".") + ".") if keep else "", extra_does) if x)
+        icon = str(body.get("icon") or "play")
+        variables.update({"jarvis_steps": steps, "jarvis_icon": icon if icon in made.ICONS else "play",
+                          "jarvis_builtin": True, "jarvis_base": base, "jarvis_base_does": scene["base_does"],
+                          "jarvis_keep": keep})
+        config.update({"alias": name, "description": f"Фразы: {', '.join(phrases)}. {does}",
+                       "sequence": (base if keep else []) + extra["sequence"], "variables": variables})
+        return config
+
     @app.post("/api/scenes/try", dependencies=[api])
     async def try_scene(body: dict):
         """The editor's "Проверить": the steps run now, one after another, nothing saved."""
@@ -375,7 +496,7 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
 
-    @app.delete("/api/scenes/{scene_id}", dependencies=[api])
+    @app.delete("/api/scenes/{scene_id}", dependencies=[owner])
     async def delete_scene(scene_id: str):
         try:
             if not any(s["id"] == scene_id for s in await scenes_view(client)):
@@ -424,7 +545,7 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
     async def schedules():
         return await all_schedules()
 
-    @app.post("/api/schedules", dependencies=[api])
+    @app.post("/api/schedules", dependencies=[owner])
     async def change_schedule(body: dict):
         """enable / disable / set_time go through the tool's own rules; set_days, create and delete are the app's."""
         action = body.get("action")
@@ -449,6 +570,17 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
                 await asyncio.sleep(RELOAD_SECONDS)
             return listed
         found = next((s for s in (await all_schedules())["schedules"] if s["id"] == body.get("id")), None)
+        if found is not None and action in ("enable", "disable"):
+            # by its exact id - by name "Доброе утро" also matched the house's own «Доброе утро»
+            try:
+                entity = next((s["entity_id"] for s in await client.get_states() if s["entity_id"].startswith("automation.")
+                               and (s.get("attributes", {}).get("id") == found["id"] or s["entity_id"] == "automation." + found["id"])), None)
+                if entity is None:
+                    return {"error": "Нет такого расписания."}
+                await client.call_service("automation", "turn_on" if action == "enable" else "turn_off", entity)
+            except HomeAssistantError as exc:
+                raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+            return await all_schedules()
         if found is not None and found.get("app"):
             if action == "delete":
                 try:
@@ -502,7 +634,7 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
 
         return {"layout": layout.load()}
 
-    @app.put("/api/layout", dependencies=[api])
+    @app.put("/api/layout", dependencies=[owner])
     async def put_layout(body: dict):
         """The plan from the layout editor; null resets to the app's own sketch."""
         from app import layout
@@ -534,7 +666,7 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
 
-    @app.post("/api/automation", dependencies=[api])
+    @app.post("/api/automation", dependencies=[owner])
     async def change_automation(body: dict):
         """{key, value}: one knob of the house's behaviour, or a norm for every room."""
         from app import house_settings

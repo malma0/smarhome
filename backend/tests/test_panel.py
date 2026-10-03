@@ -118,7 +118,8 @@ def test_scenes_say_what_they_do_and_when_they_last_ran():
     ha.states.append(_state("script.ya_ushel", "off", friendly_name="Я ушёл", last_triggered="2026-10-01T08:41:00+07:00"))
     scenes = _client(ha).get("/api/scenes", headers={"X-Pin": PIN}).json()["scenes"]
     assert scenes == [{"id": "ya_ushel", "name": "Я ушёл", "does": scenes[0]["does"], "phrases": ["я ушёл", "я ухожу"],
-                       "last": "2026-10-01T08:41:00+07:00", "steps": None, "icon": None}]  # not made in the app
+                       "last": "2026-10-01T08:41:00+07:00", "steps": None, "icon": None,  # never edited in the app
+                       "builtin": True, "base_does": scenes[0]["does"], "keep_base": True}]
     assert "Фразы" not in scenes[0]["does"] and "охрана" in scenes[0]["does"]
 
 

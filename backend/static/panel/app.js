@@ -150,7 +150,7 @@
     });
     const data = await response.json().catch(() => null);
     if (response.status === 401 || response.status === 429) {
-      showLock(response.status === 401 ? "Неверный PIN." : (data && data.detail) || "Подожди минуту.");
+      showLock(response.status === 401 ? "Неверный PIN или код гостя закончился." : (data && data.detail) || "Подожди минуту.");
       throw new Error("locked");
     }
     if (!response.ok) throw new Error((data && data.detail) || ("Ошибка " + response.status));

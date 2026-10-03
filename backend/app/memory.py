@@ -71,6 +71,12 @@ class MemoryStore:
         ).fetchall()
         return {row["key"]: row["value"] for row in rows}
 
+    def remove_resident(self, resident_id: str) -> None:
+        """The resident and everything kept about them (their voice profile is a preference too)."""
+        self._conn.execute("DELETE FROM preferences WHERE resident_id = ?", (resident_id,))
+        self._conn.execute("DELETE FROM residents WHERE resident_id = ?", (resident_id,))
+        self._conn.commit()
+
     def list_resident_ids(self) -> list[str]:
         rows = self._conn.execute("SELECT resident_id FROM residents").fetchall()
         return [row["resident_id"] for row in rows]

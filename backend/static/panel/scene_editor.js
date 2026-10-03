@@ -113,7 +113,7 @@
   // ---------------------------------------------------------------- the scenario editor
 
   const ed = { node: null, id: null, name: "", icon: "play", phrases: [], phraseEditing: false, steps: [], pk: null,
-    drag: null, tested: -1, testing: false, ask: null };
+    drag: null, tested: -1, testing: false, ask: null, builtin: false, keepBase: true, baseDoes: "" };
 
   function section(id) {
     const node = document.createElement("section");
@@ -130,7 +130,9 @@
         <label class="se-field"><span>Название</span><input id="seName" placeholder="Например, «Кино»" maxlength="40" autocomplete="off"></label>
         <div class="se-field"><span>Значок</span><div class="se-icons" id="seIcons" role="radiogroup" aria-label="Значок сценария"></div></div></div>
       <section class="se-sec"><div class="cap"><h2>Фразы для голоса</h2><span id="seHint"></span></div><div class="se-phrases" id="sePhrases"></div></section>
-      <section class="se-sec"><div class="cap row"><h2>Шаги</h2><span id="seCount"></span></div><div id="seSteps"></div>
+      <section class="se-sec" id="seBase" hidden><div class="cap"><h2>Встроенные действия</h2><span>Умные действия самого дома — например, вернуть нормы, как было до ухода</span></div>
+        <div class="se-base"><i>${icon("home", 18)}</i><span id="seBaseText"></span><button class="switch" role="switch" data-base-toggle aria-label="Оставить встроенные действия"><span class="trk"><span class="knob"></span></span></button></div></section>
+      <section class="se-sec"><div class="cap row"><h2 id="seStepsCap">Шаги</h2><span id="seCount"></span></div><div id="seSteps"></div>
         <button class="se-add jv-press" data-add>${icon("plus", 18)}Добавить шаг</button></section>
       <section class="se-summary"><i>${icon("voice", 17)}</i><span><small>Что сделает</small><b id="seSummary" aria-live="polite"></b></span></section>
       <button class="se-delete jv-press" data-delete id="seDelete">${icon("close", 16)}Удалить сценарий</button>
@@ -171,11 +173,26 @@
     drawSummary();
   }
 
+  function drawBase() {
+    const sec = ed.node.querySelector("#seBase");
+    sec.hidden = !ed.builtin;
+    if (!ed.builtin) return;
+    ed.node.querySelector("#seBaseText").textContent = ed.baseDoes;
+    const sw = ed.node.querySelector("[data-base-toggle]");
+    sw.classList.toggle("on", ed.keepBase);
+    sw.setAttribute("aria-checked", ed.keepBase);
+    sec.querySelector(".se-base").classList.toggle("off", !ed.keepBase);
+    ed.node.querySelector("#seStepsCap").textContent = "Свои шаги";
+  }
+
   function drawSummary() {
     const box = ed.node.querySelector("#seSummary");
-    if (!ed.steps.length) { box.textContent = "Добавь шаги — здесь появится описание обычными словами."; box.className = "none"; }
-    else {
-      const parts = ed.steps.map(phrase);
+    const base = ed.builtin && ed.keepBase ? ed.baseDoes.replace(/\.$/, "") : "";
+    if (!ed.steps.length) {
+      box.textContent = base ? base + "." : "Добавь шаги — здесь появится описание обычными словами.";
+      box.className = base ? "" : "none";
+    } else {
+      const parts = (base ? [base.charAt(0).toLowerCase() + base.slice(1)] : []).concat(ed.steps.map(phrase));
       let shown = parts.slice(0, 4);
       if (parts.length > 4) shown = parts.slice(0, 3).concat(["ещё " + plural(parts.length - 3, "действие", "действия", "действий")]);
       const txt = shown.length > 1 ? shown.slice(0, -1).join(", ") + " и " + shown[shown.length - 1] : shown[0];
@@ -186,7 +203,7 @@
   }
 
   function drawBar() {
-    const valid = ed.name.trim().length > 0 && ed.steps.length > 0;
+    const valid = ed.name.trim().length > 0 && (ed.steps.length > 0 || (ed.builtin && ed.keepBase));
     const save = ed.node.querySelector("[data-save]");
     save.disabled = !valid;
     save.setAttribute("aria-label", valid ? "Сохранить" : "Сохранить — сначала добавь название и шаг");
@@ -202,7 +219,7 @@
     o.innerHTML = `<button class="scrim" data-pk-close aria-label="Закрыть выбор шага"></button>` + pickerHtml();
   }
 
-  function drawAll() { drawIcons(); drawPhrases(); drawSteps(); drawOverlay(); }
+  function drawAll() { drawIcons(); drawPhrases(); drawBase(); drawSteps(); drawOverlay(); }
 
   // ---------------------------------------------------------------- the step picker: where, what, what to do
 
@@ -340,6 +357,9 @@
     ed.icon = scene ? data().icon(scene) : "play";
     ed.phrases = scene && !copy ? scene.phrases.slice() : [];  // a copy's phrases would start the original too
     ed.steps = scene && scene.steps ? scene.steps.map(fromApi).filter((s) => s.thing) : [];
+    ed.builtin = !!(scene && scene.builtin && !copy);  // a copy is a plain scenario: the house's own actions stay with the original
+    ed.keepBase = ed.builtin ? scene.keep_base !== false : true;
+    ed.baseDoes = ed.builtin ? scene.base_does || "" : "";
     ed.phraseEditing = false; ed.pk = null; ed.drag = null; ed.tested = -1; ed.testing = false; ed.ask = null;
     ed.node.querySelector("#seTitle").textContent = ed.id ? "Сценарий" : "Новый сценарий";
     ed.node.querySelector("#seName").value = ed.name;
@@ -379,6 +399,7 @@
 
   async function save() {
     const body = { name: ed.name.trim(), icon: ed.icon, phrases: ed.phrases, steps: ed.steps.map(toApi) };
+    if (ed.builtin) body.keep_base = ed.keepBase;
     if (ed.id) body.id = ed.id;
     try {
       const r = await api("POST", "/api/scenes", body);
@@ -421,6 +442,7 @@
     }
     if (ed.pk && pickerClick(t)) return;
     if (t.closest("[data-back]")) { window.JV.show("scenes"); return; }
+    if (t.closest("[data-base-toggle]")) { ed.keepBase = !ed.keepBase; drawBase(); drawSummary(); return; }
     const ic = t.closest("[data-icon-pick]");
     if (ic) { ed.icon = ic.dataset.iconPick; drawIcons(); return; }
     if (t.closest("[data-phrase-start]")) { ed.phraseEditing = true; drawPhrases(); return; }
