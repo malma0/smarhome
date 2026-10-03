@@ -1099,3 +1099,20 @@ def test_where_the_time_went_is_shown():
 
     note = voice_app.timing_note({"whisper": 1.42, "voice": 0.0, "answer": 0.81, "local": True})
     assert note == "(распознала 1,4 с · голос 0,0 с · ответ 0,8 с, своя модель)"
+
+
+def test_a_long_phrase_goes_to_the_full_whisper_a_command_stays_on_turbo(monkeypatch):
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"text": "x"}
+
+    mock_post = AsyncMock(return_value=_Resp())
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    second = 16000 * 2
+    asyncio.run(transcribe(b"\0" * (44 + 3 * second), api_key="k", base_url="https://x"))
+    assert mock_post.call_args.kwargs["data"]["model"] == "whisper-large-v3-turbo"
+    asyncio.run(transcribe(b"\0" * (44 + 6 * second), api_key="k", base_url="https://x"))
+    assert mock_post.call_args.kwargs["data"]["model"] == "whisper-large-v3"

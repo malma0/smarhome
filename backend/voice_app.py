@@ -70,6 +70,11 @@ from app.wake_word import WakeWordDetector, classify, parse_wake_words
 
 SAMPLE_RATE = 16000
 WHISPER_MODEL = "whisper-large-v3-turbo"
+# A long phrase goes to the full model. Measured on the resident's 25 recordings (2026-10-03): on
+# commands both hear the same (turbo 0.25 s, full 0.5 s), but on 12 s of natural speech turbo heard
+# "Раиса, Дискор, Дискор" and the full model the whole sentence. Commands stay fast.
+WHISPER_LONG_MODEL = "whisper-large-v3"
+LONG_PHRASE_SECONDS = 5.0
 
 # Words Whisper otherwise tends to mishear - names, brands, app names.
 # Extended from WHISPER_VOCABULARY in .env and with every known resident's
@@ -131,7 +136,8 @@ def build_whisper_prompt(extra_vocabulary: str, resident_ids: list[str]) -> str:
 async def transcribe(wav_bytes: bytes, api_key: str, base_url: str, prompt: str = "") -> str:
     """Reuses one connection (app.http_client) - a fresh client per phrase
     measured 2.0-2.4 s for this call, a reused one 0.23-0.31 s."""
-    data = {"model": WHISPER_MODEL, "language": "ru"}
+    seconds = max(0, len(wav_bytes) - 44) / (SAMPLE_RATE * 2)  # 16 kHz int16 mono, as recorded
+    data = {"model": WHISPER_LONG_MODEL if seconds >= LONG_PHRASE_SECONDS else WHISPER_MODEL, "language": "ru"}
     if prompt:
         data["prompt"] = prompt
     response = await shared_client().post(
