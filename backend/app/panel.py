@@ -95,7 +95,8 @@ async def scenes_view(client: HomeAssistantClient) -> list[dict]:
         scenes.append({"id": object_id, "name": attrs.get("friendly_name", object_id),
                        "does": home._scenario_does(description), "phrases": home._scenario_phrases(description),
                        "last": attrs.get("last_triggered"),
-                       "steps": (config.get("variables") or {}).get("jarvis_steps")})  # None: not made in the app
+                       "steps": (config.get("variables") or {}).get("jarvis_steps"),  # None: not made in the app
+                       "icon": (config.get("variables") or {}).get("jarvis_icon")})
     return scenes
 
 
@@ -330,7 +331,8 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
 
         try:
             current = await scenes_view(client)
-            config, _ = await made.build(client, body.get("name"), body.get("phrases") or [], body.get("steps") or [])
+            config, _ = await made.build(client, body.get("name"), body.get("phrases") or [], body.get("steps") or [],
+                                         str(body.get("icon") or "play"))
             if body.get("id"):
                 scene_id = str(body["id"])
                 if not any(s["id"] == scene_id for s in current):
@@ -352,12 +354,34 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
 
+    @app.post("/api/scenes/try", dependencies=[api])
+    async def try_scene(body: dict):
+        """The editor's "Проверить": the steps run now, one after another, nothing saved."""
+        from app import scenes as made
+
+        try:
+            config, _ = await made.build(client, "Проверка", [], body.get("steps") or [])
+            for action in config["sequence"]:
+                domain, service = action["action"].split(".", 1)
+                await client.call_service(domain, service, action["target"]["entity_id"], action.get("data"))
+            return {"done": len(config["sequence"])}
+        except (ValueError, TypeError) as exc:
+            return {"error": f"Не подходит: {exc}"}
+        except HomeAssistantError as exc:
+            raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
+
     @app.delete("/api/scenes/{scene_id}", dependencies=[api])
     async def delete_scene(scene_id: str):
         try:
             if not any(s["id"] == scene_id for s in await scenes_view(client)):
                 return {"error": "Нет такого сценария."}
             await client.delete_script_config(scene_id)
+            for schedule in (await all_schedules())["schedules"]:
+                if schedule.get("app") and schedule.get("scene") == scene_id and schedule["on"]:
+                    entity = next((s["entity_id"] for s in await client.get_states()
+                                   if s.get("attributes", {}).get("id") == schedule["id"]), None)
+                    if entity:  # it would only fail now: off, as the delete dialog says
+                        await client.call_service("automation", "turn_off", entity)
             return {"scenes": await scenes_view(client)}
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
@@ -431,6 +455,8 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
                 return await rewrite_schedule(found, time=body.get("time"))
             if action == "set_days":
                 return await rewrite_schedule(found, days=body.get("days"))
+            if action == "update":
+                return await rewrite_schedule(found, **{k: body[k] for k in ("name", "time", "days", "scene") if k in body})
         if action == "delete":
             return {"error": "Удалить можно только расписание, созданное в приложении."}
         if action == "set_days":

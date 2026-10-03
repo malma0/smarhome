@@ -114,3 +114,28 @@ def test_the_panel_makes_lists_and_deletes_them():
     gone = client.post("/api/schedules", headers=h, json={"action": "delete", "id": mine[0]["id"]}).json()
     assert not [s for s in gone["schedules"] if s.get("app")]
     assert client.delete("/api/scenes/kino", headers=h).json()["scenes"] == []
+
+
+def test_trying_steps_runs_them_now_and_saves_nothing():
+    ha = Made()
+    client = TestClient(create_app(client=ha, pin=PIN))
+    got = client.post("/api/scenes/try", headers={"X-Pin": PIN}, json={"steps": [
+        {"room": "Спальня", "device": "light", "action": "on", "brightness_pct": 20}]}).json()
+    assert got == {"done": 1} and ha.calls[-1] == ("light", "turn_on", ["light.bedroom"], {"brightness_pct": 20})
+    assert ha.scripts == {}
+    assert "error" in client.post("/api/scenes/try", headers={"X-Pin": PIN}, json={"steps": [
+        {"room": "Спальня", "device": "water_valve", "action": "on"}]}).json()
+
+
+def test_deleting_a_scenario_switches_off_the_schedules_that_ran_it():
+    ha = Made()
+    client = TestClient(create_app(client=ha, pin=PIN))
+    h = {"X-Pin": PIN}
+    client.post("/api/scenes", headers=h, json={"name": "Кино", "icon": "moon", "steps": [
+        {"room": "Спальня", "device": "light", "action": "off"}]})
+    assert client.get("/api/scenes", headers=h).json()["scenes"][0]["icon"] == "moon"
+    client.post("/api/schedules", headers=h, json={"action": "create", "name": "Кино", "time": "21:00", "days": [5], "scene": "kino"})
+    client.post("/api/schedules", headers=h, json={"action": "update", "id": "app_kino", "name": "Кино по пятницам", "time": "20:30"})
+    assert ha.automations["app_kino"]["variables"]["jarvis_schedule"]["name"] == "Кино по пятницам"
+    client.delete("/api/scenes/kino", headers=h)
+    assert ha.calls[-1][:2] == ("automation", "turn_off")

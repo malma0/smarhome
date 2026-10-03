@@ -48,7 +48,10 @@ def _phrases(said: list) -> list[str]:
     return out
 
 
-async def build(client, name: str, phrases: list, steps: list) -> tuple[dict, str]:
+ICONS = ("play", "moon", "sunrise", "home", "exit", "light")  # the design's choice of badges
+
+
+async def build(client, name: str, phrases: list, steps: list, icon: str = "play") -> tuple[dict, str]:
     """(the script's config, what it does in words). ValueError says what's wrong, in Russian."""
     name = str(name or "").strip()[:40]
     if not name:
@@ -112,7 +115,8 @@ async def build(client, name: str, phrases: list, steps: list) -> tuple[dict, st
     text = text[:1].upper() + text[1:] + "."
     said = _phrases(phrases) or [name.casefold()]
     config = {"alias": name, "description": f"Фразы: {', '.join(said)}. {text}", "mode": "single",
-              "sequence": actions, "variables": {"jarvis_steps": steps}}
+              "sequence": actions,
+              "variables": {"jarvis_steps": steps, "jarvis_icon": icon if icon in ICONS else "play"}}
     return config, text
 
 
