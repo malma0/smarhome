@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import settings
 from app.domains import home
@@ -258,6 +259,8 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
             raise HTTPException(401, "Неверный PIN.")
 
     app = FastAPI(title="Jarvis panel", docs_url=None, redoc_url=None, openapi_url=None)
+    # the page, its scripts and styles go about five times smaller - an old phone on Wi-Fi opens it sooner
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     api = Depends(check_pin)
 
     @app.middleware("http")
@@ -265,7 +268,9 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         # the phone's WebView would otherwise keep an old app.js / app.css for hours after an update;
         # no-cache still lets it reuse the file when the ETag says it's the same
         response = await call_next(request)
-        if request.url.path.startswith("/panel"):
+        if request.url.path.startswith("/panel/fonts/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"  # fonts never change
+        elif request.url.path.startswith("/panel"):
             response.headers["Cache-Control"] = "no-cache"
         return response
 
