@@ -132,7 +132,8 @@ def test_a_phrase_is_transcribed_answered_and_logged(memory, tmp_path, monkeypat
 
     asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
 
-    session.agent.chat.assert_awaited_once_with("voice-session", "default", "включи свет", spoken=False)
+    session.agent.chat.assert_awaited_once_with("voice-session", "default", "включи свет", spoken=False,
+                                                voice="unknown")  # voice ID off in this test: not a known voice
     assert session.last_utterance_id is not None
     metadata = (tmp_path / "ds" / "metadata.jsonl").read_text("utf-8").splitlines()
     [record] = [json.loads(line) for line in metadata]

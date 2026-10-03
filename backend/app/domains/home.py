@@ -55,6 +55,9 @@ DEVICE_TYPES = ("light", "socket", "ac", "heating", "ventilation", "humidifier",
 VALVE_TYPES = {"water_valve", "gas_valve"}
 HOUSE_TYPES = VALVE_TYPES | {"security"}  # one per house - found wherever they are, the room doesn't matter
 SECURITY_ENTITY = "input_boolean.security_armed"
+# Said aloud by a voice that wasn't recognized: the guard stays on (app/tools/registry.TurnContext.voice).
+GUARD_NEEDS_A_KNOWN_VOICE = ("Не узнал голос, а охрану голосом снимают только жильцы. Скажи ещё раз, фразой подлиннее, "
+                             "или сними охрану в приложении.")
 HOUSE = "Весь дом"  # where house-wide things (the guard, electricity) are listed
 # House-wide sensors, by entity id -> the name the model reads.
 HOUSE_SENSORS = {"sensor.house_power": "power_now", "sensor.house_energy_today": "electricity_today",
@@ -218,6 +221,14 @@ def _words(text: str) -> str:
     return " ".join(w for w in text.split() if w not in ("джарвис", "джервис"))
 
 
+def disarms(object_id: str, config: dict) -> bool:
+    """Running this scenario turns the guard off: "Я дома" (the house disarms on it), or a step of its own."""
+    import json
+
+    sequence = json.dumps(config.get("sequence") or [], ensure_ascii=False)
+    return object_id == "ya_doma" or (SECURITY_ENTITY in sequence and "turn_off" in sequence)
+
+
 def _scenario_phrases(description: str) -> list[str]:
     """'Фразы: я ушёл, я ухожу. Гасит свет...' -> ['я ушёл', 'я ухожу']."""
     head, found, rest = description.partition("Фразы:")
@@ -352,6 +363,9 @@ def make_handlers(client: HomeAssistantClient):
         action = tool_input.get("action")
         if device_type not in DEVICE_TYPES or action not in ("on", "off"):
             return {"error": f"device must be one of {', '.join(DEVICE_TYPES)} and action on/off."}
+        if device_type == "security" and action == "off" and ctx.voice == "unknown":
+            return {"error": "The guard is turned off by voice only for a recognized resident.",
+                    "say_exactly": GUARD_NEEDS_A_KNOWN_VOICE}
         confirmed = bool(tool_input.get("confirmed", False))
         brightness_pct = tool_input.get("brightness_pct")
         temperature = tool_input.get("temperature")
@@ -483,15 +497,18 @@ def make_handlers(client: HomeAssistantClient):
 
     async def run_scenario(tool_input: dict, ctx: TurnContext) -> dict:
         try:
-            scripts = [s for s in await client.get_states() if s["entity_id"].startswith("script.")]
+            states = await client.get_states()
+            scripts = [s for s in states if s["entity_id"].startswith("script.")]
             scenarios = []
             for state in scripts:
                 object_id = state["entity_id"].split(".", 1)[1]
                 try:
-                    description = (await client.get_script_config(object_id)).get("description") or ""
+                    config = await client.get_script_config(object_id)
                 except HomeAssistantError:
-                    description = ""  # a script defined outside scripts.yaml has no editable config
+                    config = {}  # a script defined outside scripts.yaml has no editable config
+                description = config.get("description") or ""
                 scenarios.append({
+                    "disarms": disarms(object_id, config),
                     "id": object_id,
                     "name": state["attributes"].get("friendly_name", object_id),
                     "phrases": _scenario_phrases(description),
@@ -506,6 +523,10 @@ def make_handlers(client: HomeAssistantClient):
         scenario = match_scenario(asked, scenarios)
         if scenario is None:
             return {"error": f"No scenario called '{asked}'.", "scenarios": listing}
+        armed = any(s["entity_id"] == SECURITY_ENTITY and s["state"] == "on" for s in states)
+        if armed and scenario["disarms"] and ctx.voice == "unknown":
+            return {"error": f"'{scenario['name']}' would turn the guard off - by voice only for a recognized resident.",
+                    "say_exactly": GUARD_NEEDS_A_KNOWN_VOICE}
         try:
             await client.call_service("script", scenario["id"])  # waits until it has run
         except HomeAssistantError as exc:

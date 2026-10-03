@@ -197,6 +197,19 @@ ASKED = "asked"  # the person said who they are
 UNKNOWN = "unknown"  # not recognized and not named, or voice ID unavailable
 CORRECTED = "corrected"  # fixed by hand afterwards ("Кто говорил?")
 SURE = {CONFIDENT, ASKED, CORRECTED}
+# A short phrase with no decisive match counts as whoever was recognized last - for the guard only
+# if that was this recent (a stranger at the door hours after a resident spoke isn't that resident).
+LAST_TRUSTED_SECONDS = 120
+
+
+def voice_trust(how: str | None, recognized_at: float, now: float) -> str:
+    """"resident" when the voice is known well enough to disarm the guard, else "unknown". A name
+    typed at "как вас зовут?" doesn't count: anyone can type a resident's name."""
+    if how in (CONFIDENT, CLOSER):
+        return "resident"
+    if how == LAST and now - recognized_at <= LAST_TRUSTED_SECONDS:
+        return "resident"
+    return "unknown"
 
 
 @dataclass
@@ -486,6 +499,8 @@ class VoiceSession:
     # the name doesn't count as being interrupted.
     speaking_text: str = ""
     answered_locally: bool = False  # the last answer came from the own home model
+    voice: str = "unknown"  # the last phrase's speaker for the guard - see voice_trust
+    recognized_at: float = -1e9  # when a resident's voice was last matched (monotonic)
 
 
 async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSession | None:
@@ -705,7 +720,7 @@ def _failure_reply(exc: Exception) -> str:
     return f"Не получилось ответить ({type(exc).__name__}). Повтори, пожалуйста."
 
 
-async def _answer(session: VoiceSession, text: str) -> str:
+async def _answer(session: VoiceSession, text: str, voice: str | None = None) -> str:
     if is_stop_phrase(text) and session.on_stop is not None:
         # "Джарвис, стоп" - handled here, not by the model (no tokens, no wait).
         session.on_stop()
@@ -714,7 +729,8 @@ async def _answer(session: VoiceSession, text: str) -> str:
     session.ui.state(THINKING, "Думаю...")
     session.answered_locally = False
     try:
-        result = await session.agent.chat(session.session_id, session.resident_id, text, spoken=settings.tts_enabled)
+        result = await session.agent.chat(session.session_id, session.resident_id, text, spoken=settings.tts_enabled,
+                                          voice=voice)
     except Exception as exc:  # noqa: BLE001 - the model failing (rate limit, network) mustn't end the session
         reply = _failure_reply(exc)
         session.ui.info(f"(ошибка модели: {exc!r})")
@@ -782,6 +798,10 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
             embedding=embedding,
         )
         session.resident_id = decision.resident
+    now = time.monotonic()
+    session.voice = voice_trust(decision.how if decision else None, session.recognized_at, now)
+    if decision is not None and decision.how in (CONFIDENT, CLOSER):
+        session.recognized_at = now
     voice_seconds = time.monotonic() - started  # beyond Whisper: the two run side by side
 
     # Logged right away - before answering - so the phrase can be corrected
@@ -812,7 +832,7 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
         return
 
     started = time.monotonic()
-    response = await _answer(session, text)
+    response = await _answer(session, text, voice=session.voice)
     timings = {"whisper": round(whisper_seconds, 2), "voice": round(voice_seconds, 2),
                "answer": round(time.monotonic() - started, 2), "local": session.answered_locally}
     ui.info(timing_note(timings))

@@ -108,7 +108,8 @@ class JarvisAgent:
             prompt += f"\n\n{SPOKEN_REPLY_RULES}"
         return prompt
 
-    async def chat(self, session_id: str, resident_id: str, user_message: str, spoken: bool = False) -> dict:
+    async def chat(self, session_id: str, resident_id: str, user_message: str, spoken: bool = False,
+                   voice: str | None = None) -> dict:
         self.memory.ensure_resident(resident_id)
         # Detected early (before the system prompt is built) so a message
         # that reveals gender for the first time can already inform this
@@ -117,7 +118,7 @@ class JarvisAgent:
         history = self._sessions.setdefault(session_id, [])
         turn_start = len(history)
         try:
-            return await self._turn(history, resident_id, user_message, spoken, session_id)
+            return await self._turn(history, resident_id, user_message, spoken, session_id, voice)
         except asyncio.CancelledError:
             # "Джарвис, стоп" mid-answer: the whole turn goes. Left half-done -
             # a tool call without its result - the next request would be
@@ -126,14 +127,14 @@ class JarvisAgent:
             raise
 
     async def _turn(self, history: list[dict], resident_id: str, user_message: str, spoken: bool,
-                    session_id: str = "") -> dict:
+                    session_id: str = "", voice: str | None = None) -> dict:
         history.append({"role": "user", "content": f"{user_message}\n\n[{current_time_note()}]"})
 
         system_prompt = self._build_system_prompt(resident_id, spoken=spoken)
         groups = router.select(user_message, self._last_groups.get(session_id))
         names = None if groups is None else {n for g in groups for n in router.GROUPS[g]}
         tool_defs = self.tools.definitions(names)
-        ctx = TurnContext(said=user_message)
+        ctx = TurnContext(said=user_message, voice=voice)
         actions: list[dict] = []
         final_text = None
         local = (self.home_llm is not None and groups == {"home"} and not router.beyond_home_model(user_message)
@@ -175,6 +176,14 @@ class JarvisAgent:
                     }
                 )
             history.append({"role": "user", "content": tool_results})
+            # A refusal that must be said as it is (the guard and a voice it didn't know): no model's
+            # rewording - a small one could still say the guard is off.
+            exact = next((a["result"]["say_exactly"] for a in actions if isinstance(a["result"], dict)
+                          and a["result"].get("say_exactly")), None)
+            if exact:
+                final_text = exact
+                history.append({"role": "assistant", "content": [{"type": "text", "text": exact}]})
+                break
 
         if final_text is None:
             final_text = (

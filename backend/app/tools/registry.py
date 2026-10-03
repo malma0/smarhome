@@ -23,6 +23,9 @@ class TurnContext:
 
     touched: set[str] = field(default_factory=set)
     said: str = ""  # the person's words this turn - for guards that check the model against them
+    # Said aloud: "resident" - a resident's voice was recognized, "unknown" - it wasn't. None: not by
+    # voice (typed at the computer, the PIN-locked panel). Disarming the guard by voice needs "resident".
+    voice: str | None = None
 
 
 @dataclass(frozen=True)
