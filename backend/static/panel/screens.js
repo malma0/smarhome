@@ -14,6 +14,10 @@
   }
 
   const pad = (n) => (n < 10 ? "0" : "") + n;
+  const plural = (n, one, few, many) => {
+    const t = n % 10, h = n % 100;
+    return n + " " + (t === 1 && h !== 11 ? one : t >= 2 && t <= 4 && (h < 12 || h > 14) ? few : many);
+  };
   const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
   /** "2026-10-02T07:00:00+07:00" -> "Сегодня, 07:00" / "Вчера, 23:30" / "28 сен, 08:41". */
@@ -35,54 +39,107 @@
 
   const SCENE_ICONS = { "я ушёл": "exit", "я дома": "home", "спокойной ночи": "moon", "доброе утро": "sunrise" };
   const DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+  const sceneIcon = (x) => x.icon || SCENE_ICONS[x.name.toLowerCase()] || "play";
 
-  const scenes = { node: null, list: null, scheds: null, running: "", justRan: "", busy: false };
+  const scenes = { node: null, list: null, scheds: null, running: "", justRan: "", busy: false, holding: "", menu: "", ask: null, lp: 0, lpFired: false };
+  const steps = (n) => plural(n, "шаг", "шага", "шагов");
+
+  function sceneCard(x, latest) {
+    const s = scenes;
+    const running = s.running === x.id;
+    const active = !running && !s.running && latest && latest.id === x.id;
+    let meta = when(x.last) || "Ещё не запускался";
+    if (running) meta = "Выполняется…";
+    else if (active) meta = "Запущен · " + (s.justRan === x.id ? "только что" : meta.split(", ").pop());
+    return `<button class="scene jv-press${active ? " active" : ""}${running ? " running" : ""}" data-run="${esc(x.id)}" aria-label="Запустить сценарий «${esc(x.name)}»">
+      <span class="top"><span class="ic-box">${icon(sceneIcon(x), 22)}</span>${active ? `<span class="done">${icon("check", 14)}</span>` : ""}</span>
+      <span class="txt"><span class="name">${esc(x.name)}</span><span class="desc">${esc(x.does)}</span><span class="meta">${esc(meta)}</span></span>
+      ${running ? `<span class="run"></span>` : ""}</button>`;
+  }
+
+  function mineCard(x) {
+    const s = scenes;
+    const running = s.running === x.id, ran = s.justRan === x.id && !running, holding = s.holding === x.id, lifted = s.menu === x.id;
+    const meta = running ? "Выполняется…" : ran ? "Запущен · только что"
+      : (x.phrases.length ? "«" + x.phrases[0] + "» · " : "") + steps(x.steps.length);
+    const cls = (running ? " running" : "") + (ran ? " ran" : "") + (holding ? " holding" : "") + (lifted ? " lifted" : "");
+    return `<div class="mine-card${cls}"><button class="go" data-mine="${esc(x.id)}" aria-label="Запустить «${esc(x.name)}». Удерживай для меню">
+        <span class="ic-box">${icon(sceneIcon(x), 21)}</span><span class="words"><b>${esc(x.name)}</b><span>${esc(x.does)}</span>
+        <small>${icon("mic", 12)}${esc(meta)}</small></span></button>
+      <button class="edit jv-press" data-edit="${esc(x.id)}" aria-label="Изменить сценарий «${esc(x.name)}»">${icon("edit", 19)}</button>
+      ${holding ? `<span class="hold-bar"></span>` : ""}${running ? `<span class="run"></span>` : ""}</div>`;
+  }
+
+  function schedRow(r) {
+    const scene = r.app ? (scenes.list || []).find((x) => x.id === r.scene) : null;
+    const runs = r.app ? (scene ? scene.name : "сценарий удалён") : r.time ? "встроенное" : "на закате";
+    const days = DAYS.map((d, i) => `<span class="day${r.days.indexOf(i + 1) >= 0 ? " on" : ""}">${d}</span>`).join("");
+    return `<div class="sched${r.on ? "" : " off"}">
+      <button class="open" data-sched-edit="${esc(r.id)}" aria-label="Изменить расписание «${esc(r.name)}»">
+        <span class="line"><span class="time${r.time ? "" : " sun"}">${esc(r.time || "закат")}</span><span class="name">${esc(r.name)}</span></span>
+        <span class="runs"><i>${icon(scene ? sceneIcon(scene) : r.time ? "clock" : "sun", 14)}</i>→ ${esc(runs)}</span>
+        <span class="days" aria-hidden="true">${days}</span></button>
+      <button class="switch${r.on ? " on" : ""}" role="switch" aria-checked="${r.on}" aria-label="Расписание «${esc(r.name)}»" data-sched="${esc(r.name)}"><span class="trk"><span class="knob"></span></span></button>
+    </div>`;
+  }
 
   function drawScenes() {
     const s = scenes;
     let html = `<div class="scr-head"><h1>Сценарии</h1><span>Одним касанием или голосом: «Jarvis, я ушёл»</span></div>`;
     if (!s.list) {
-      html += `<p class="scr-empty">Загружаю…</p>`;
-    } else {
-      // the one that ran last is "the current" one - the design's highlighted card
-      const latest = s.list.filter((x) => x.last).sort((a, b) => new Date(b.last) - new Date(a.last))[0];
-      html += `<div class="scenes">`;
-      s.list.forEach((x) => {
-        const running = s.running === x.name;
-        const active = !running && !s.running && latest && latest.name === x.name;
-        let meta = when(x.last) || "Ещё не запускался";
-        if (running) meta = "Выполняется…";
-        else if (active) meta = "Запущен · " + (s.justRan === x.name ? "только что" : meta.split(", ").pop());
-        html += `<button class="scene jv-press${active ? " active" : ""}${running ? " running" : ""}" data-scene="${esc(x.name)}" aria-label="Запустить сценарий «${esc(x.name)}»">
-          <span class="top"><span class="ic-box">${icon(SCENE_ICONS[x.name.toLowerCase()] || "scenes", 22)}</span>${active ? `<span class="done">${icon("check", 14)}</span>` : ""}</span>
-          <span class="txt"><span class="name">${esc(x.name)}</span><span class="desc">${esc(x.does)}</span><span class="meta">${esc(meta)}</span></span>
-          ${running ? `<span class="run"></span>` : ""}
-        </button>`;
-      });
-      html += `</div>`;
-      if (!s.list.length) html += `<p class="scr-empty">В доме пока нет сценариев.</p>`;
+      s.node.innerHTML = html + `<p class="scr-empty">Загружаю…</p>`;
+      return;
     }
-    html += `<button class="add-scene jv-press" data-new="scene">${icon("plus", 18)}Новый сценарий</button>`;
-    html += `<div style="display:flex;flex-direction:column;gap:10px"><div class="scr-h2"><h2>Расписания</h2><button class="jv-press" data-new="schedule">${icon("plus", 16)}Добавить</button></div><div class="scheds">`;
-    (s.scheds || []).forEach((r) => {
-      const time = r.time
-        ? `<label class="time">${esc(r.time)}<input type="time" value="${esc(r.time)}" data-time="${esc(r.name)}" aria-label="Время: ${esc(r.name)}"></label>`
-        : `<span class="time sun">закат</span>`;
-      const days = DAYS.map((d, i) => {
-        const on = r.days.indexOf(i + 1) >= 0;
-        return r.days_editable
-          ? `<button class="day${on ? " on" : ""}" data-day="${r.id}:${i + 1}" aria-pressed="${on}">${d}</button>`
-          : `<span class="day${on ? " on" : ""}">${d}</span>`;
-      }).join("");
-      html += `<div class="sched${r.on ? "" : " off"}">
-        <div class="body"><div class="line">${time}<span class="name">${esc(r.name)}</span></div>
-          <div class="days" aria-label="Дни: ${DAYS.filter((d, i) => r.days.indexOf(i + 1) >= 0).join(", ")}">${days}</div></div>
-        <button class="switch${r.on ? " on" : ""}" role="switch" aria-checked="${r.on}" aria-label="${esc(r.name)}" data-sched="${esc(r.name)}"><span class="trk"><span class="knob"></span></span></button>
-      </div>`;
-    });
-    if (s.scheds && !s.scheds.length) html += `<p class="scr-empty">Расписаний пока нет.</p>`;
-    html += `</div></div>`;
+    const builtIn = s.list.filter((x) => !x.steps), mine = s.list.filter((x) => x.steps);
+    const latest = builtIn.filter((x) => x.last).sort((a, b) => new Date(b.last) - new Date(a.last))[0];
+    html += `<div class="scenes">${builtIn.map((x) => sceneCard(x, latest)).join("")}</div>`;
+    html += `<section class="se-sec" style="gap:10px"><div class="scr-h2"><div class="sub"><h2>Мои сценарии</h2>${mine.length ? `<span>Удерживай карточку для меню</span>` : ""}</div>
+      ${mine.length ? `<button class="jv-press" data-new-scene>${icon("plus", 16)}Новый</button>` : ""}</div>`;
+    html += mine.length ? `<div class="mine">${mine.map(mineCard).join("")}</div>`
+      : `<div class="empty-box"><i>${icon("play", 24)}</i><b>Своих сценариев пока нет</b>
+        <span>Собери свой из шагов. Например, «Кино»: приглушить свет в зале и закрыть шторы — по фразе «Jarvis, включи кино».</span>
+        <button class="jv-press" data-new-scene>${icon("plus", 18)}Создать сценарий</button></div>`;
+    html += `</section><section class="se-sec" style="gap:10px"><div class="scr-h2"><h2>Расписания</h2>
+      ${(s.scheds || []).length ? `<button class="jv-press" data-new-sched>${icon("plus", 16)}Добавить</button>` : ""}</div>`;
+    html += (s.scheds || []).length ? `<div class="scheds">${s.scheds.map(schedRow).join("")}</div>`
+      : `<div class="empty-box"><i>${icon("clock", 24)}</i><b>Расписаний пока нет</b><span>Сценарии могут запускаться сами — например, «Доброе утро» в 7:00 по будням.</span>
+        <button class="quiet jv-press" data-new-sched>${icon("plus", 18)}Добавить расписание</button></div>`;
+    html += `</section>`;
+    const m = s.menu && mine.find((x) => x.id === s.menu);
+    if (m) {
+      html += `<button class="scrim" data-menu-close aria-label="Закрыть меню"></button>
+        <div class="menu-sheet" role="dialog" aria-label="${esc(m.name)}"><span class="grab"></span>
+          <div class="who"><i>${icon(sceneIcon(m), 24)}</i><span><b>${esc(m.name)}</b><span>${esc((m.phrases.length ? "«" + m.phrases[0] + "» · " : "") + steps(m.steps.length))}</span></span></div>
+          <div class="items"><button data-menu="run"><span class="cy">${icon("play", 20)}</span>Запустить сейчас</button>
+            <button data-menu="edit"><span>${icon("edit", 20)}</span>Изменить</button>
+            <button data-menu="dup"><span>${icon("scenes", 20)}</span>Дублировать</button>
+            <button data-menu="sched"><span>${icon("clock", 20)}</span>Запускать по расписанию</button>
+            <button data-menu="delete"><span>${icon("close", 20)}</span>Удалить</button></div></div>`;
+    }
+    if (s.ask) html += askHtml(s.ask);
     s.node.innerHTML = html;
+  }
+
+  /** The design's confirm dialog: {title, text, yes, act}. */
+  function askHtml(a) {
+    return `<button class="scrim" data-ask-no aria-label="Отмена"></button><div class="ask" role="alertdialog"><div style="display:flex;flex-direction:column;gap:8px">
+      <h2>${esc(a.title)}</h2><p>${esc(a.text)}</p></div><button class="yes jv-press" data-ask-yes>${esc(a.yes)}</button><button class="no jv-press" data-ask-no>Отмена</button></div>`;
+  }
+
+  /** "Удалить «Кино»?" - what stops working with it. */
+  function deleteAsk(x, then) {
+    const runs = (scenes.scheds || []).filter((r) => r.app && r.scene === x.id).map((r) => "«" + r.name + "»");
+    let text = x.phrases.length ? "Фразы «" + x.phrases.slice(0, 2).join("», «") + "» перестанут работать." : "Сценарий пропадёт из дома.";
+    if (runs.length) text += (runs.length > 1 ? " Расписания " : " Расписание ") + runs.join(", ") + (runs.length > 1 ? ", которые запускают" : ", которое запускает") + " этот сценарий, отключ" + (runs.length > 1 ? "атся." : "ится.");
+    return { title: "Удалить «" + x.name + "»?", text, yes: "Удалить сценарий", act: async () => {
+      try {
+        const r = await api("DELETE", "/api/scenes/" + encodeURIComponent(x.id));
+        if (r.error) { toast(r.error, true); return; }
+        toast("«" + x.name + "» удалён");
+      } catch (e) { if (e.message !== "locked") toast(e.message, true); }
+      if (then) then();
+      await loadScenes();
+    } };
   }
 
   async function loadScenes() {
@@ -104,58 +161,89 @@
     drawScenes();
   }
 
+  async function runScene(x) {
+    if (scenes.running) return;
+    scenes.running = x.id;
+    scenes.menu = "";
+    drawScenes();
+    const started = Date.now();
+    let result = null;
+    try { result = await api("POST", "/api/scenarios/run", { name: x.name }); } catch (err) { if (err.message !== "locked") toast(err.message, true); }
+    // the bar runs its 1.2 s even when the house answers sooner - the design's rhythm
+    setTimeout(async () => {
+      scenes.running = "";
+      if (result && result.error) toast(result.error, true);
+      else if (result) { scenes.justRan = x.id; toast("«" + x.name + "» выполнен"); }
+      await loadScenes();
+    }, Math.max(0, 1250 - (Date.now() - started)));
+  }
+
   function wireScenes() {
     const node = scenes.node;
+    const byId = (id) => (scenes.list || []).find((x) => x.id === id);
+    node.addEventListener("pointerdown", (e) => {  // a long press on my scenario: its menu
+      const card = e.target.closest("[data-mine]");
+      if (!card) return;
+      clearTimeout(scenes.lp);
+      scenes.lpFired = false;
+      scenes.holding = card.dataset.mine;
+      drawScenes();
+      scenes.lp = setTimeout(() => { scenes.lpFired = true; scenes.menu = scenes.holding; scenes.holding = ""; drawScenes(); }, 500);
+    });
+    const cancelHold = () => { clearTimeout(scenes.lp); if (scenes.holding) { scenes.holding = ""; drawScenes(); } };
+    node.addEventListener("pointerup", cancelHold);
+    node.addEventListener("pointercancel", cancelHold);
+    node.addEventListener("contextmenu", (e) => {
+      const card = e.target.closest("[data-mine]");
+      if (!card) return;
+      e.preventDefault();
+      clearTimeout(scenes.lp);
+      scenes.lpFired = true; scenes.holding = ""; scenes.menu = card.dataset.mine;
+      drawScenes();
+    });
     node.addEventListener("click", async (e) => {
-      const scene = e.target.closest("[data-scene]");
-      if (scene && !scenes.running) {
-        const name = scene.dataset.scene;
-        scenes.running = name;
-        drawScenes();
-        const started = Date.now();
-        let result = null;
-        try { result = await api("POST", "/api/scenarios/run", { name }); } catch (err) { if (err.message !== "locked") toast(err.message, true); }
-        // the bar runs its 1.2 s even when the house answers sooner - the design's rhythm
-        setTimeout(async () => {
-          scenes.running = "";
-          if (result && result.error) toast(result.error, true);
-          else if (result) { scenes.justRan = name; toast("«" + name + "» выполнен"); }
-          await loadScenes();
-        }, Math.max(0, 1250 - (Date.now() - started)));
+      const t = e.target;
+      const run = t.closest("[data-run]");
+      if (run) { runScene(byId(run.dataset.run)); return; }
+      const mine = t.closest("[data-mine]");
+      if (mine) { if (scenes.lpFired) { scenes.lpFired = false; return; } runScene(byId(mine.dataset.mine)); return; }
+      const edit = t.closest("[data-edit]");
+      if (edit) { window.JV.editScene(byId(edit.dataset.edit)); return; }
+      if (t.closest("[data-new-scene]")) { window.JV.editScene(null); return; }
+      if (t.closest("[data-new-sched]")) { window.JV.editSchedule(null); return; }
+      const se = t.closest("[data-sched-edit]");
+      if (se) { window.JV.editSchedule((scenes.scheds || []).find((r) => r.id === se.dataset.schedEdit)); return; }
+      if (t.closest("[data-menu-close]")) { scenes.menu = ""; drawScenes(); return; }
+      const item = t.closest("[data-menu]");
+      if (item) {
+        const x = byId(scenes.menu);
+        scenes.menu = "";
+        const what = item.dataset.menu;
+        if (what === "run") runScene(x);
+        else if (what === "edit") window.JV.editScene(x);
+        else if (what === "dup") window.JV.editScene(x, { copy: true });
+        else if (what === "sched") window.JV.editSchedule(null, { scene: x.id });
+        else if (what === "delete") { scenes.ask = deleteAsk(x); drawScenes(); }
+        if (what !== "delete" && what !== "run") drawScenes();
         return;
       }
-      const sw = e.target.closest("[data-sched]");
+      if (t.closest("[data-ask-no]")) { scenes.ask = null; drawScenes(); return; }
+      if (t.closest("[data-ask-yes]") && scenes.ask) { const a = scenes.ask; scenes.ask = null; drawScenes(); a.act(); return; }
+      const sw = t.closest("[data-sched]");
       if (sw) {
         const r = scenes.scheds.find((x) => x.name === sw.dataset.sched);
         r.on = !r.on;  // at once, then what the house says
         drawScenes();
         changeSchedule({ action: r.on ? "enable" : "disable", name: r.name }, r.on ? "Расписание включено" : "Расписание выключено");
-        return;
       }
-      const day = e.target.closest("[data-day]");
-      if (day) {
-        const [id, n] = day.dataset.day.split(":");
-        const r = scenes.scheds.find((x) => x.id === id);
-        const d = parseInt(n, 10);
-        const days = r.days.indexOf(d) >= 0 ? r.days.filter((x) => x !== d) : r.days.concat([d]).sort();
-        if (!days.length) { toast("Нужен хотя бы один день — или выключи расписание", true); return; }
-        r.days = days;
-        drawScenes();
-        changeSchedule({ action: "set_days", id, days });
-        return;
-      }
-      if (e.target.closest("[data-new]")) toast("Создание новых — в следующей версии");
-    });
-    node.addEventListener("change", (e) => {
-      const input = e.target.closest("[data-time]");
-      if (!input || !input.value) return;
-      changeSchedule({ action: "set_time", name: input.dataset.time, time: input.value }, "Теперь в " + input.value);
     });
   }
 
   scenes.node = section("screen-scenes");
   wireScenes();
-  window.JV.add("scenes", { open: () => { drawScenes(); loadScenes(); } });
+  window.JV.add("scenes", { open: () => { scenes.menu = ""; scenes.ask = null; drawScenes(); loadScenes(); } });
+  // what the editors (scene_editor.js) work with
+  window.JV.scenesData = { list: () => scenes.list || [], scheds: () => scenes.scheds || [], reload: loadScenes, icon: sceneIcon, askHtml, deleteAsk };
 
   // ---------------------------------------------------------------- the guard, the danger sensors, the journal
 
@@ -401,10 +489,6 @@
   // ---------------------------------------------------------------- settings: where each thing is set
 
   const set = { node: null, ping: null, counts: null };
-  const plural = (n, one, few, many) => {
-    const t = n % 10, h = n % 100;
-    return n + " " + (t === 1 && h !== 11 ? one : t >= 2 && t <= 4 && (h < 12 || h > 14) ? few : many);
-  };
 
   function settingsRows() {
     const c = set.counts;
