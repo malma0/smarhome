@@ -215,11 +215,13 @@ public class MainActivity extends Activity {
         super.onPause();
         if (voice.recording()) voice.stop();  // no listening behind the user's back
         web.onPause();
+        web.pauseTimers();  // the page's refresh stops while it's not seen - the watcher service keeps the alarms
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        web.resumeTimers();
         web.onResume();
     }
 
