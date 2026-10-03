@@ -26,6 +26,7 @@ class TurnContext:
     # Said aloud: "resident" - a resident's voice was recognized, "unknown" - it wasn't. None: not by
     # voice (typed at the computer, the PIN-locked panel). Disarming the guard by voice needs "resident".
     voice: str | None = None
+    resident: str = "default"  # who's talking - whose reminders, whose phone they go to
 
 
 @dataclass(frozen=True)

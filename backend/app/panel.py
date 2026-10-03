@@ -649,7 +649,7 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
             return {"error": f"План не сохранён: {exc}"}
 
     @app.get("/api/alerts", dependencies=[api])
-    async def alerts():
+    async def alerts(who: str = ""):
         """The dangers going on now - the alarm screen, and the phone app's watcher every few seconds."""
         from app import alerts as danger_now
 
@@ -657,18 +657,25 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
             dangers = await danger_now.active(client)
         except HomeAssistantError as exc:
             raise HTTPException(503, f"Дом не отвечает: {exc}") from exc
-        return {"alerts": dangers, "reminders": rang_lately()}
+        return {"alerts": dangers, "reminders": rang_lately(who)}
 
-    def rang_lately() -> list[dict]:
-        """Timers and reminders that rang at home in the last RINGS_SHOWN - the phones show them too."""
+    def rang_lately(who: str = "") -> list[dict]:
+        """Timers and reminders that rang at home in the last RINGS_SHOWN - the phones show them too.
+        who: the phone's owner (set in the app) - theirs and no one's in particular; none - all of them."""
         from app import reminders
 
         try:
             if "reminders" not in state:
                 state["reminders"] = reminders.ReminderStore(agent().memory.connection)
-            return state["reminders"].rings_since(datetime.now().astimezone() - RINGS_SHOWN)
+            rang = state["reminders"].rings_since(datetime.now().astimezone() - RINGS_SHOWN)
         except Exception:  # noqa: BLE001 - no database to read: the dangers still go out
             return []
+        return [r for r in rang if not who or r["resident"] in reminders.NOBODY or r["resident"] == who]
+
+    def resident_of(who) -> str:
+        """The phone's owner, if that's a resident; otherwise the panel speaks as no one in particular."""
+        who = str(who or "").strip()
+        return who if who and who not in ("default", "panel") and who in agent().memory.list_resident_ids() else "default"
 
     @app.get("/api/automation", dependencies=[api])
     async def automation():
@@ -775,7 +782,7 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
         message = str(body.get("message") or "").strip()
         if not message:
             raise HTTPException(400, "Пустое сообщение.")
-        return await answer(message)
+        return await answer(message, who=body.get("who"))
 
     def agent():
         if "agent" not in state:  # built on first use, on this thread - its database connection is its own
@@ -784,8 +791,9 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
             state["agent"] = (agent_factory or build_default_agent)()
         return state["agent"]
 
-    async def answer(message: str, heard: bool = False) -> dict:
-        result = await agent().chat("panel", "default", message)
+    async def answer(message: str, heard: bool = False, who=None) -> dict:
+        resident = resident_of(who)  # each phone's owner their own conversation and reminders
+        result = await agent().chat("panel" if resident == "default" else "panel:" + resident, resident, message)
         reply = {"response": result["response"], "acts": acts_of(result.get("actions", [])),
                  "local": bool(result.get("local"))}
         if heard:
@@ -813,7 +821,7 @@ def create_app(client: HomeAssistantClient | None = None, pin: str | None = None
             return {"error": f"Не получилось распознать: {exc}"}
         if not text:
             return {"error": "Не расслышал - скажи ещё раз."}
-        return await answer(text, heard=True)
+        return await answer(text, heard=True, who=body.get("who"))
 
     if STATIC.exists():
         app.mount("/panel", StaticFiles(directory=STATIC, html=True), name="panel")

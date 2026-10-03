@@ -134,7 +134,7 @@ class JarvisAgent:
         groups = router.select(user_message, self._last_groups.get(session_id))
         names = None if groups is None else {n for g in groups for n in router.GROUPS[g]}
         tool_defs = self.tools.definitions(names)
-        ctx = TurnContext(said=user_message, voice=voice)
+        ctx = TurnContext(said=user_message, voice=voice, resident=resident_id)
         actions: list[dict] = []
         final_text = None
         local = (self.home_llm is not None and groups == {"home"} and not router.beyond_home_model(user_message)
@@ -265,7 +265,7 @@ def build_default_agent() -> JarvisAgent:
     from app import reminders
     from app.domains import weather
 
-    reminders.register(tools, reminders.ReminderStore(memory.connection))
+    reminders.register(tools, reminders.ReminderStore(memory.connection), residents=memory.list_resident_ids)
     from app import shopping
     from app.domains import booking, currency, radio, web_answer
 

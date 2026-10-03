@@ -810,7 +810,7 @@
     ch.mode = "thinking";
     drawChat();
     try {
-      const r = await api("POST", path, body);
+      const r = await api("POST", path, Object.assign({ who: window.JV.owner ? window.JV.owner() : "" }, body));
       if (r.error) add({ me: false, text: r.error, bad: true });
       else {
         if (voice) add({ me: true, text: r.heard, voice: true });

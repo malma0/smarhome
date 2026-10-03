@@ -143,3 +143,18 @@ def test_every_ring_is_logged_for_the_phones_and_old_ones_are_dropped(tmp_path):
     assert [r["at"][:10] for r in store.rings_since(NOW - timedelta(days=9))] == ["2026-09-30"]
     # a second connection (the panel's thread) sees them
     assert len(ReminderStore(connect(str(tmp_path / "j.db"))).rings_since(NOW - timedelta(days=9))) == 1
+
+
+def test_a_reminder_is_whoever_set_it_or_for_someone_else_by_name(tmp_path):
+    from app.reminders import match_resident
+
+    store = ReminderStore(connect(str(tmp_path / "j.db")))
+    handler = make_handler(store, now=lambda: NOW, residents=lambda: ["default", "Матвей", "Эля"])
+    mine = asyncio.run(handler({"kind": "timer", "in_seconds": 60}, TurnContext(resident="Матвей")))["added"]
+    hers = asyncio.run(handler({"kind": "reminder", "text": "купить хлеб", "in_seconds": 600, "for": "Эле"},
+                               TurnContext(resident="Матвей")))["added"]
+    nobodys = asyncio.run(handler({"kind": "timer", "in_seconds": 90}, TurnContext()))["added"]
+    assert mine["for"] == "Матвей" and hers["for"] == "Эля" and "for" not in nobodys
+    assert "error" in asyncio.run(handler({"kind": "timer", "in_seconds": 60, "for": "Пете"}, TurnContext()))
+    assert match_resident("матвею", ["Матвей", "Эля"]) == "Матвей" and match_resident("Эля", ["Матвей", "Эля"]) == "Эля"
+    assert match_resident("ма", ["Матвей", "Маша"]) is None

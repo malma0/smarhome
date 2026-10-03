@@ -180,7 +180,7 @@ class ReminderStore:
     def rings_since(self, since: datetime) -> list[dict]:
         """What rang after `since`, oldest first: {id, kind, text, at}."""
         rows = self._conn.execute("SELECT * FROM reminder_rings ORDER BY id").fetchall()
-        return [{"id": r["id"], "kind": r["kind"], "text": r["text"], "at": r["rung_at"]}
+        return [{"id": r["id"], "kind": r["kind"], "text": r["text"], "at": r["rung_at"], "resident": r["resident_id"]}
                 for r in rows if datetime.fromisoformat(r["rung_at"]) > since]
 
     @staticmethod
@@ -202,10 +202,27 @@ def _public(item: dict, now: datetime) -> dict:
               "in": human_duration((item["due"] - now).total_seconds())}
     if item.get("repeat"):
         public["repeat"] = f"{repeat_words(item['repeat'])} в {item['due'].astimezone(now.tzinfo):%H:%M}"
+    if item.get("resident_id") not in NOBODY:
+        public["for"] = item["resident_id"]
     return public
 
 
-def make_handler(store: ReminderStore, now=local_now):
+NOBODY = (None, "", "default", "panel")  # a reminder no one in particular set: every phone gets it
+
+
+def match_resident(asked: str, residents: list[str]) -> str | None:
+    """'Эле', 'Матвею' -> 'Эля', 'Матвей': the same name in another case (all but the ending match)."""
+    asked = asked.strip().casefold()
+    people = [r for r in residents if r not in NOBODY]
+    for r in people:
+        if r.casefold() == asked:
+            return r
+    found = [r for r in people if min(len(r), len(asked)) >= 3
+             and r.casefold()[:min(len(r), len(asked)) - 1] == asked[:min(len(r), len(asked)) - 1]]
+    return found[0] if len(found) == 1 else None
+
+
+def make_handler(store: ReminderStore, now=local_now, residents=None):
     async def reminders(tool_input: dict, ctx: TurnContext) -> dict:
         action = tool_input.get("action") or "add"
         current = now()
@@ -259,13 +276,20 @@ def make_handler(store: ReminderStore, now=local_now):
             text = f"{length}: {text}" if text else length
         elif not text:
             return {"error": "A reminder needs its text - what to remind about."}
-        item = store.add(kind, text, due, repeat=repeat)
+        owner = ctx.resident
+        if tool_input.get("for"):  # "напомни Эле": hers - her phone gets it
+            people = residents() if residents else []
+            owner = match_resident(str(tool_input["for"]), people)
+            if owner is None:
+                return {"error": f"No resident called '{tool_input['for']}'.",
+                        "residents": [r for r in people if r not in NOBODY]}
+        item = store.add(kind, text, due, resident_id=owner, repeat=repeat)
         return {"added": _public(item, current)}
 
     return reminders
 
 
-def register(registry: ToolRegistry, store: ReminderStore) -> None:
+def register(registry: ToolRegistry, store: ReminderStore, residents=None) -> None:
     registry.register(
         Tool(
             name="reminders",
@@ -274,7 +298,8 @@ def register(registry: ToolRegistry, store: ReminderStore) -> None:
                 "text) or reminder (text, plus in_seconds or at = local 'YYYY-MM-DDTHH:MM' from the current "
                 "time). repeat for a reminder: daily, weekdays, weekends or days 'mon,wed' ('каждый день в 8', "
                 "'по будням'; at = the first time). list. cancel (stops a repeating one too): by id, words of its "
-                "text, kind, or all=true. Due ones ring by themselves."
+                "text, kind, or all=true. Due ones ring by themselves, and on the phone of whoever set it - or of "
+                "for: the resident it's for, only when it's someone else ('напомни Эле купить хлеб': for='Эля')."
             ),
             parameters={
                 "type": "object",
@@ -287,8 +312,9 @@ def register(registry: ToolRegistry, store: ReminderStore) -> None:
                     "id": {"type": ["integer", "null"]},
                     "all": {"type": ["boolean", "null"]},
                     "repeat": {"type": ["string", "null"]},
+                    "for": {"type": ["string", "null"]},
                 },
             },
-            handler=make_handler(store),
+            handler=make_handler(store, residents=residents),
         )
     )

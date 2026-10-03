@@ -126,3 +126,16 @@ def test_the_phones_get_the_reminders_that_rang_at_home(client, tmp_path):
     store.rang(store.add("reminder", "выключить духовку", now), now)
     rings = client.get("/api/alerts", headers=owner).json()["reminders"]
     assert [(r["kind"], r["text"]) for r in rings] == [("reminder", "выключить духовку")] and rings[0]["id"] >= 1
+
+
+def test_each_phone_gets_its_owners_reminders_and_everyones(client, tmp_path):
+    from app.reminders import ReminderStore
+
+    owner = {"X-Pin": PIN}
+    store = ReminderStore(connect(str(tmp_path / "t.db")))
+    now = datetime.now().astimezone()
+    for text, who in [("таблетки", "Матвей"), ("хлеб", "Эля"), ("мусор", "default")]:
+        store.rang(store.add("reminder", text, now, resident_id=who), now)
+    texts = lambda q: [r["text"] for r in client.get("/api/alerts" + q, headers=owner).json()["reminders"]]  # noqa: E731
+    assert texts("") == ["таблетки", "хлеб", "мусор"]  # a phone nobody's: all of them
+    assert texts("?who=Эля") == ["хлеб", "мусор"]

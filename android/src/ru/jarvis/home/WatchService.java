@@ -114,7 +114,9 @@ public class WatchService extends Service {
 
     /** One look at the house; new dangers become notifications, finished ones go. Returns the HTTP code. */
     private int check(String address, String pin) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL("http://" + address + "/api/alerts").openConnection();
+        String owner = prefs(this).getString("owner", "");  // whose phone: their reminders and everyone's
+        String query = owner.isEmpty() ? "" : "?who=" + java.net.URLEncoder.encode(owner, "UTF-8");
+        HttpURLConnection c = (HttpURLConnection) new URL("http://" + address + "/api/alerts" + query).openConnection();
         c.setConnectTimeout(4000);
         c.setReadTimeout(8000);
         c.setRequestProperty("X-Pin", pin);

@@ -360,6 +360,17 @@ public class MainActivity extends Activity {
             WatchService.stop(MainActivity.this);
         }
 
+        /** Whose phone this is (a resident's name, "" - nobody's): their reminders come to it. */
+        @JavascriptInterface
+        public void setOwner(String name) {
+            prefs.edit().putString("owner", name == null ? "" : name).apply();
+        }
+
+        @JavascriptInterface
+        public String owner() {
+            return prefs.getString("owner", "");
+        }
+
         @JavascriptInterface
         public boolean watching() {
             return prefs.getBoolean("watch", false);

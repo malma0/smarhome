@@ -38,6 +38,18 @@
 
   const pp = { data: null, loading: false };
 
+  // whose phone (or tablet) this is: the phone app keeps it for its watcher (reminders), the page for the chat
+  const OWNER_KEY = "jarvis-panel-owner";
+  function owner() {
+    if (window.JarvisApp && window.JarvisApp.owner) return window.JarvisApp.owner();
+    return window.JV.store.get(OWNER_KEY) || "";
+  }
+  function setOwner(name) {
+    window.JV.store.set(OWNER_KEY, name);
+    if (window.JarvisApp && window.JarvisApp.setOwner) window.JarvisApp.setOwner(name);
+    toast(name ? "Это телефон: " + name : "Общий телефон");
+  }
+
   async function load(after) {
     if (pp.loading) return;
     pp.loading = true;
@@ -70,6 +82,12 @@
           : `<button class="pp-btn jv-press" data-record="${esc(r.name)}">${icon("mic", 16)}${r.samples ? "Дописать" : "Записать"}</button>`}
         <button class="pp-x jv-press" data-sure="${esc(r.name)}" aria-label="${rs.sure === r.name ? "Не удалять" : "Удалить " + esc(r.name)}">${icon(rs.sure === r.name ? "back" : "close", 18)}</button></div>`).join("")
       : `<div class="au-row"><span class="words"><span>Пока никого — добавь первого жильца ниже</span></span></div>`) + `</div>`);
+    const own = owner();
+    html += sec("Этот телефон", `<div class="chips pp-hours" role="radiogroup" aria-label="Чей это телефон">` +
+      [""].concat(d.residents.map((r) => r.name)).map((n) =>
+        `<button type="button" role="radio" aria-checked="${own === n}" class="${own === n ? "on" : ""}" data-owner="${esc(n)}">${n ? esc(n) : "Общий"}</button>`).join("") +
+      `</div><p class="pp-note">${own ? "Владелец — " + esc(own) + ": сюда приходят его напоминания и таймеры и общие, а чат пишет от его имени."
+        : "Общий телефон: сюда приходят все напоминания. Выбери владельца — будут приходить только его и общие."}</p>`);
     html += sec("Новый жилец", `<form class="pp-add" data-add-resident><label class="se-field"><span>Имя</span>
       <input id="ppName" placeholder="Например, Эля" maxlength="40" autocomplete="off"></label>
       <button class="pp-main jv-press" type="submit">${icon("plus", 18)}Добавить</button></form>`);
@@ -148,6 +166,8 @@
   rs.node.addEventListener("click", (e) => {
     const t = e.target;
     if (t.closest("[data-back]")) { window.JV.show("sliders"); return; }
+    const ow = t.closest("[data-owner]");
+    if (ow) { setOwner(ow.dataset.owner); drawResidents(); return; }
     const sure = t.closest("[data-sure]");
     if (sure) { rs.sure = rs.sure === sure.dataset.sure ? "" : sure.dataset.sure; drawResidents(); return; }
     const forget = t.closest("[data-forget]");
@@ -257,5 +277,6 @@
 
   /** For the Settings rows' second lines. */
   window.JV.people = () => pp.data;
+  window.JV.owner = owner;
   window.JV.loadPeople = load;
 })();
