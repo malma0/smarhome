@@ -49,6 +49,33 @@ def name_heard(text: str | None, wake_words) -> bool:
     return any(w in words for w in wake_words)
 
 
+_NAME_FILLERS = {"эй", "слушай", "привет", "ну", "а", "о", "ой", "окей", "ок", "так", "да", "алло"}
+
+
+def _edits(a: str, b: str) -> int:
+    row = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, cb in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (ca != cb))
+    return row[-1]
+
+
+def sounds_like_name(word: str, wake_words) -> bool:
+    """The name, or Whisper's near miss of it: "Дайвис", "Джарвиз", "Жарвис"
+    - two letters off at most, about as long."""
+    return any(_edits(word, w) <= 2 and abs(len(word) - len(w)) <= 2 for w in wake_words)
+
+
+def only_the_name(text: str | None, wake_words) -> bool:
+    """Whisper heard nothing but the name (maybe misheard) - a call, not a
+    request: "Джарвис" said twice came back as "Дайвис" and got an answer
+    about the town of Davis, California."""
+    words = "".join(c if c.isalnum() or c.isspace() else " " for c in (text or "").casefold()).split()
+    words = [w for w in words if w not in _NAME_FILLERS]
+    return bool(words) and len(words) <= 2 and all(sounds_like_name(w, wake_words) for w in words)
+
+
 class HandsFreeState:
     def __init__(
         self,

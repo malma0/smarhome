@@ -58,7 +58,7 @@ from app.config import settings
 from app.dataset import UtteranceLog
 from app.endpointing import end_silence_for
 from app.domains.radio import player as radio_player
-from app.hands_free import CUE, IGNORE, HandsFreeState, is_stop_phrase, name_heard
+from app.hands_free import CUE, IGNORE, HandsFreeState, is_stop_phrase, name_heard, only_the_name
 from app.reminders import ReminderStore, local_now
 from app.http_client import shared_client
 from app.memory import MemoryStore
@@ -835,6 +835,14 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
         if embedding_task is not None:
             embedding_task.cancel()
         ui.info(f"(похоже на шум - Whisper «услышал» «{text}», не отвечаю)")
+        return
+
+    if text and only_the_name(text, parse_wake_words(settings.wake_words)):
+        # Just the name (Vosk missed it, or it came twice): listen, don't answer.
+        if embedding_task is not None:
+            embedding_task.cancel()
+        ui.info(f"(услышал только имя - «{text}», слушаю)")
+        await asyncio.to_thread(_play_listening_cue)
         return
 
     decision: SpeakerDecision | None = None

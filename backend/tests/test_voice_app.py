@@ -246,6 +246,25 @@ class _RecordingUI:
             self.events.append(("enroll_phrase", phrase))
 
 
+def test_a_phrase_that_is_only_the_misheard_name_is_not_answered(memory, tmp_path, monkeypatch):
+    """"Джарвис" said twice came back from Whisper as "Дайвис" - and got an
+    answer about Davis, California. Just the name means "listen"."""
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(return_value="Дайвис"))
+    cues = []
+    monkeypatch.setattr(voice_app, "_play_listening_cue", lambda: cues.append(1))
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    assert not [e for e in ui.events if e[0] in ("user", "jarvis")]  # never reached the model
+    assert cues == [1]
+
+
 def test_a_voice_phrase_is_shown_with_its_dataset_id_before_jarvis_answers(memory, tmp_path, monkeypatch):
     """The id comes with the phrase itself, so "correct this" is available
     the moment it's on screen - not only after a possibly long reply."""

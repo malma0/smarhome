@@ -112,3 +112,14 @@ def test_the_name_alone_in_the_follow_up_window_still_means_listen():
     clock.now += 7
     assert state.is_awake()
     assert state.on_phrase(NONE) == PROCESS  # "сделай в зале потемнее"
+
+
+def test_only_the_name_catches_whispers_near_misses_but_not_requests():
+    from app.hands_free import only_the_name
+
+    wake = ("джарвис", "джервис")
+    # "Джарвис" said twice came back from Whisper as "Дайвис" and got an answer about Davis, CA
+    for heard in ("Дайвис", "Джарвис.", "Эй, Джарвиз!", "Жарвис", "Джарвис Джарвис"):
+        assert only_the_name(heard, wake), heard
+    for heard in ("Джарвис, выключи свет", "Дайвис включи", "Давай", "привет", "Да", "", None):
+        assert not only_the_name(heard, wake), heard
