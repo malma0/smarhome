@@ -304,6 +304,7 @@ button.who:hover { background: rgba(34, 211, 238, .16); }
 .modal-actions button { border: 0; border-radius: 10px; padding: 9px 14px; font: inherit; font-size: 13.5px; cursor: pointer; }
 .modal-actions .ghost { background: transparent; color: var(--muted); }
 .modal-actions .primary { background: linear-gradient(135deg, #22d3ee, #6d3ff0); color: #fff; }
+.modal-actions .primary:disabled { opacity: .35; cursor: default; }
 
 /* ---------- the panel on the phone ---------- */
 .phone-label { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
@@ -333,16 +334,16 @@ button.who:hover { background: rgba(34, 211, 238, .16); }
   background: linear-gradient(135deg, #22d3ee, #6d3ff0);
 }
 
-.read-lines {
-  margin: 0 0 14px; padding: 12px 14px 12px 32px;
+.read-line {
+  margin: 0 0 14px; padding: 16px 16px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
-  font-size: 15px; line-height: 1.5; color: var(--text);
-  user-select: text;
+  font-size: 17px; line-height: 1.5; color: var(--text); text-align: center;
+  user-select: text; transition: border-color .3s;
 }
-.read-lines li + li { margin-top: 6px; }
-.enroll-progress { display: flex; gap: 8px; justify-content: center; margin-bottom: 8px; }
+.read-line.heard { border-color: #22d3ee; }
+.enroll-progress { display: flex; gap: 6px; justify-content: center; margin-bottom: 8px; }
 .enroll-progress .step {
-  width: 34px; height: 6px; border-radius: 6px;
+  width: 22px; height: 6px; border-radius: 6px;
   background: rgba(148, 163, 214, .18);
   transition: background .3s;
 }

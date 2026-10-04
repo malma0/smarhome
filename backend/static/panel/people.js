@@ -91,7 +91,7 @@
     html += sec("Новый жилец", `<form class="pp-add" data-add-resident><label class="se-field"><span>Имя</span>
       <input id="ppName" placeholder="Например, Эля" maxlength="40" autocomplete="off"></label>
       <button class="pp-main jv-press" type="submit">${icon("plus", 18)}Добавить</button></form>`);
-    html += `<p class="pp-note">${app ? "Голос записывается прямо в телефон: три короткие фразы, прочитай каждую своим обычным голосом."
+    html += `<p class="pp-note">${app ? "Голос записывается прямо в телефон: десять коротких фраз, прочитай каждую своим обычным голосом."
       : "Записать голос можно в приложении Jarvis на телефоне или в окне Джарвиса на компьютере."} Записи остаются только на домашнем компьютере.</p>`;
     paint(rs.node, html);
     paint(rs.sheet, drawRecorder());  // over the whole canvas, not inside the scrolling screen

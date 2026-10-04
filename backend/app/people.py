@@ -25,9 +25,19 @@ from app.config import settings
 GUESTS_FILE = Path(__file__).resolve().parent.parent / "guests.json"
 HIDDEN = {"default", "panel"}  # Jarvis's own ids, not people
 GUEST_HOURS = (4, 24, 72, 168)  # the editor's choices: till tonight, a day, three days, a week
+# Read one at a time - the window and the phone both step through them, a phrase counted once it's heard.
+# Each is ~3-5 s of speech: long enough for a voice sample (voice_app.ENROLL_MIN_SPEECH_SECONDS), short
+# enough to stay one sample; ten of them fill a profile (speaker_id.MAX_ENROLLED_SAMPLES).
 READ_LINES = ["Привет, Джарвис! Меня зовут {name}, запомни мой голос.",
               "Сегодня на улице тепло, и вечером мы пойдём гулять в парк.",
-              "Включи, пожалуйста, свет на кухне и поставь чайник."]
+              "Включи, пожалуйста, свет на кухне и поставь чайник.",
+              "Джарвис, какая сейчас температура в спальне и на улице?",
+              "Напомни мне завтра в восемь утра позвонить маме.",
+              "Добавь в список покупок молоко, хлеб, сыр и яблоки.",
+              "Сделай в гостиной потеплее и закрой шторы, уже темнеет.",
+              "Мы уезжаем на выходные, поставь дом на охрану.",
+              "Включи какую-нибудь спокойную музыку и сделай свет потемнее.",
+              "Спасибо, Джарвис, на сегодня всё. Спокойной ночи!"]
 
 
 # ---------------------------------------------------------------- residents and their voices

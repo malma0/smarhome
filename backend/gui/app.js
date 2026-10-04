@@ -385,12 +385,6 @@ function askName(prompt, known) {
 let voiceProfiles = [];
 let enrollingName = null;
 
-const READ_LINES = (name) => [
-  `Привет, Джарвис! Меня зовут ${name}, запомни мой голос.`,
-  "Сегодня на улице тепло, и вечером мы пойдём гулять в парк.",
-  "Включи, пожалуйста, свет на кухне и поставь чайник.",
-];
-
 function renderVoices() {
   const list = $("voiceList");
   list.innerHTML = "";
@@ -427,15 +421,14 @@ function startEnroll(name) {
   if (!name) { $("newVoiceName").focus(); return; }
   enrollingName = name;
   $("enrollTitle").textContent = `Запись голоса: ${name}`;
-  const lines = $("readLines");
-  lines.innerHTML = "";
-  for (const text of READ_LINES(name)) {
-    const li = document.createElement("li");
-    li.textContent = text;
-    lines.appendChild(li);
-  }
-  showEnrollProgress(0, 3);
-  $("enrollStatus").textContent = "Слушаю…";
+  $("enrollStep").textContent = "Прочитай фразу вслух, как обычно говоришь:";
+  $("enrollPhrase").textContent = "";  // the phrases come from Jarvis, one at a time
+  $("enrollPhrase").classList.remove("heard");
+  $("enrollProgress").innerHTML = "";
+  $("enrollStatus").textContent = "Готовлюсь…";
+  $("enrollNext").disabled = true;
+  $("enrollNext").hidden = false;
+  $("enrollCancel").textContent = "Отмена";
   $("voicesHome").hidden = true;
   $("enrollView").hidden = false;
   $("voicesModal").hidden = false;
@@ -452,15 +445,33 @@ function showEnrollProgress(collected, needed) {
   }
 }
 
+// A phrase at a time: Jarvis sends the phrase to read ("started"/"next"/"again"), says when it's
+// counted ("heard"), and "Дальше" moves on - the dots count phrases read, not voice samples.
 function onEnroll(e) {
   showEnrollProgress(e.collected, e.needed);
   const status = $("enrollStatus");
-  if (e.status === "progress") status.textContent = `Записано ${e.collected} из ${e.needed} - продолжай`;
+  const phrase = $("enrollPhrase");
+  const next = $("enrollNext");
+  const last = e.collected >= e.needed;
+  if (["started", "next", "again"].includes(e.status)) {
+    $("enrollStep").textContent = `Фраза ${e.collected + 1} из ${e.needed} - прочитай вслух, как обычно говоришь:`;
+    phrase.textContent = `«${e.phrase}»`;
+    phrase.classList.remove("heard");
+    next.disabled = true;
+    status.textContent = e.status === "again" ? "Не расслышал - прочитай ещё раз, чуть громче и целиком" : "Слушаю…";
+  }
+  if (e.status === "heard") {
+    phrase.classList.add("heard");
+    next.disabled = false;
+    next.textContent = last ? "Готово" : "Дальше";
+    status.textContent = `✓ Записано ${e.collected} из ${e.needed}` + (last ? "" : " - жми «Дальше»");
+  }
   if (e.status === "done") status.textContent = `Готово! Голос «${e.name}» запомнен.`;
-  if (e.status === "partial") status.textContent = `Время вышло - сохранил ${e.collected} из ${e.needed}. Можно дозаписать позже.`;
+  if (e.status === "partial") status.textContent = `Время вышло - записал ${e.collected} из ${e.needed}. Можно дозаписать позже.`;
   if (e.status === "failed") status.textContent = "Не услышал речи. Попробуй ещё раз, ближе к микрофону.";
   if (["done", "partial", "failed", "cancelled"].includes(e.status)) {
     enrollingName = null;
+    next.hidden = true;
     $("enrollCancel").textContent = "Закрыть";
     if (e.status === "done") setTimeout(() => { if (!enrollingName) closeVoices(); }, 1800);
   } else {
@@ -473,6 +484,7 @@ $("voicesClose").onclick = closeVoices;
 $("phoneChip").onclick = () => { $("phoneModal").hidden = false; };
 $("phoneClose").onclick = () => { $("phoneModal").hidden = true; };
 $("enrollCancel").onclick = closeVoices;
+$("enrollNext").onclick = () => { $("enrollNext").disabled = true; call("next_enroll"); };
 $("newVoiceForm").onsubmit = (e) => {
   e.preventDefault();
   const name = $("newVoiceName").value;
@@ -543,6 +555,17 @@ $("composer").onsubmit = (e) => {
 const DEMO = new URLSearchParams(location.search).has("demo");
 
 let demoEnrollTimers = [];
+let demoEnroll = null;  // {name, line} while the demo "records" a voice
+const DEMO_LINES = ["Привет, Джарвис! Меня зовут {name}, запомни мой голос.",
+  "Сегодня на улице тепло, и вечером мы пойдём гулять в парк.",
+  "Включи, пожалуйста, свет на кухне и поставь чайник."];
+
+function demoEnrollLine(status) {
+  const { name, line } = demoEnroll;
+  const ev = (st, collected, phrase = "") => ({ type: "enroll", name, collected, needed: DEMO_LINES.length, status: st, phrase });
+  jarvis.event(ev(status, line, DEMO_LINES[line].replace("{name}", name)));
+  demoEnrollTimers = [setTimeout(() => { if (demoEnroll) jarvis.event(ev("heard", line + 1)); }, 1500)];
+}
 
 function demoCall(method, ...args) {
   if (method === "wake") runDemo();
@@ -551,22 +574,26 @@ function demoCall(method, ...args) {
     else { pyState = "muted"; pyDetail = ""; shownVisual = null; }
   }
   if (method === "start_enroll") {
-    const name = args[0];
-    const ev = (collected, status) => ({ type: "enroll", name, collected, needed: 3, status });
-    demoEnrollTimers = [
-      setTimeout(() => jarvis.event(ev(1, "progress")), 1500),
-      setTimeout(() => jarvis.event(ev(2, "progress")), 3000),
-      setTimeout(() => {
-        jarvis.event(ev(3, "done"));
-        const known = voiceProfiles.filter((p) => p.name !== name);
-        jarvis.event({ type: "voices", profiles: [...known, { name, samples: 3 }] });
-      }, 4500),
-    ];
+    demoEnroll = { name: args[0], line: 0 };
+    demoEnrollLine("started");
+  }
+  if (method === "next_enroll" && demoEnroll) {
+    demoEnroll.line += 1;
+    if (demoEnroll.line >= DEMO_LINES.length) {
+      const { name } = demoEnroll;
+      demoEnroll = null;
+      jarvis.event({ type: "enroll", name, collected: DEMO_LINES.length, needed: DEMO_LINES.length, status: "done" });
+      const known = voiceProfiles.filter((p) => p.name !== name);
+      jarvis.event({ type: "voices", profiles: [...known, { name, samples: DEMO_LINES.length }] });
+    } else {
+      demoEnrollLine("next");
+    }
   }
   if (method === "set_speaker") toast(`Исправлено: голос - «${args[1]}».`);
   if (method === "cancel_enroll") {
     demoEnrollTimers.forEach(clearTimeout);
-    jarvis.event({ type: "enroll", name: "", collected: 0, needed: 3, status: "cancelled" });
+    demoEnroll = null;
+    jarvis.event({ type: "enroll", name: "", collected: 0, needed: DEMO_LINES.length, status: "cancelled" });
   }
   if (method === "send_text") {
     jarvis.event({ type: "user", text: args[0], voice: false });

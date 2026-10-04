@@ -75,9 +75,12 @@ class VoiceUI(Protocol):
         gives up (active=False)."""
         ...
 
-    def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
-        """Deliberate voice recording for one person. status: "started",
-        "progress", "done", "partial" (timed out with some samples),
+    def enrollment(self, name: str, collected: int, needed: int, status: str, phrase: str = "") -> None:
+        """Deliberate voice recording for one person, a phrase at a time:
+        collected/needed count phrases. status: "started" / "next" (phrase:
+        the one to read now, collected of them done), "again" (that phrase
+        wasn't heard well enough - read it again), "heard" (counted - waits
+        for "Дальше"), "done", "partial" (timed out with some phrases),
         "failed" (timed out with none), "cancelled"."""
         ...
 
@@ -129,12 +132,14 @@ class ConsoleUI:
         if active:
             print(f"\n>>> {text} (скажи «стоп») <<<\n")
 
-    def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
+    def enrollment(self, name: str, collected: int, needed: int, status: str, phrase: str = "") -> None:
         messages = {
-            "started": f"Записываю голос «{name}»: прочитай вслух несколько фраз, с паузой после каждой.",
-            "progress": f"   записано {collected} из {needed}",
+            "started": f"Записываю голос «{name}». Фраза 1 из {needed}: «{phrase}»",
+            "next": f"Фраза {collected + 1} из {needed}: «{phrase}»",
+            "again": f"   не расслышал - прочитай ещё раз: «{phrase}»",
+            "heard": f"   записано {collected} из {needed}",
             "done": f"Готово - голос «{name}» запомнен.",
-            "partial": f"Время вышло - сохранил {collected} из {needed} записей голоса «{name}».",
+            "partial": f"Время вышло - записал {collected} из {needed} фраз голоса «{name}».",
             "failed": f"Не услышал речи - голос «{name}» не записан.",
             "cancelled": "Запись голоса отменена.",
         }

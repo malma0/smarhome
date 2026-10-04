@@ -250,8 +250,9 @@ class WebviewUI:
     def ring(self, text: str, key: str, active: bool) -> None:
         self._send({"type": "ring", "text": text, "key": key, "active": active})
 
-    def enrollment(self, name: str, collected: int, needed: int, status: str) -> None:
-        self._send({"type": "enroll", "name": name, "collected": collected, "needed": needed, "status": status})
+    def enrollment(self, name: str, collected: int, needed: int, status: str, phrase: str = "") -> None:
+        self._send({"type": "enroll", "name": name, "collected": collected, "needed": needed, "status": status,
+                    "phrase": phrase})
 
     def ask_name(self, prompt: str, known: list[str] = ()) -> str:
         while not self._names.empty():  # an answer left over from an earlier, abandoned prompt
@@ -315,6 +316,10 @@ class JsApi:
         name = (name or "").strip()
         if name:
             self._commands.put(("enroll", name))
+
+    def next_enroll(self) -> None:
+        """"Дальше" - the phrase on screen was counted, on to the next one."""
+        self._commands.put(("enroll_next",))
 
     def cancel_enroll(self) -> None:
         self._commands.put(("enroll_cancel",))

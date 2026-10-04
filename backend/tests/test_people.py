@@ -90,7 +90,7 @@ def test_residents_are_added_and_learn_their_voice_from_the_phone(client, monkey
     owner = {"X-Pin": PIN}
     got = client.post("/api/residents", headers=owner, json={"name": " Эля "}).json()
     assert [r["name"] for r in got["residents"]] == ["Эля"] and got["residents"][0]["samples"] == 0
-    assert len(got["read_lines"]) == 3 and "{name}" in got["read_lines"][0]
+    assert len(got["read_lines"]) == 10 and "{name}" in got["read_lines"][0]
     assert "error" in client.post("/api/residents", headers=owner, json={"name": "эля"}).json()  # already there
     added = client.post("/api/residents/voice", headers=owner,
                         json={"name": "Эля", "audio": base64.b64encode(_phrase()).decode()}).json()

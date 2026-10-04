@@ -240,8 +240,10 @@ class _RecordingUI:
     def alert(self, text, key, active):
         self.events.append(("alert", text, active))
 
-    def enrollment(self, name, collected, needed, status):
+    def enrollment(self, name, collected, needed, status, phrase=""):
         self.events.append(("enroll", name, collected, status))
+        if phrase:
+            self.events.append(("enroll_phrase", phrase))
 
 
 def test_a_voice_phrase_is_shown_with_its_dataset_id_before_jarvis_answers(memory, tmp_path, monkeypatch):
@@ -726,15 +728,52 @@ def _fake_listener_factory(phrases, commands):
     return _FakeListener
 
 
-def test_enrolling_a_voice_turns_the_next_phrases_into_samples_not_commands(memory, tmp_path, monkeypatch):
+def _scripted_listener(script, commands):
+    """A listener that plays a script: an array is a heard phrase, a tuple is a
+    command pressed in the window meanwhile (sent, nothing heard that turn)."""
+    from app.audio_capture import Phrase
+
+    class _Listener:
+        def __init__(self, sample_rate, on_level=None, transcriber_factory=None, **kwargs):
+            self._script = list(script)
+
+        def next_phrase(self, timeout):
+            if not self._script:
+                commands.put(("quit",))
+                return None
+            step = self._script.pop(0)
+            if isinstance(step, tuple):
+                commands.put(step)
+                return None
+            return Phrase([step], None)
+
+        def mute(self): pass
+        def unmute(self): pass
+        def close(self): pass
+        def pause(self): pass
+        def resume(self): pass
+
+    return _Listener
+
+
+def test_enrolling_a_voice_goes_a_phrase_at_a_time_and_counts_phrases_not_samples(memory, tmp_path, monkeypatch):
+    """Each phrase on screen is counted once it's heard, and the next one only
+    comes with "Дальше": counting samples showed "2 of 3" after three phrases
+    read without pauses. Too short a reading asks for the same phrase again;
+    more speech after it was counted waits for "Дальше"."""
     import queue
 
     import voice_app
 
+    monkeypatch.setattr(voice_app.people, "READ_LINES", ["Меня зовут {name}.", "Вторая фраза.", "Третья фраза."])
     commands = queue.Queue()
     commands.put(("enroll", "Эля"))
-    monkeypatch.setattr(voice_app, "HandsFreeListener", _fake_listener_factory([_seconds(4)] * 3, commands))
-    monkeypatch.setattr(voice_app, "enroll_from_phrase", lambda mem, name, frames: 1)
+    short, ok = _seconds(1), _seconds(4)
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _scripted_listener(
+        [ok, ("enroll_next",), short, ok, ok, ("enroll_next",), ok, ("enroll_next",)], commands))
+    learned = []
+    monkeypatch.setattr(voice_app, "enroll_from_phrase",
+                        lambda mem, name, frames: learned.append(name) or (1 if len(frames[0]) >= 32000 else 0))
     handled = Mock()
     monkeypatch.setattr(voice_app, "handle_phrase", handled)
     session = _session(memory, tmp_path)
@@ -742,16 +781,39 @@ def test_enrolling_a_voice_turns_the_next_phrases_into_samples_not_commands(memo
 
     asyncio.run(voice_app.run_hands_free(session, None, commands))
 
-    enroll_events = [e for e in ui.events if e[0] == "enroll"]
+    enroll_events = [e for e in ui.events if e[0] in ("enroll", "enroll_phrase")]
     assert enroll_events == [
-        ("enroll", "Эля", 0, "started"),
-        ("enroll", "Эля", 1, "progress"),
-        ("enroll", "Эля", 2, "progress"),
+        ("enroll", "Эля", 0, "started"), ("enroll_phrase", "Меня зовут Эля."),
+        ("enroll", "Эля", 1, "heard"),
+        ("enroll", "Эля", 1, "next"), ("enroll_phrase", "Вторая фраза."),
+        ("enroll", "Эля", 1, "again"), ("enroll_phrase", "Вторая фраза."),
+        ("enroll", "Эля", 2, "heard"),
+        ("enroll", "Эля", 2, "next"), ("enroll_phrase", "Третья фраза."),
+        ("enroll", "Эля", 3, "heard"),
         ("enroll", "Эля", 3, "done"),
     ]
+    assert len(learned) == 4  # the extra reading after a counted phrase never reached the profile
     handled.assert_not_called()  # the reading never went to Whisper or the dataset
     assert session.resident_id == "Эля"
     assert ("resident", "Эля") in ui.events
+
+
+def test_enrollment_moves_on_only_after_the_phrase_was_heard(memory, tmp_path, monkeypatch):
+    import queue
+
+    import voice_app
+
+    monkeypatch.setattr(voice_app.people, "READ_LINES", ["Первая.", "Вторая."])
+    commands = queue.Queue()
+    commands.put(("enroll", "Эля"))
+    commands.put(("enroll_next",))  # pressed before anything was read: no skipping
+    monkeypatch.setattr(voice_app, "HandsFreeListener", _scripted_listener([], commands))
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, None, commands))
+
+    assert [e for e in ui.events if e[0] == "enroll"] == [("enroll", "Эля", 0, "started")]
 
 
 def test_enrollment_can_be_cancelled(memory, tmp_path, monkeypatch):

@@ -51,7 +51,7 @@ from typing import Any
 
 import numpy as np
 
-from app import speaker_id
+from app import people, speaker_id
 from app.agent import build_default_agent
 from app.audio_capture import HandsFreeListener, MicRecorder, contains_speech, speech_seconds
 from app.config import settings
@@ -347,12 +347,13 @@ def _wav_speech_seconds(wav_bytes: bytes) -> float:
 
 
 # Deliberate voice enrollment ("Записать голос" in the window): the person
-# reads a few sentences aloud and each ~4 s piece with enough speech
-# becomes a profile sample - long, clean samples, unlike the short commands
-# a profile otherwise picks up in passing (which score poorly, see
-# MIN_SPEECH_FOR_VOICE_ID).
-ENROLL_SAMPLES_NEEDED = 3
-ENROLL_TIMEOUT_SECONDS = 45.0
+# reads app.people.READ_LINES aloud one at a time, moving on with "Дальше",
+# and each ~4 s piece with enough speech becomes a profile sample - long,
+# clean samples, unlike the short commands a profile otherwise picks up in
+# passing (which score poorly, see MIN_SPEECH_FOR_VOICE_ID). The progress
+# counts phrases, not samples: counting samples showed "2 of 3" after three
+# phrases read without pauses (heard as one) or one too short to count.
+ENROLL_LINE_TIMEOUT_SECONDS = 90.0  # on one phrase with nothing heard or pressed - ends the recording
 ENROLL_CHUNK_SECONDS = 4.0
 ENROLL_MIN_SPEECH_SECONDS = 2.0
 
@@ -953,7 +954,7 @@ async def run_hands_free(
     """The hands-free loop, shared by the terminal and the window. Besides
     the mic it takes commands from a queue, from whichever front end:
     ("text", message), ("correct", text, utterance_id | None, ask),
-    ("wake",), ("toggle_mic",), ("enroll", name), ("enroll_cancel",),
+    ("wake",), ("toggle_mic",), ("enroll", name), ("enroll_next",), ("enroll_cancel",),
     ("speaker", utterance_id, name), ("quit",).
     A correction is saved to the dataset and, with ask=True, also sent to
     Jarvis as what was really said - Jarvis answered the misheard version.
@@ -967,7 +968,7 @@ async def run_hands_free(
     wake_word = parse_wake_words(settings.wake_words)[0].capitalize()
     asleep_hint = f"Скажи «{wake_word}»" if detector else "Нажми на кружок, чтобы говорить"
     state = HandsFreeState(settings.wake_listen_seconds, settings.follow_up_seconds)
-    enrolling: dict | None = None  # {"name", "got", "deadline"} while recording a voice
+    enrolling: dict | None = None  # {"name", "line", "heard", "deadline"} while recording a voice
     mic_on = True  # the orb switches it: off = the stream really stops
 
     def idle() -> None:
@@ -988,11 +989,25 @@ async def run_hands_free(
         await asyncio.to_thread(_play_listening_cue)
         ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")
 
+    lines = people.READ_LINES
+
+    def enrollment_phrase(name: str, line: int) -> str:
+        return lines[line].replace("{name}", name)
+
+    def enrolled_lines() -> int:
+        return enrolling["line"] + (1 if enrolling["heard"] else 0)
+
+    def show_enrollment_line(status: str) -> None:
+        """The phrase to read now - at the start, after "Дальше", or again when it wasn't heard."""
+        name, line = enrolling["name"], enrolling["line"]
+        enrolling["deadline"] = time.monotonic() + ENROLL_LINE_TIMEOUT_SECONDS
+        ui.enrollment(name, line, len(lines), status, phrase=enrollment_phrase(name, line))
+
     def finish_enrollment(status: str) -> None:
         nonlocal enrolling
-        name, got = enrolling["name"], enrolling["got"]
+        name, got = enrolling["name"], enrolled_lines()
         enrolling = None
-        ui.enrollment(name, got, ENROLL_SAMPLES_NEEDED, status)
+        ui.enrollment(name, got, len(lines), status)
         report_voices(memory, ui)
         if got:
             session.resident_id = name  # whoever just enrolled is most likely the one talking
@@ -1140,9 +1155,17 @@ async def run_hands_free(
                         if not mic_on:
                             listener.resume()
                             mic_on = True
-                        enrolling = {"name": name, "got": 0, "deadline": time.monotonic() + ENROLL_TIMEOUT_SECONDS}
-                        ui.enrollment(name, 0, ENROLL_SAMPLES_NEEDED, "started")
-                        ui.state(LISTENING, "Читай фразы с экрана вслух")
+                        enrolling = {"name": name, "line": 0, "heard": False}
+                        show_enrollment_line("started")
+                        ui.state(LISTENING, "Читай фразу с экрана вслух")
+                elif kind == "enroll_next":
+                    if enrolling and enrolling["heard"]:
+                        if enrolling["line"] + 1 >= len(lines):
+                            finish_enrollment("done")
+                        else:
+                            enrolling["line"] += 1
+                            enrolling["heard"] = False
+                            show_enrollment_line("next")
                 elif kind == "enroll_cancel":
                     if enrolling:
                         finish_enrollment("cancelled")
@@ -1171,7 +1194,7 @@ async def run_hands_free(
 
             ring_due()
             if enrolling and time.monotonic() > enrolling["deadline"]:
-                finish_enrollment("partial" if enrolling["got"] else "failed")
+                finish_enrollment("partial" if enrolled_lines() else "failed")
 
             was_awake = state.is_awake()
             phrase = await asyncio.to_thread(listener.next_phrase, 0.3)
@@ -1187,13 +1210,15 @@ async def run_hands_free(
             if enrolling:
                 # Same thread on purpose: the SQLite connection belongs to it,
                 # and embedding takes ~30 ms per piece.
-                added = enroll_from_phrase(memory, enrolling["name"], phrase.frames)
-                if added:
-                    enrolling["got"] += added
-                    if enrolling["got"] >= ENROLL_SAMPLES_NEEDED:
-                        finish_enrollment("done")
-                    else:
-                        ui.enrollment(enrolling["name"], enrolling["got"], ENROLL_SAMPLES_NEEDED, "progress")
+                # One phrase per step: once it's counted, more speech waits for "Дальше" -
+                # a second reading would only crowd the profile with the same sentence.
+                if not enrolling["heard"]:
+                    if enroll_from_phrase(memory, enrolling["name"], phrase.frames):
+                        enrolling["heard"] = True
+                        enrolling["deadline"] = time.monotonic() + ENROLL_LINE_TIMEOUT_SECONDS
+                        ui.enrollment(enrolling["name"], enrolled_lines(), len(lines), "heard")
+                    else:  # too short or too quiet to be a sample
+                        show_enrollment_line("again")
                 continue
 
             # "Стоп" while something rings or Jarvis listens needs no name -

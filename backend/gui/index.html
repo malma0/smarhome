@@ -101,12 +101,13 @@
       </div>
       <div id="enrollView" hidden>
         <p class="modal-title" id="enrollTitle">Запись голоса</p>
-        <p class="modal-text">Прочитай вслух, как обычно говоришь, с короткой паузой после каждой фразы:</p>
-        <ol class="read-lines" id="readLines"></ol>
+        <p class="modal-text" id="enrollStep">Прочитай фразу вслух, как обычно говоришь:</p>
+        <p class="read-line" id="enrollPhrase"></p>
         <div class="enroll-progress" id="enrollProgress"></div>
         <p class="enroll-status" id="enrollStatus">Слушаю…</p>
         <div class="modal-actions">
           <button type="button" class="ghost" id="enrollCancel">Отмена</button>
+          <button type="button" class="primary" id="enrollNext" disabled>Дальше</button>
         </div>
       </div>
     </div>
