@@ -937,6 +937,16 @@ def timing_note(t: dict) -> str:
             f"ответ {t['answer']:.1f} с, {model})").replace(".", ",")
 
 
+NOISE_MAX_SPEECH_SECONDS = 0.6
+
+
+def is_noise(vosk_text: str | None, spoken_seconds: float) -> bool:
+    """No word the local recognizer could make out, and under 0.6 s of "speech": a click, a breath, the
+    room - once the noise suppression was off, 9 of these came in a minute of listening. A real reply,
+    even "да", has a word in it."""
+    return not (vosk_text or "").strip() and spoken_seconds < NOISE_MAX_SPEECH_SECONDS
+
+
 WAKE_DEBUG_LOG = Path(__file__).resolve().parent / "wake_debug.log"
 
 
@@ -1255,8 +1265,14 @@ async def run_hands_free(
                 # Local only - asleep, a phrase without the name never goes further.
                 wake_class = classify(phrase.text or "", detector.wake_words)
             awake_before = state.is_awake()
+            spoken = speech_seconds(phrase.frames, SAMPLE_RATE)
+            if detector is not None and awake_before and is_noise(phrase.text, spoken):
+                # Listening, a click or a breath with no word in it: not a phrase. It went to Whisper,
+                # came back "Дисклеймер" and got an answer - and each one reopened the window.
+                wake_debug(f"phrase {spoken:.1f}s awake=True vosk={phrase.text!r} -> noise, still listening")
+                continue
             action = state.on_phrase(wake_class)
-            wake_debug(f"phrase {speech_seconds(phrase.frames, SAMPLE_RATE):.1f}s awake={awake_before} "
+            wake_debug(f"phrase {spoken:.1f}s awake={awake_before} "
                        f"vosk={phrase.text!r} class={wake_class} -> {action}")
             if action == IGNORE:
                 radio_player.duck(False)

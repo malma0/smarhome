@@ -1296,3 +1296,13 @@ def test_mic_device_picks_that_microphone_and_falls_back_to_the_default(monkeypa
     assert input_device() is None  # not plugged in: the default rather than no microphone
     monkeypatch.delenv("MIC_DEVICE")
     assert input_device() is None
+
+
+def test_noise_while_listening_is_not_a_phrase():
+    """Listening, with noise suppression off: 0.1-0.5 s "phrases" with no word went to Whisper, came
+    back "Дисклеймер" - and got an answer."""
+    import voice_app
+
+    assert voice_app.is_noise("", 0.1) and voice_app.is_noise(None, 0.5)
+    assert not voice_app.is_noise("да", 0.3)  # a word in it: a reply
+    assert not voice_app.is_noise("", 1.2)  # long enough to be speech the small model missed
