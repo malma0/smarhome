@@ -1306,3 +1306,72 @@ def test_noise_while_listening_is_not_a_phrase():
     assert voice_app.is_noise("", 0.1) and voice_app.is_noise(None, 0.5)
     assert not voice_app.is_noise("да", 0.3)  # a word in it: a reply
     assert not voice_app.is_noise("", 1.2)  # long enough to be speech the small model missed
+
+
+@pytest.mark.parametrize("words, one_phrase", [("и в", True), ("", False)])
+def test_still_talking_before_the_answer_hears_the_phrase_out(memory, tmp_path, monkeypatch, words, one_phrase):
+    """"Выключи свет в коридоре" sounded finished, the answer started - and "...и в прихожей" was lost.
+    Now: a word heard before the answer is there drops it, and the rest goes in with the start.
+    A click with no word in it doesn't."""
+    import queue
+
+    import voice_app
+    from app.audio_capture import Phrase
+
+    _quiet_settings(monkeypatch)
+    commands = queue.Queue()
+    first, rest = _seconds(2), _seconds(1)
+
+    class Detector:
+        wake_words = ("джарвис",)
+
+        def stream(self): pass
+
+    class Listener:
+        def __init__(self, sample_rate, on_level=None, transcriber_factory=None, on_edge=None, **kwargs):
+            self.on_edge, self.live_text = on_edge, ""
+            self.script = [Phrase([first], "джарвис выключи свет в коридоре"), "talk",
+                           Phrase([rest], "и в прихожей")]
+            Listener.me = self
+
+        def start_talking(self):  # the resident goes on while Jarvis thinks
+            self.on_edge(True)
+            self.live_text = words
+
+        def next_phrase(self, timeout):
+            if not self.script:
+                commands.put(("quit",))
+                return None
+            step = self.script.pop(0)
+            if step == "talk":
+                return None
+            self.live_text = ""
+            return step
+
+        def mute(self): pass
+        def unmute(self): pass
+        def close(self): pass
+        def pause(self): pass
+        def resume(self): pass
+
+    heard = []
+
+    async def handle(session, frames):
+        heard.append(sum(len(f) for f in frames))
+        if len(heard) == 1:
+            Listener.me.start_talking()
+            await asyncio.sleep(0.5 if not one_phrase else 5)  # thinking - long enough to be talked over
+
+    monkeypatch.setattr(voice_app, "HandsFreeListener", Listener)
+    monkeypatch.setattr(voice_app, "handle_phrase", handle)
+    monkeypatch.setattr(voice_app, "_play_listening_cue", lambda: None)
+    session = _session(memory, tmp_path)
+    session.ui = _RecordingUI()
+
+    asyncio.run(voice_app.run_hands_free(session, Detector(), commands))
+
+    gap = int(0.15 * voice_app.SAMPLE_RATE)
+    if one_phrase:
+        assert heard == [len(first), len(first) + gap + len(rest)]  # the whole phrase, answered once
+    else:
+        assert heard == [len(first), len(rest)]  # answered; the next phrase is a phrase of its own

@@ -938,6 +938,9 @@ def timing_note(t: dict) -> str:
 
 
 NOISE_MAX_SPEECH_SECONDS = 0.6
+# Still talking right after a phrase that sounded finished ("выключи свет в коридоре... и в прихожей"):
+# while the answer isn't there yet, at most this long, the answer is dropped and the phrase heard whole.
+CONTINUE_SECONDS = 3.0
 
 
 def is_noise(vosk_text: str | None, spoken_seconds: float) -> bool:
@@ -1000,6 +1003,7 @@ async def run_hands_free(
     asleep_hint = f"Скажи «{wake_word}»" if detector else "Нажми на кружок, чтобы говорить"
     state = HandsFreeState(settings.wake_listen_seconds, settings.follow_up_seconds)
     enrolling: dict | None = None  # {"name", "line", "heard", "deadline"} while recording a voice
+    continue_from: list[np.ndarray] | None = None  # a phrase whose answer was dropped - see respond()
     mic_on = True  # the orb switches it: off = the stream really stops
 
     def idle() -> None:
@@ -1044,9 +1048,13 @@ async def run_hands_free(
             session.resident_id = name  # whoever just enrolled is most likely the one talking
             ui.resident(name)
         idle()
+    speech_started = threading.Event()  # set by the listener's thread when a new phrase begins
+
     def phrase_edge(started: bool) -> None:
         """From the listener's thread: the window follows the phrase as it
         happens - only while Jarvis is listening; asleep, most phrases aren't for it."""
+        if started:
+            speech_started.set()
         if not state.is_awake():
             return
         if started:
@@ -1118,19 +1126,26 @@ async def run_hands_free(
 
     session.on_stop = stop_all
 
-    async def respond(work) -> None:
+    async def respond(work, frames: list[np.ndarray] | None = None) -> None:
         """Runs Jarvis's answer. Meanwhile the mic listens only for the name
         (barge-in): "Джарвис" - "Джарвис, стоп", "Джарвис, включи свет" -
         cuts the answer and Jarvis listens again; the command or a "стоп"
         that follows is handled as usual. Everything else heard meanwhile -
         above all Jarvis's own voice from the speakers - is dropped, never
         taken as the next phrase. Without Vosk there's no local transcript to
-        check, so the mic is just muted."""
-        nonlocal interrupted
+        check, so the mic is just muted.
+
+        With the phrase's frames: still talking before the answer is there
+        (a word heard, within CONTINUE_SECONDS) means the phrase wasn't over -
+        the answer is dropped and the next phrase goes in after this one's audio."""
+        nonlocal interrupted, continue_from
+        continued = False
         radio_player.duck(True)
         if detector is None:
             listener.mute()
         session.speaking_text = ""
+        speech_started.clear()
+        started = time.monotonic()
         task = asyncio.ensure_future(work)
         try:
             while detector is not None and not task.done():
@@ -1143,14 +1158,28 @@ async def run_hands_free(
                     playback.stop_all()
                     interrupted = True
                     break
+                # a word, not a click: the answer isn't there yet, so this is the same phrase going on
+                if (frames is not None and speech_started.is_set() and heard.strip() and not session.speaking_text
+                        and time.monotonic() - started < CONTINUE_SECONDS):
+                    task.cancel()
+                    continued = True
+                    break
             try:
                 await task
             except asyncio.CancelledError:
                 pass
         finally:
-            listener.mute()  # drops what was heard of our own voice
-            await asyncio.sleep(0.3)  # let the room's echo of the reply die down
-            listener.unmute()
+            if not continued:  # the rest of the phrase is being heard right now - keep it
+                listener.mute()  # drops what was heard of our own voice
+                await asyncio.sleep(0.3)  # let the room's echo of the reply die down
+                listener.unmute()
+        if continued:
+            wake_debug(f"  still talking ({heard!r}) - answer dropped, hearing the phrase out")
+            ui.info("(ты продолжаешь - дослушиваю)")
+            continue_from = frames
+            state.force_wake()
+            ui.state(LISTENING, "Слушаю...")
+            return
         if interrupted:
             interrupted = False
             ui.info("(перебили - слушаю)")
@@ -1284,7 +1313,9 @@ async def run_hands_free(
                 ui.state(LISTENING, f"Слушаю ({settings.wake_listen_seconds:.0f} с)...")
                 continue
             frames, wake_frames = with_wake_phrase(wake_frames, phrase.frames), None
-            await respond(handle_phrase(session, frames))
+            if continue_from is not None:  # "...в коридоре" + "и в прихожей" - one phrase
+                frames, continue_from = with_wake_phrase(continue_from, frames), None
+            await respond(handle_phrase(session, frames), frames)
     finally:
         listener.close()
 
