@@ -105,6 +105,10 @@ def test_residents_are_added_and_learn_their_voice_from_the_phone(client, monkey
 def test_jarvis_answers_aloud_or_not_at_once_and_after_a_restart(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text("GROQ_API_KEY=x\nJARVIS_TTS_ENABLED=false\n", encoding="utf-8")
+    import voice_app
+
+    started = []
+    monkeypatch.setattr(voice_app, "start_voicebox_if_needed", lambda: started.append(1))  # never the real server
     monkeypatch.setenv("JARVIS_TTS_ENABLED", "false")
     was = settings.tts_enabled
     try:
@@ -112,6 +116,10 @@ def test_jarvis_answers_aloud_or_not_at_once_and_after_a_restart(tmp_path, monke
         assert env.read_text(encoding="utf-8") == "GROQ_API_KEY=x\nJARVIS_TTS_ENABLED=true\n"
         people.set_voice(False, str(env))
         assert settings.tts_enabled is False and "JARVIS_TTS_ENABLED=false" in env.read_text(encoding="utf-8")
+        import time
+
+        time.sleep(0.2)
+        assert started == [1]  # switched on: the voice server warmed up at once, off: left alone
     finally:
         object.__setattr__(settings, "tts_enabled", was)  # the settings are frozen for everyone else
 

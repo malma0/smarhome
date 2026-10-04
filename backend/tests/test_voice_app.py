@@ -1116,3 +1116,41 @@ def test_a_long_phrase_goes_to_the_full_whisper_a_command_stays_on_turbo(monkeyp
     assert mock_post.call_args.kwargs["data"]["model"] == "whisper-large-v3-turbo"
     asyncio.run(transcribe(b"\0" * (44 + 6 * second), api_key="k", base_url="https://x"))
     assert mock_post.call_args.kwargs["data"]["model"] == "whisper-large-v3"
+
+
+def test_a_voice_switched_on_while_running_is_made_at_the_next_reply(monkeypatch):
+    import voice_app
+
+    made, started = [], []
+    monkeypatch.setattr(voice_app, "start_voicebox_if_needed", lambda: started.append(1) or True)
+    monkeypatch.setattr(voice_app, "make_tts", lambda ui: made.append(1) or ("voice", "offline"))
+
+    async def no_warm_up(provider, ui=None):
+        pass
+
+    monkeypatch.setattr(voice_app, "warm_up_in_background", no_warm_up)
+    session = type("S", (), {"tts_provider": None, "tts_fallback": None, "ui": None})()
+    asyncio.run(voice_app.ensure_tts(session))
+    assert (session.tts_provider, session.tts_fallback) == ("voice", "offline") and started == [1]
+    asyncio.run(voice_app.ensure_tts(session))  # already there: nothing again
+    assert made == [1]
+
+
+def test_the_voice_server_is_left_alone_when_it_answers_or_isnt_ours(monkeypatch):
+    import subprocess
+
+    import voice_app
+
+    launched = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: launched.append(a))
+    import dataclasses
+
+    monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, tts_provider="edge"))
+    assert voice_app.start_voicebox_if_needed() is False and launched == []
+
+    class Up:
+        status_code = 200
+
+    monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, tts_provider="voicebox"))
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: Up())
+    assert voice_app.start_voicebox_if_needed() is True and launched == []

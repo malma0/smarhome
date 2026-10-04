@@ -39,6 +39,7 @@ Usage: python voice_app.py
 
 import asyncio
 import io
+import os
 import queue
 import threading
 import time
@@ -431,6 +432,54 @@ def build_tts_provider() -> TTSProvider:
     )
 
 
+VOICEBOX_EXE = Path(os.environ.get("LOCALAPPDATA", "")) / "Voicebox" / "voicebox-server.exe"
+
+
+def start_voicebox_if_needed() -> bool:
+    """The cloned-voice server, if replies are by Voicebox and it isn't up - what start_jarvis_voice.bat
+    does at login, for a voice switched on later (the app's Settings). From its own folder (or it writes
+    data files where it was started), windowless, high priority. True if it answers or was started."""
+    import subprocess
+
+    import httpx
+
+    if settings.tts_provider != "voicebox":
+        return False
+    try:
+        if httpx.get(f"{settings.voicebox_base_url}/health", timeout=1.5).status_code == 200:
+            return True
+    except httpx.HTTPError:
+        pass
+    if not VOICEBOX_EXE.exists():
+        return False
+    flags = 0x00000008 | 0x00000200 | 0x08000000 | 0x00000080  # detached, own group, no window, high priority
+    subprocess.Popen([str(VOICEBOX_EXE)], cwd=str(VOICEBOX_EXE.parent), creationflags=flags, close_fds=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # nothing of ours held
+    return True
+
+
+def make_tts(ui: VoiceUI) -> tuple[TTSProvider, TTSProvider]:
+    """The reply voice and the offline one behind it (SAPI) - at start, or when the voice is switched on."""
+    from app.tts.sapi import SapiTTSProvider
+
+    fallback = SapiTTSProvider()
+    try:
+        return build_tts_provider(), fallback
+    except Exception as exc:  # noqa: BLE001 - e.g. piper model files not downloaded yet
+        ui.info(f"Не удалось запустить {settings.tts_provider}: {exc}\nИспользую офлайн-голос вместо него.")
+        return fallback, fallback
+
+
+async def ensure_tts(session: "VoiceSession") -> None:
+    """Voice switched on while Jarvis runs (Настройки -> Голос ассистента): the providers are made now,
+    Voicebox started if needed - until it's ready, the offline voice speaks (speak's fallback)."""
+    if session.tts_provider is not None:
+        return
+    await asyncio.to_thread(start_voicebox_if_needed)
+    session.tts_provider, session.tts_fallback = make_tts(session.ui)
+    await warm_up_in_background(session.tts_provider, session.ui)
+
+
 async def warm_up_in_background(provider: TTSProvider, ui: VoiceUI | None = None) -> None:
     """For providers with a slow cold start (Voicebox loads a ~3 GB model
     on its first generation): prepare() runs here - it's quick, and doing it
@@ -519,14 +568,7 @@ async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSessi
 
     tts_provider = tts_fallback = None
     if settings.tts_enabled:
-        from app.tts.sapi import SapiTTSProvider
-
-        tts_fallback = SapiTTSProvider()
-        try:
-            tts_provider = build_tts_provider()
-        except Exception as exc:  # noqa: BLE001 - e.g. piper model files not downloaded yet
-            ui.info(f"Не удалось запустить {settings.tts_provider}: {exc}\nИспользую офлайн-голос вместо него.")
-            tts_provider = tts_fallback
+        tts_provider, tts_fallback = make_tts(ui)
         await warm_up_in_background(tts_provider, ui)
     else:
         ui.info("Озвучка отключена (JARVIS_TTS_ENABLED=false) - Jarvis будет отвечать только текстом.")
@@ -846,6 +888,7 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
         session.utterances.update(utterance_id, response=response, timings=timings)
     session.speaking_text = response
     if settings.tts_enabled and response:
+        await ensure_tts(session)
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=ui)
 
 
@@ -862,6 +905,7 @@ async def handle_text(session: VoiceSession, text: str, echo: bool = True) -> No
         session.ui.info(f"(ответ {time.monotonic() - started:.1f} с, {model})".replace(".", ","))
     session.speaking_text = response
     if settings.tts_enabled and response:  # empty after "стоп"
+        await ensure_tts(session)
         await speak(session.tts_provider, session.tts_fallback, text_for_speech(response), ui=session.ui)
 
 

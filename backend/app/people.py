@@ -161,4 +161,10 @@ def set_voice(enabled: bool, env_path: str | None = None) -> dict:
     except OSError:
         pass  # changed for now; the next start reads the old .env
     os.environ["JARVIS_TTS_ENABLED"] = "true" if enabled else "false"
+    if enabled:  # warm by the first reply: the cloned-voice server takes up to a minute to start
+        import threading
+
+        from voice_app import start_voicebox_if_needed
+
+        threading.Thread(target=start_voicebox_if_needed, daemon=True).start()
     return voice()
