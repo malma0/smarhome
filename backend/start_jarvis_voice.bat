@@ -2,7 +2,8 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-set VOICEBOX_DIR=C:\Users\malma\AppData\Local\Voicebox
+rem the signed-in user's own install folder - the same on any PC
+set VOICEBOX_DIR=%LOCALAPPDATA%\Voicebox
 set VOICEBOX_EXE=%VOICEBOX_DIR%\voicebox-server.exe
 set DOCKER_EXE=C:\Program Files\Docker\Docker\Docker Desktop.exe
 
