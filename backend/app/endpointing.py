@@ -27,7 +27,8 @@ HANGING = {
 }
 
 # asked to make a room somehow - "сделай в спальне..." isn't over at the room until it says how
-WANTS_HOW = {"сделай", "сделать", "поставь", "поставить", "держи", "держать", "установи", "выстави"}
+# by the start of the word: Vosk heard "сделай" as "сделаешь"
+WANTS_HOW = ("сдела", "постав", "держ", "установ", "выстав")
 HOW = ("потемн", "посветл", "темнее", "светлее", "ярче", "тепл", "холодн", "прохладн", "жарч", "тише", "громче",
        "градус", "процент", "максимум", "минимум")
 
@@ -48,7 +49,7 @@ def end_silence_for(text: str, normal: float, short: float, long: float) -> floa
     if last in HANGING:
         return long
     if last in FINISHED:
-        if any(w in WANTS_HOW for w in words) and not any(w.startswith(HOW) or w.isdigit() for w in words):
+        if any(w.startswith(WANTS_HOW) for w in words) and not any(w.startswith(HOW) or w.isdigit() for w in words):
             return long  # "можешь сделать в спальне" + a pause - "потемнее" was still coming, got cut off
         return short
     return normal

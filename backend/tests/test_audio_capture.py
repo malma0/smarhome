@@ -309,7 +309,7 @@ def test_a_room_doesnt_end_a_phrase_that_hasnt_said_how_yet():
     from app.endpointing import end_silence_for
 
     pause = lambda text: end_silence_for(text, 0.9, 0.55, 1.4)  # noqa: E731
-    assert pause("можешь пожалуйста сделать в спальне") == pause("сделай в зале") == 1.4
+    assert pause("можешь пожалуйста сделать в спальне") == pause("сделай в зале") == pause("сделаешь спальне") == 1.4  # as Vosk heard it
     assert pause("сделай в спальне потемнее") == 0.9  # said how - "потемнее" itself isn't a final word
     assert pause("сделай потемнее в кабинете") == pause("поставь 22 градуса в спальне") == 0.55
     assert pause("выключи свет в спальне") == 0.55  # nothing left to say
