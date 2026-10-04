@@ -828,6 +828,7 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
         ui.info(f"Ошибка распознавания: {exc}")
     whisper_seconds = time.monotonic() - started
+    wake_debug(f"  whisper={text!r} ({whisper_seconds:.1f}s)")
 
     if text and is_hallucination(text):
         # Noise that got past the voice detector - not answered, and kept out
@@ -934,6 +935,18 @@ def timing_note(t: dict) -> str:
     model = "своя модель" if t["local"] else "Groq"
     return (f"(распознала {t['whisper']:.1f} с · голос {t['voice']:.1f} с · "
             f"ответ {t['answer']:.1f} с, {model})").replace(".", ",")
+
+
+WAKE_DEBUG_LOG = Path(__file__).resolve().parent / "wake_debug.log"
+
+
+def wake_debug(line: str) -> None:
+    """JARVIS_WAKE_DEBUG=true: one line per phrase into wake_debug.log - finding out why the name
+    is missed. It holds what was said in the room, so it's off by default and never leaves the PC."""
+    if not settings.wake_debug:
+        return
+    with WAKE_DEBUG_LOG.open("a", encoding="utf-8") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
 
 
 def with_wake_phrase(wake_frames: list[np.ndarray] | None, frames: list[np.ndarray]) -> list[np.ndarray]:
@@ -1241,7 +1254,10 @@ async def run_hands_free(
             if detector is not None:
                 # Local only - asleep, a phrase without the name never goes further.
                 wake_class = classify(phrase.text or "", detector.wake_words)
+            awake_before = state.is_awake()
             action = state.on_phrase(wake_class)
+            wake_debug(f"phrase {speech_seconds(phrase.frames, SAMPLE_RATE):.1f}s awake={awake_before} "
+                       f"vosk={phrase.text!r} class={wake_class} -> {action}")
             if action == IGNORE:
                 radio_player.duck(False)
                 continue

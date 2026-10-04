@@ -1262,3 +1262,18 @@ def test_the_voice_server_prefers_the_cuda_build_and_runs_from_voiceboxs_folder(
     cuda.parent.mkdir(parents=True)
     cuda.write_bytes(b"")
     assert voice_app.start_voicebox_if_needed() is True and launched[-1] == (str(cuda), str(tmp_path))
+
+
+def test_wake_debug_writes_only_when_switched_on(monkeypatch, tmp_path):
+    import dataclasses
+
+    import voice_app
+
+    log = tmp_path / "wake_debug.log"
+    monkeypatch.setattr(voice_app, "WAKE_DEBUG_LOG", log)
+    monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, wake_debug=False))
+    voice_app.wake_debug("phrase 1.0s vosk='джарвис'")
+    assert not log.exists()  # what's said at home stays unwritten unless asked for
+    monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, wake_debug=True))
+    voice_app.wake_debug("phrase 1.0s vosk='джарвис'")
+    assert log.read_text(encoding="utf-8").endswith("phrase 1.0s vosk='джарвис'\n")

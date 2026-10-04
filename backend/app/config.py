@@ -55,6 +55,7 @@ class Settings:
     speaker_model: str
     whisper_vocabulary: str
     dataset_enabled: bool
+    wake_debug: bool
     dataset_dir: str
     voice_mode: str
     wake_words: str
@@ -125,6 +126,9 @@ def load_settings() -> Settings:
         speaker_model=os.environ.get("SPEAKER_MODEL", "ecapa").strip().lower(),
         whisper_vocabulary=os.environ.get("WHISPER_VOCABULARY", ""),
         dataset_enabled=os.environ.get("JARVIS_DATASET_ENABLED", "true").strip().lower() not in ("false", "0", "no"),
+        # Diagnostics, off by default: every phrase the mic heard - what Vosk made of it, whether the name
+        # was there, what Whisper heard - into backend/wake_debug.log (local, gitignored).
+        wake_debug=os.environ.get("JARVIS_WAKE_DEBUG", "").strip().lower() in ("true", "1", "yes"),
         dataset_dir=os.environ.get("JARVIS_DATASET_DIR", "dataset"),
         voice_mode=os.environ.get("VOICE_MODE", "wake").strip().lower(),
         wake_words=os.environ.get("WAKE_WORDS", "джарвис,джервис"),
