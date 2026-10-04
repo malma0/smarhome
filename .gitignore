@@ -55,6 +55,10 @@ backend/*.log
 backend/training/cache/
 backend/training/runs/
 *.gguf
+# and the MLflow store of the versions (training/tracking.py) - local, like the models
+backend/training/mlflow.db
+backend/training/mlartifacts/
+backend/mlruns/
 
 # the Android app build (android/build.py) - made, not source
 android/build/

@@ -96,6 +96,29 @@ python -m training.evaluate --compare
 Модели и промежуточные файлы (`training/runs/`) в git не попадают; данные
 (`training/data/`) и результаты экзаменов (`training/results/`) — попадают.
 
+## История версий (MLflow)
+
+Каждая версия — запуск в эксперименте `jarvis-home`: параметры (база, данные
+и коммит, на котором они сделаны, настройки LoRA), кривая loss, время
+обучения, баллы экзаменов (`exam.<набор>.accuracy` и по каждому виду заданий,
+`exam.<набор>.seconds` — секунд на ответ) и адаптер. Все версии
+зарегистрированы как модель `jarvis-home` (версия N = vN), алиас
+`production` — та, что сейчас у Джарвиса. Отдельный запуск у необученной
+`qwen2.5:1.5b` — для сравнения.
+
+- `train_lora.py` сам заводит запуск (имя — по папке: `runs/home-v7` →
+  `jarvis-home-v7`, или `--model-name`), пишет в него loss и в конце
+  регистрирует адаптер новой версией; продолжение с чекпоинта пишет в тот же
+  запуск. `--no-mlflow` — без записи.
+- `evaluate.py` дописывает баллы экзамена в запуск своей модели.
+- v1–v6, обученные до MLflow, занесены из чекпоинтов и результатов:
+  `python -m training.mlflow_backfill --production jarvis-home-v6`.
+- Посмотреть: `mlflow ui --backend-store-uri sqlite:///training/mlflow.db`
+  (из `backend/`), затем http://localhost:5000 → Model training.
+
+Хранилище (`training/mlflow.db`, `training/mlartifacts/`) — на этом ПК, как и
+модели, в git не попадает.
+
 ## Подключение к Jarvis
 
 10. На ПК с моделью открыть Ollama в домашнюю сеть: переменная окружения

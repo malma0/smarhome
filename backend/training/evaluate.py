@@ -32,6 +32,7 @@ from app.domains import home
 from app.memory import MemoryStore
 from app.tools.registry import Tool, ToolRegistry
 from app.domains.home import match_room, period_span
+from training import tracking
 from training.build_dataset import _random_time
 from training.sim_house import SimHouse
 
@@ -196,7 +197,15 @@ def main() -> None:
                         help="the tools the model was trained with (a newer model: training/data/tools.json)")
     args = parser.parse_args()
     if args.model:
-        evaluate(args.model, args.base_url, args.limit, args.tag, args.hour, args.tools, args.cases)
+        out = evaluate(args.model, args.base_url, args.limit, args.tag, args.hour, args.tools, args.cases)
+        if not args.limit:  # a partial try isn't a score
+            try:
+                run_id = tracking.log_exam(args.model, args.tag, out)
+            except Exception as exc:  # noqa: BLE001 - the exam's own file is what matters
+                print(f"(MLflow: not recorded - {exc!r})")
+            else:
+                if run_id:
+                    print(f"MLflow: scores recorded in run {run_id[:8]}")
     summary()
 
 

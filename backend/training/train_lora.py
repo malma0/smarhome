@@ -21,6 +21,8 @@ import json
 import random
 from pathlib import Path
 
+from training import tracking
+
 BASE = "Qwen/Qwen2.5-1.5B-Instruct"
 START, END = "<|im_start|>assistant\n", "<|im_end|>"
 SAVE_STEPS = 50  # of ~1000 for the full set: a stop loses an hour at most, not the night
@@ -64,7 +66,12 @@ def main() -> None:
     parser.add_argument("--max-len", type=int, default=3072)
     parser.add_argument("--max-steps", type=int, default=-1)
     parser.add_argument("--rank", type=int, default=16)
+    parser.add_argument("--model-name", help="its Ollama name, for MLflow (default from --out: runs/home-v7 -> "
+                                             "jarvis-home-v7)")
+    parser.add_argument("--no-mlflow", action="store_true", help="don't record this run in MLflow")
     args = parser.parse_args()
+    model_name = args.model_name or "jarvis-" + Path(args.out).name.replace("home-1.5b", "home")
+    track = not args.no_mlflow and tracking.available()
 
     import torch
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -112,7 +119,7 @@ def main() -> None:
             lr_scheduler_type="cosine", warmup_ratio=0.03, fp16=True, logging_steps=10,
             save_strategy="steps", save_steps=SAVE_STEPS, save_total_limit=2,
             optim="paged_adamw_8bit", gradient_checkpointing=True,
-            report_to=[], remove_unused_columns=False,
+            report_to=["mlflow"] if track else [], remove_unused_columns=False,
         ),
     )
     from transformers.trainer_utils import get_last_checkpoint
@@ -120,10 +127,50 @@ def main() -> None:
     last = get_last_checkpoint(args.out) if Path(args.out).is_dir() else None
     if last:
         print(f"going on from {last}")
-    trainer.train(resume_from_checkpoint=last)
+    run = start_tracking(model_name, args, len(examples), resuming=bool(last)) if track else None
+    trainer.train(resume_from_checkpoint=last)  # Trainer's own MLflow callback logs the loss into the run
     model.save_pretrained(Path(args.out) / "adapter")
     tokenizer.save_pretrained(Path(args.out) / "adapter")
     print(f"adapter saved to {Path(args.out) / 'adapter'}")
+    if run is not None:
+        finish_tracking(run, Path(args.out) / "adapter", model_name)
+
+
+def start_tracking(model_name: str, args, examples: int, resuming: bool):
+    """This version's MLflow run - the one it already has when training goes on from a checkpoint."""
+    import subprocess
+
+    mlflow = tracking.setup()
+    run = tracking.run_for_model(mlflow, model_name) if resuming else None
+    try:
+        data_commit = subprocess.run(["git", "log", "-1", "--format=%h", "--", *args.data],
+                                     capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        data_commit = "unknown"
+    active = mlflow.start_run(run_id=run.info.run_id if run else None, run_name=None if run else model_name,
+                              tags=None if run else {"ollama_model": model_name, "kind": "fine-tune"})
+    if run is None:
+        mlflow.log_params({"base": args.base, "method": "QLoRA", "quantization": "nf4, double quant, fp16 compute",
+                           "lora_rank": args.rank, "lora_alpha": 2 * args.rank, "lora_dropout": 0.05,
+                           "max_len": args.max_len, "dialogues": examples, "data": " + ".join(args.data),
+                           "data_commit": data_commit, "gpu": "RTX 2060 6 GB"})
+    return active
+
+
+def finish_tracking(run, adapter: Path, model_name: str) -> None:
+    """The adapter into the run and the model registry, as a new version of jarvis-home."""
+    import mlflow
+
+    mlflow.log_artifacts(str(adapter), artifact_path="adapter")
+    client = mlflow.MlflowClient()
+    try:
+        client.get_registered_model(tracking.REGISTERED_MODEL)
+    except Exception:  # noqa: BLE001 - mlflow's RestException: not there yet
+        client.create_registered_model(tracking.REGISTERED_MODEL)
+    version = client.create_model_version(tracking.REGISTERED_MODEL, source=f"{run.info.artifact_uri}/adapter",
+                                          run_id=run.info.run_id, tags={"ollama_model": model_name})
+    mlflow.end_run()
+    print(f"MLflow: run {run.info.run_id[:8]}, {tracking.REGISTERED_MODEL} version {version.version}")
 
 
 if __name__ == "__main__":
