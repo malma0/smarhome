@@ -70,6 +70,28 @@ class PrerollBuffer:
             return frames
 
 
+def input_device() -> int | None:
+    """MIC_DEVICE in .env (part of its name, e.g. "FIFINE"): always that microphone. Unset - Windows'
+    default, which a headset switching on quietly takes over (Jarvis then heard a G435 on the desk, not
+    the FIFINE it was talked to). Looked up among the default host API's devices - MME resamples to 16 kHz,
+    WASAPI's shared mode doesn't. Not found: the default, rather than no microphone at all."""
+    import os
+
+    import sounddevice as sd
+
+    wanted = os.environ.get("MIC_DEVICE", "").strip().casefold()
+    if not wanted:
+        return None
+    try:
+        hostapi = sd.query_devices(kind="input")["hostapi"]
+    except Exception:  # noqa: BLE001 - no default input at all: let the stream say so
+        return None
+    for index, device in enumerate(sd.query_devices()):
+        if device["max_input_channels"] > 0 and device["hostapi"] == hostapi and wanted in device["name"].casefold():
+            return index
+    return None
+
+
 class MicRecorder:
     """Keeps one input stream open for the whole session. Windows shows the
     "microphone in use" indicator the entire time the app runs - that's
@@ -85,6 +107,7 @@ class MicRecorder:
             dtype="int16",
             blocksize=int(sample_rate * BLOCK_SECONDS),
             callback=self._callback,
+            device=input_device(),
         )
         self._stream.start()
 
@@ -354,7 +377,8 @@ class HandsFreeListener:
         self._held = threading.Event()  # an alarm is sounding (hold/release)
         self._stop = threading.Event()
         self._stream = sd.InputStream(
-            samplerate=sample_rate, channels=1, dtype="int16", blocksize=frame_len, callback=self._callback
+            samplerate=sample_rate, channels=1, dtype="int16", blocksize=frame_len, callback=self._callback,
+            device=input_device(),
         )
         self._stream.start()
         self._thread = threading.Thread(target=self._run, daemon=True)

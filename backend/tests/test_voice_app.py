@@ -1277,3 +1277,22 @@ def test_wake_debug_writes_only_when_switched_on(monkeypatch, tmp_path):
     monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, wake_debug=True))
     voice_app.wake_debug("phrase 1.0s vosk='джарвис'")
     assert log.read_text(encoding="utf-8").endswith("phrase 1.0s vosk='джарвис'\n")
+
+
+def test_mic_device_picks_that_microphone_and_falls_back_to_the_default(monkeypatch):
+    """A G435 headset switching on became Windows' default input - Jarvis then heard it, not the FIFINE."""
+    import sounddevice as sd
+
+    from app.audio_capture import input_device
+
+    devices = [{"name": "Microphone (G435 Wireless Gamin", "max_input_channels": 1, "hostapi": 0},
+               {"name": "Speakers (FIFINE K670)", "max_input_channels": 0, "hostapi": 0},
+               {"name": "Microphone (FIFINE K670 Microph", "max_input_channels": 2, "hostapi": 0},
+               {"name": "Microphone (FIFINE K670 Microphone)", "max_input_channels": 2, "hostapi": 3}]
+    monkeypatch.setattr(sd, "query_devices", lambda device=None, kind=None: devices[0] if kind else devices)
+    monkeypatch.setenv("MIC_DEVICE", "fifine")
+    assert input_device() == 2  # an input, in the default's host API (MME), case doesn't matter
+    monkeypatch.setenv("MIC_DEVICE", "blue yeti")
+    assert input_device() is None  # not plugged in: the default rather than no microphone
+    monkeypatch.delenv("MIC_DEVICE")
+    assert input_device() is None
