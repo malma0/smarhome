@@ -302,3 +302,14 @@ def test_which_words_finish_a_phrase_and_which_leave_it_hanging():
     assert pause("") == 0.9 and pause("какая погода") == 0.9
     assert pause("Включи свет на кухне") == pause("стоп") == pause("сделай 22 градуса") == 0.55
     assert pause("джарвис") == pause("включи") == pause("свет на кухне и") == pause("напомни мне ещё") == 1.4
+
+def test_a_room_doesnt_end_a_phrase_that_hasnt_said_how_yet():
+    """"Можешь, пожалуйста, сделать в спальне..." - the room sounded final, the reply started, and
+    "потемнее" never made it in."""
+    from app.endpointing import end_silence_for
+
+    pause = lambda text: end_silence_for(text, 0.9, 0.55, 1.4)  # noqa: E731
+    assert pause("можешь пожалуйста сделать в спальне") == pause("сделай в зале") == 1.4
+    assert pause("сделай в спальне потемнее") == 0.9  # said how - "потемнее" itself isn't a final word
+    assert pause("сделай потемнее в кабинете") == pause("поставь 22 градуса в спальне") == 0.55
+    assert pause("выключи свет в спальне") == 0.55  # nothing left to say

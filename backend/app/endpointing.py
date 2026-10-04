@@ -22,8 +22,14 @@ HANGING = {
     "когда", "если", "это", "мне", "ну", "вот", "так", "эм", "э", "ээ", "пожалуйста",
     "включи", "выключи", "поставь", "сделай", "открой", "закрой", "найди", "напомни", "добавь", "убавь", "прибавь",
     "скажи", "какая", "какой", "какие", "сколько", "запусти", "переключи", "держи",
+    "сделать", "поставить", "включить", "выключить", "открыть", "закрыть", "можешь", "можно",
     "джарвис", "джервис",
 }
+
+# asked to make a room somehow - "сделай в спальне..." isn't over at the room until it says how
+WANTS_HOW = {"сделай", "сделать", "поставь", "поставить", "держи", "держать", "установи", "выстави"}
+HOW = ("потемн", "посветл", "темнее", "светлее", "ярче", "тепл", "холодн", "прохладн", "жарч", "тише", "громче",
+       "градус", "процент", "максимум", "минимум")
 
 # a command ends here as a rule: a room, a stop word, a unit after a number
 FINISHED = {
@@ -42,5 +48,7 @@ def end_silence_for(text: str, normal: float, short: float, long: float) -> floa
     if last in HANGING:
         return long
     if last in FINISHED:
+        if any(w in WANTS_HOW for w in words) and not any(w.startswith(HOW) or w.isdigit() for w in words):
+            return long  # "можешь сделать в спальне" + a pause - "потемнее" was still coming, got cut off
         return short
     return normal
