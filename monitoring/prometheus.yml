@@ -1,0 +1,12 @@
+# Prometheus for the home model service's metrics (backend/model_service):
+#   docker compose --profile monitoring up -d      -> http://localhost:9090
+# It scrapes the service where Jarvis runs it - natively on the host (the
+# launcher starts it on port 8090), or the model-service container.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: home-model
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8090"]

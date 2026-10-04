@@ -9,3 +9,34 @@ services:
       - "8123:8123"
     environment:
       - TZ=Asia/Novosibirsk
+
+  # The home model's service (backend/model_service) in a container - instead of
+  # the one the launcher starts natively, not alongside it (both want port 8090).
+  # The model stays in Ollama on the host, on the GPU.
+  model-service:
+    profiles: ["model-service"]
+    container_name: jarvis-home-model
+    build:
+      context: ./backend
+      dockerfile: model_service/Dockerfile
+    environment:
+      - MODEL_SERVICE_MODEL=${HOME_LLM_MODEL:-jarvis-home}
+      - MODEL_SERVICE_OLLAMA_URL=http://host.docker.internal:11434
+    ports:
+      - "8090:8090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # Prometheus scraping the service's /metrics - http://localhost:9090
+  prometheus:
+    profiles: ["monitoring"]
+    container_name: jarvis-prometheus
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

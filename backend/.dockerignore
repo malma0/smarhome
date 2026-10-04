@@ -1,0 +1,6 @@
+# The model service's image (model_service/Dockerfile) needs only these two;
+# everything else here is gigabytes (.venv, models, voices, training runs).
+*
+!app/
+!model_service/
+**/__pycache__
