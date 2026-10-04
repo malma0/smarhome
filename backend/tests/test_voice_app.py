@@ -1154,3 +1154,30 @@ def test_the_voice_server_is_left_alone_when_it_answers_or_isnt_ours(monkeypatch
     monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, tts_provider="voicebox"))
     monkeypatch.setattr(httpx, "get", lambda *a, **k: Up())
     assert voice_app.start_voicebox_if_needed() is True and launched == []
+
+
+def test_the_voice_server_prefers_the_cuda_build_and_runs_from_voiceboxs_folder(monkeypatch, tmp_path):
+    import dataclasses
+    import subprocess
+
+    import voice_app
+
+    plain, cuda = tmp_path / "voicebox-server.exe", tmp_path / "data" / "backends" / "cuda" / "voicebox-server-cuda.exe"
+    monkeypatch.setattr(voice_app, "VOICEBOX_DIR", tmp_path)
+    monkeypatch.setattr(voice_app, "VOICEBOX_EXE", plain)
+    monkeypatch.setattr(voice_app, "VOICEBOX_CUDA_EXE", cuda)
+    monkeypatch.setattr(voice_app, "settings", dataclasses.replace(voice_app.settings, tts_provider="voicebox"))
+
+    def down(*a, **k):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(httpx, "get", down)
+    launched = []
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **k: launched.append((args[0], k["cwd"])))
+
+    assert voice_app.start_voicebox_if_needed() is False and launched == []  # not installed at all
+    plain.write_bytes(b"")
+    assert voice_app.start_voicebox_if_needed() is True and launched[-1] == (str(plain), str(tmp_path))
+    cuda.parent.mkdir(parents=True)
+    cuda.write_bytes(b"")
+    assert voice_app.start_voicebox_if_needed() is True and launched[-1] == (str(cuda), str(tmp_path))

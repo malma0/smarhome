@@ -5,6 +5,11 @@ cd /d "%~dp0"
 rem the signed-in user's own install folder - the same on any PC
 set VOICEBOX_DIR=%LOCALAPPDATA%\Voicebox
 set VOICEBOX_EXE=%VOICEBOX_DIR%\voicebox-server.exe
+rem the NVIDIA build, once Voicebox has downloaded it (POST /backend/download-cuda):
+rem ~3.5x faster replies on an RTX 2060; still started from VOICEBOX_DIR,
+rem so both builds share one data folder (the voice profile, the models)
+set VOICEBOX_CUDA_EXE=%VOICEBOX_DIR%\data\backends\cuda\voicebox-server-cuda.exe
+if exist "%VOICEBOX_CUDA_EXE%" set VOICEBOX_EXE=%VOICEBOX_CUDA_EXE%
 set DOCKER_EXE=C:\Program Files\Docker\Docker\Docker Desktop.exe
 
 rem --- Docker Desktop runs Home Assistant (the house, the danger alarms).
@@ -36,6 +41,8 @@ rem     *inside* an if/else ( ... ) block corrupts cmd's parsing of the rest
 rem     of that block (a well-known batch gotcha), which silently ran the
 rem     "not found" branch even when Voicebox was actually installed.
 tasklist /FI "IMAGENAME eq voicebox-server.exe" 2>NUL | find /I "voicebox-server.exe" >NUL
+if not errorlevel 1 goto voicebox_already_running
+tasklist /FI "IMAGENAME eq voicebox-server-cuda.exe" 2>NUL | find /I "voicebox-server-cuda.exe" >NUL
 if not errorlevel 1 goto voicebox_already_running
 if not exist "%VOICEBOX_EXE%" goto voicebox_not_found
 
@@ -82,7 +89,7 @@ rem Voicebox runs windowless, so Windows treats it as background work and
 rem parks it on the slow efficiency cores of this hybrid CPU (Core Ultra 9
 rem 185H) - measured 170s for a short reply at normal priority vs 25s at
 rem High. Applied whether we just started it or it was already running.
-powershell -NoProfile -Command "Get-Process voicebox-server -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'High' }" >NUL 2>&1
+powershell -NoProfile -Command "Get-Process voicebox-server,voicebox-server-cuda -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'High' }" >NUL 2>&1
 
 rem Default: the Jarvis window (jarvis_gui.py) via pythonw - no console left
 rem behind; its output goes to jarvis_gui.log. "start_jarvis_voice.bat

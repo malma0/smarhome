@@ -432,7 +432,15 @@ def build_tts_provider() -> TTSProvider:
     )
 
 
-VOICEBOX_EXE = Path(os.environ.get("LOCALAPPDATA", "")) / "Voicebox" / "voicebox-server.exe"
+VOICEBOX_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Voicebox"
+VOICEBOX_EXE = VOICEBOX_DIR / "voicebox-server.exe"
+# The NVIDIA build Voicebox downloads for itself (POST /backend/download-cuda) - ~3.5x faster on an RTX 2060.
+VOICEBOX_CUDA_EXE = VOICEBOX_DIR / "data" / "backends" / "cuda" / "voicebox-server-cuda.exe"
+
+
+def voicebox_server() -> Path:
+    """The CUDA build if it's been downloaded, the plain one otherwise."""
+    return VOICEBOX_CUDA_EXE if VOICEBOX_CUDA_EXE.exists() else VOICEBOX_EXE
 
 
 def start_voicebox_if_needed() -> bool:
@@ -450,10 +458,12 @@ def start_voicebox_if_needed() -> bool:
             return True
     except httpx.HTTPError:
         pass
-    if not VOICEBOX_EXE.exists():
+    server = voicebox_server()
+    if not server.exists():
         return False
     flags = 0x00000008 | 0x00000200 | 0x08000000 | 0x00000080  # detached, own group, no window, high priority
-    subprocess.Popen([str(VOICEBOX_EXE)], cwd=str(VOICEBOX_EXE.parent), creationflags=flags, close_fds=True,
+    # always from Voicebox's own folder - the CUDA build too, so both share its data (profiles, models)
+    subprocess.Popen([str(server)], cwd=str(VOICEBOX_DIR), creationflags=flags, close_fds=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # nothing of ours held
     return True
 
