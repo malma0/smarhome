@@ -91,6 +91,17 @@ rem 185H) - measured 170s for a short reply at normal priority vs 25s at
 rem High. Applied whether we just started it or it was already running.
 powershell -NoProfile -Command "Get-Process voicebox-server,voicebox-server-cuda -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'High' }" >NUL 2>&1
 
+rem --- The home model's service (model_service, port 8090), when .env sends
+rem     Jarvis through it (HOME_LLM_SERVICE_URL=...): windowless, unless it's
+rem     already listening. Not set - Jarvis calls Ollama directly, as before.
+findstr /I /R /C:"^HOME_LLM_SERVICE_URL=http" "..\.env" >NUL 2>NUL
+if errorlevel 1 goto model_service_done
+netstat -ano | findstr /R /C:":8090 .*LISTENING" >NUL
+if not errorlevel 1 goto model_service_done
+echo Starting the home model service...
+start "" ".venv\Scripts\pythonw.exe" -m model_service
+:model_service_done
+
 rem Default: the Jarvis window (jarvis_gui.py) via pythonw - no console left
 rem behind; its output goes to jarvis_gui.log. "start_jarvis_voice.bat
 rem terminal" runs the old terminal version (voice_app.py) instead.

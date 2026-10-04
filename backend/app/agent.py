@@ -17,7 +17,6 @@ from pathlib import Path
 from app.config import settings
 from app.db import connect
 from app.llm.base import LLMProvider, ToolDef
-from app.llm.claude import ClaudeProvider
 from app.llm.groq import GroqProvider
 from app.llm.ollama import OllamaProvider
 from app.memory import MemoryStore
@@ -231,6 +230,8 @@ def recent_turns(history: list[dict], max_turns: int) -> list[dict]:
 
 def _build_llm_provider() -> LLMProvider:
     if settings.llm_provider == "claude":
+        from app.llm.claude import ClaudeProvider  # the anthropic SDK only when it's the provider
+
         return ClaudeProvider(api_key=settings.anthropic_api_key, model=settings.anthropic_model)
     if settings.llm_provider == "ollama":
         # Free, self-hosted, CPU-friendly small model - proof of concept that
@@ -288,7 +289,11 @@ def build_default_agent() -> JarvisAgent:
     booking.register(tools)
     weather.register(tools, settings.weather_city)
     home_llm = None
-    if settings.home_llm_url and settings.home_assistant_token:
+    if settings.home_llm_service_url and settings.home_assistant_token:
+        from app.llm.home_service import HomeServiceProvider
+
+        home_llm = HomeServiceProvider(settings.home_llm_service_url)  # model_service, which measures it
+    elif settings.home_llm_url and settings.home_assistant_token:
         # Prompt built with the template it was trained on (app/llm/qwen_template.py).
         home_llm = OllamaProvider(model=settings.home_llm_model, base_url=settings.home_llm_url, qwen_raw=True)
     return JarvisAgent(llm=llm, tools=tools, memory=memory, home_llm=home_llm)

@@ -15,6 +15,7 @@ class Settings:
     ollama_base_url: str
     home_llm_url: str
     home_llm_model: str
+    home_llm_service_url: str
     app_pin: str
     panel_port: int
     groq_api_key: str
@@ -76,6 +77,9 @@ def load_settings() -> Settings:
         # house-only requests go there, everything else to LLM_PROVIDER. Empty: off.
         home_llm_url=os.environ.get("HOME_LLM_URL", "").strip(),
         home_llm_model=os.environ.get("HOME_LLM_MODEL", "jarvis-home"),
+        # The same model behind its own service (python -m model_service, port 8090) - measured
+        # there. Set: Jarvis goes through it instead of straight to Ollama.
+        home_llm_service_url=os.environ.get("HOME_LLM_SERVICE_URL", "").strip(),
         # The control panel (app/panel.py) on the home network: off until the resident sets a PIN.
         app_pin=os.environ.get("APP_PIN", "").strip(),
         panel_port=int(os.environ.get("PANEL_PORT", "8765")),

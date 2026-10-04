@@ -67,9 +67,12 @@ def exam_metrics(path: Path, suite: str) -> dict[str, float]:
 
 def suite_name(spec: str, tag: str = "") -> str:
     """qwen:jarvis-home-v6 + "brightness" -> "brightness"; through Ollama's own
-    template (ollama:...) the suite says so: "ollama_template_main"."""
+    template (ollama:...) the suite says so: "ollama_template_main"; through the
+    model service (service:...): "service_main"."""
     kind = spec.partition(":")[0]
     suite = tag or "main"
+    if kind == "service":  # through model_service's API (it builds the prompt the qwen: way)
+        return f"service_{suite}"
     return suite if kind == "qwen" else f"{kind}_template_{suite}"
 
 

@@ -91,7 +91,17 @@ def make_llm(spec: str, base_url: str | None):
         from app.llm.ollama import OllamaProvider
 
         return OllamaProvider(model=model, base_url=base_url or "http://localhost:11434", qwen_raw=kind == "qwen")
-    raise SystemExit(f"Unknown model spec {spec!r} - use groq:<model>, ollama:<model> or qwen:<model>")
+    if kind == "service":  # the same model through model_service's API - scored the way Jarvis now calls it
+        import httpx
+
+        from app.llm.home_service import HomeServiceProvider
+
+        url = base_url or "http://localhost:8090"
+        served = httpx.get(f"{url}/v1/model", timeout=10, trust_env=False).json()["model"]
+        if served != model:
+            raise SystemExit(f"The service at {url} serves {served}, not {model}")
+        return HomeServiceProvider(url)
+    raise SystemExit(f"Unknown model spec {spec!r} - use groq:, ollama:, qwen: or service:<model>")
 
 
 def _effects(calls) -> list[str]:
