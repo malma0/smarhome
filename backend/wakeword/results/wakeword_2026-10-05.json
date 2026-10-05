@@ -1,14 +1,14 @@
 {
-  "when": "2026-10-05T20:23:17",
+  "when": "2026-10-05T20:58:20",
   "threshold": 0.999,
   "takes": {
-    "all": 806,
-    "train": 606,
-    "held_out": 200
+    "all": 6806,
+    "train": 5106,
+    "held_out": 1700
   },
   "windows": {
-    "name": 2948,
-    "other": 6127,
+    "name": 32520,
+    "other": 29270,
     "other_audio_per_epoch": 200000
   },
   "validation_hours": 10.7,
@@ -16,88 +16,119 @@
     {
       "threshold": 0.5,
       "recall": 1.0,
-      "false_per_hour": 410.88,
-      "false_wake_rate_takes": 0.795
+      "false_per_hour": 263.08,
+      "false_wake_rate_takes": 0.443
     },
     {
       "threshold": 0.7,
       "recall": 1.0,
-      "false_per_hour": 397.51,
-      "false_wake_rate_takes": 0.741
+      "false_per_hour": 217.08,
+      "false_wake_rate_takes": 0.376
     },
     {
       "threshold": 0.8,
-      "recall": 1.0,
-      "false_per_hour": 393.12,
-      "false_wake_rate_takes": 0.705
+      "recall": 0.971,
+      "false_per_hour": 191.28,
+      "false_wake_rate_takes": 0.342
     },
     {
       "threshold": 0.9,
-      "recall": 1.0,
-      "false_per_hour": 369.0,
-      "false_wake_rate_takes": 0.602
+      "recall": 0.971,
+      "false_per_hour": 152.39,
+      "false_wake_rate_takes": 0.287
     },
     {
       "threshold": 0.95,
-      "recall": 1.0,
-      "false_per_hour": 313.47,
-      "false_wake_rate_takes": 0.428
+      "recall": 0.912,
+      "false_per_hour": 113.68,
+      "false_wake_rate_takes": 0.239
     },
     {
       "threshold": 0.97,
-      "recall": 1.0,
-      "false_per_hour": 259.06,
-      "false_wake_rate_takes": 0.277
+      "recall": 0.853,
+      "false_per_hour": 86.76,
+      "false_wake_rate_takes": 0.198
     },
     {
       "threshold": 0.98,
-      "recall": 1.0,
-      "false_per_hour": 210.54,
-      "false_wake_rate_takes": 0.211
+      "recall": 0.794,
+      "false_per_hour": 65.63,
+      "false_wake_rate_takes": 0.167
     },
     {
       "threshold": 0.99,
-      "recall": 0.971,
-      "false_per_hour": 131.91,
-      "false_wake_rate_takes": 0.108
+      "recall": 0.706,
+      "false_per_hour": 36.93,
+      "false_wake_rate_takes": 0.103
     },
     {
       "threshold": 0.995,
-      "recall": 0.912,
-      "false_per_hour": 78.62,
-      "false_wake_rate_takes": 0.018
+      "recall": 0.588,
+      "false_per_hour": 15.89,
+      "false_wake_rate_takes": 0.049
     },
     {
       "threshold": 0.998,
-      "recall": 0.735,
-      "false_per_hour": 37.11,
-      "false_wake_rate_takes": 0.012
+      "recall": 0.353,
+      "false_per_hour": 4.3,
+      "false_wake_rate_takes": 0.005
     },
     {
       "threshold": 0.999,
-      "recall": 0.706,
-      "false_per_hour": 17.11,
-      "false_wake_rate_takes": 0.006
+      "recall": 0.294,
+      "false_per_hour": 1.78,
+      "false_wake_rate_takes": 0.001
     }
   ],
   "ours": {
     "near": {
-      "takes": 24,
-      "heard": 17,
-      "rate": 0.708
+      "takes": 774,
+      "heard": 373,
+      "rate": 0.482
     },
     "far": {
       "takes": 10,
-      "heard": 7,
-      "rate": 0.7
+      "heard": 2,
+      "rate": 0.2
     },
     "similar": {
-      "takes": 16,
-      "heard": 1,
-      "rate": 0.062
+      "takes": 391,
+      "heard": 0,
+      "rate": 0.0
     },
     "speech": {
-      "takes": 146,
+      "takes": 521,
+      "heard": 1,
+      "rate": 0.002
+    },
+    "quiet": {
+      "takes": 4,
+      "heard": 0,
+      "rate": 0.0
+    },
+    "recall": 0.294,
+    "false_wakes": 1,
+    "false_wake_rate": 0.001,
+    "false_per_hour": 1.78
+  },
+  "vosk": {
+    "near": {
+      "takes": 774,
+      "heard": 648,
+      "rate": 0.837
+    },
+    "far": {
+      "takes": 10,
+      "heard": 5,
+      "rate": 0.5
+    },
+    "similar": {
+      "takes": 391,
+      "heard": 2,
+      "rate": 0.005
+    },
+    "speech": {
+      "takes": 521,
       "heard": 0,
       "rate": 0.0
     },
@@ -107,77 +138,138 @@
       "rate": 0.0
     },
     "recall": 0.706,
-    "false_wakes": 1,
-    "false_wake_rate": 0.006,
-    "false_per_hour": 17.11
-  },
-  "vosk": {
-    "near": {
-      "takes": 24,
-      "heard": 18,
-      "rate": 0.75
-    },
-    "far": {
-      "takes": 10,
-      "heard": 10,
-      "rate": 1.0
-    },
-    "similar": {
-      "takes": 16,
-      "heard": 0,
-      "rate": 0.0
-    },
-    "speech": {
-      "takes": 146,
-      "heard": 0,
-      "rate": 0.0
-    },
-    "quiet": {
-      "takes": 4,
-      "heard": 0,
-      "rate": 0.0
-    },
-    "recall": 0.824,
-    "false_wakes": 0,
-    "false_wake_rate": 0.0
+    "false_wakes": 2,
+    "false_wake_rate": 0.002
   },
   "vosk_or_ours": {
     "near": {
-      "takes": 24,
-      "heard": 20,
-      "rate": 0.833
+      "takes": 774,
+      "heard": 688,
+      "rate": 0.889
     },
     "far": {
       "takes": 10,
-      "heard": 10,
-      "rate": 1.0
+      "heard": 6,
+      "rate": 0.6
     },
     "similar": {
-      "takes": 16,
-      "heard": 1,
-      "rate": 0.062
+      "takes": 391,
+      "heard": 2,
+      "rate": 0.005
     },
     "speech": {
-      "takes": 146,
-      "heard": 0,
-      "rate": 0.0
+      "takes": 521,
+      "heard": 1,
+      "rate": 0.002
     },
     "quiet": {
       "takes": 4,
       "heard": 0,
       "rate": 0.0
     },
-    "recall": 0.882,
-    "false_wakes": 1,
-    "false_wake_rate": 0.006
+    "recall": 0.794,
+    "false_wakes": 3,
+    "false_wake_rate": 0.003
   },
   "by_person": {
     "Матвей": {
       "ours": {
         "near": {
           "takes": 12,
-          "heard": 6,
-          "rate": 0.5
+          "heard": 3,
+          "rate": 0.25
+        },
+        "far": {
+          "takes": 5,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "similar": {
+          "takes": 8,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "speech": {
+          "takes": 5,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "quiet": {
+          "takes": 2,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "recall": 0.176,
+        "false_wakes": 0,
+        "false_wake_rate": 0.0
+      },
+      "vosk": {
+        "near": {
+          "takes": 12,
+          "heard": 7,
+          "rate": 0.583
+        },
+        "far": {
+          "takes": 5,
+          "heard": 2,
+          "rate": 0.4
+        },
+        "similar": {
+          "takes": 8,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "speech": {
+          "takes": 5,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "quiet": {
+          "takes": 2,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "recall": 0.529,
+        "false_wakes": 0,
+        "false_wake_rate": 0.0
+      }
+    },
+    "Эля": {
+      "ours": {
+        "near": {
+          "takes": 12,
+          "heard": 5,
+          "rate": 0.417
+        },
+        "far": {
+          "takes": 5,
+          "heard": 2,
+          "rate": 0.4
+        },
+        "similar": {
+          "takes": 8,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "speech": {
+          "takes": 5,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "quiet": {
+          "takes": 2,
+          "heard": 0,
+          "rate": 0.0
+        },
+        "recall": 0.412,
+        "false_wakes": 0,
+        "false_wake_rate": 0.0
+      },
+      "vosk": {
+        "near": {
+          "takes": 12,
+          "heard": 12,
+          "rate": 1.0
         },
         "far": {
           "takes": 5,
@@ -199,103 +291,11 @@
           "heard": 0,
           "rate": 0.0
         },
-        "recall": 0.529,
-        "false_wakes": 0,
-        "false_wake_rate": 0.0
-      },
-      "vosk": {
-        "near": {
-          "takes": 12,
-          "heard": 6,
-          "rate": 0.5
-        },
-        "far": {
-          "takes": 5,
-          "heard": 5,
-          "rate": 1.0
-        },
-        "similar": {
-          "takes": 8,
-          "heard": 0,
-          "rate": 0.0
-        },
-        "speech": {
-          "takes": 5,
-          "heard": 0,
-          "rate": 0.0
-        },
-        "quiet": {
-          "takes": 2,
-          "heard": 0,
-          "rate": 0.0
-        },
-        "recall": 0.647,
-        "false_wakes": 0,
-        "false_wake_rate": 0.0
-      }
-    },
-    "Эля": {
-      "ours": {
-        "near": {
-          "takes": 12,
-          "heard": 11,
-          "rate": 0.917
-        },
-        "far": {
-          "takes": 5,
-          "heard": 4,
-          "rate": 0.8
-        },
-        "similar": {
-          "takes": 8,
-          "heard": 1,
-          "rate": 0.125
-        },
-        "speech": {
-          "takes": 5,
-          "heard": 0,
-          "rate": 0.0
-        },
-        "quiet": {
-          "takes": 2,
-          "heard": 0,
-          "rate": 0.0
-        },
         "recall": 0.882,
-        "false_wakes": 1,
-        "false_wake_rate": 0.067
-      },
-      "vosk": {
-        "near": {
-          "takes": 12,
-          "heard": 12,
-          "rate": 1.0
-        },
-        "far": {
-          "takes": 5,
-          "heard": 5,
-          "rate": 1.0
-        },
-        "similar": {
-          "takes": 8,
-          "heard": 0,
-          "rate": 0.0
-        },
-        "speech": {
-          "takes": 5,
-          "heard": 0,
-          "rate": 0.0
-        },
-        "quiet": {
-          "takes": 2,
-          "heard": 0,
-          "rate": 0.0
-        },
-        "recall": 1.0,
         "false_wakes": 0,
         "false_wake_rate": 0.0
       }
     }
   },
-  "train_seconds": 214.3
+  "train_seconds": 670.5
 }

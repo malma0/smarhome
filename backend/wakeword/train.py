@@ -32,6 +32,7 @@ RESULTS = HERE / "results"
 POSITIVE = ("near", "far")
 NEGATIVE = ("similar", "speech", "quiet")
 SEED = 0
+OWN_NAME_WEIGHT = 8  # the residents' own "Джарвис" windows repeated - see featurize()
 
 
 def load(path: Path) -> np.ndarray:
@@ -81,13 +82,14 @@ def takes() -> list[dict]:
 
 
 def split(all_takes: list[dict], held_out: float = 0.25) -> tuple[list[dict], list[dict]]:
-    rng = random.Random(SEED)
     train, test = [], []
     groups: dict[tuple, list] = {}
     for t in all_takes:
         groups.setdefault((t["who"], t["part"]), []).append(t)
-    for group in groups.values():
-        rng.shuffle(group)
+    for key, group in groups.items():
+        # each group shuffled on its own seed: adding _synth once moved which of the residents' takes were
+        # held out, and Vosk "dropped" from 82% to 62% on a different set
+        random.Random(f"{SEED}/{key[0]}/{key[1]}").shuffle(group)
         k = max(1, round(len(group) * held_out))
         test += group[:k]
         train += group[k:]
@@ -132,10 +134,12 @@ def featurize(train: list[dict], copies: int, rng: np.random.Generator) -> tuple
     xs, ys = [], []
     for take in train:
         audio = load(take["path"])
-        own = not take["who"].startswith("_")  # the residents' own takes; _tts and _heard are many already
-        for c in range(1 + (copies if take["positive"] else copies // 2 if own else 0)):
+        own = not take["who"].startswith("_")  # the residents' own; _synth, _tts, _heard are varied already
+        for c in range(1 + ((copies if take["positive"] else copies // 2) if own else 0)):
             version = audio if c == 0 else augment(audio, noises, rng)
             x, y = examples(take, version, detector.embed(version))
+            if own and take["positive"]:  # outnumbered 20 to 1 by synthetic voices - weigh the real ones up
+                x, y = x * OWN_NAME_WEIGHT, y * OWN_NAME_WEIGHT
             xs += x; ys += y
     return np.stack(xs).astype(np.float32), np.array(ys, dtype=np.float32)
 
@@ -240,7 +244,8 @@ def report(test: list[dict], heard: list[bool]) -> dict:
         hits = [h for t, h in zip(test, heard) if t["part"] == part and (not t["positive"] or voiced_span(load(t["path"])))]
         if hits:
             out[part] = {"takes": len(hits), "heard": int(sum(hits)), "rate": round(sum(hits) / len(hits), 3)}
-    pos = [h for t, h in zip(test, heard) if t["positive"] and voiced_span(load(t["path"]))]
+    # recall is the residents' own names - synthetic voices would flatter it
+    pos = [h for t, h in zip(test, heard) if t["positive"] and not t["who"].startswith("_") and voiced_span(load(t["path"]))]
     neg = [h for t, h in zip(test, heard) if not t["positive"]]
     out["recall"] = round(sum(pos) / len(pos), 3) if pos else None
     out["false_wakes"] = int(sum(neg))
