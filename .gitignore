@@ -68,3 +68,4 @@ homeassistant/config/automations.yaml
 
 # takes for the own wake-word model (backend/wakeword/record.py) - the residents' voices, never leave the PC
 backend/wakeword/data/
+backend/wakeword/models/
