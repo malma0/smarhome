@@ -67,6 +67,9 @@ from app.tts.base import TTSProvider
 from app.transcript_filter import is_hallucination
 from app.tts.text import text_for_speech
 from app.voice_ui import LISTENING, MUTED, SLEEPING, SPEAKING, THINKING, ConsoleUI, VoiceUI
+from app.wake_word import NONE as NONE_HEARD
+from app.wake_word import WAKE_ONLY as WAKE_ONLY_HEARD
+from app.wake_word import WAKE_WITH_COMMAND as WAKE_WITH_COMMAND_HEARD
 from app.wake_word import WakeWordDetector, classify, parse_wake_words
 
 SAMPLE_RATE = 16000
@@ -1062,6 +1065,13 @@ async def run_hands_free(
         else:
             ui.state(THINKING, "Распознаю...")
 
+    cascade = None
+    if settings.wake_cascade and detector is not None:
+        from wakeword.cascade import Cascade
+
+        cascade = Cascade(collect=settings.wake_collect)
+        threading.Thread(target=cascade.load, daemon=True).start()  # Whisper takes a few seconds to load
+
     listener = HandsFreeListener(
         SAMPLE_RATE,
         on_level=ui.mic_level,
@@ -1295,6 +1305,15 @@ async def run_hands_free(
                 wake_class = classify(phrase.text or "", detector.wake_words)
             awake_before = state.is_awake()
             spoken = speech_seconds(phrase.frames, SAMPLE_RATE)
+            if (cascade is not None and not awake_before and wake_class == NONE_HEARD
+                    and not is_noise(phrase.text, spoken)):
+                # Vosk heard no name - ask the second opinion (own model, then Whisper - all local)
+                heard, text, note = await asyncio.to_thread(
+                    cascade.check, np.concatenate(phrase.frames).reshape(-1), spoken)
+                if note:
+                    wake_debug(f"  cascade: {note}")
+                if heard:
+                    wake_class = WAKE_ONLY_HEARD if only_the_name(text, detector.wake_words) else WAKE_WITH_COMMAND_HEARD
             if detector is not None and awake_before and is_noise(phrase.text, spoken):
                 # Listening, a click or a breath with no word in it: not a phrase. It went to Whisper,
                 # came back "Дисклеймер" and got an answer - and each one reopened the window.

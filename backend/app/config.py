@@ -56,6 +56,8 @@ class Settings:
     whisper_vocabulary: str
     dataset_enabled: bool
     wake_debug: bool
+    wake_cascade: bool
+    wake_collect: bool
     dataset_dir: str
     voice_mode: str
     wake_words: str
@@ -129,6 +131,11 @@ def load_settings() -> Settings:
         # Diagnostics, off by default: every phrase the mic heard - what Vosk made of it, whether the name
         # was there, what Whisper heard - into backend/wake_debug.log (local, gitignored).
         wake_debug=os.environ.get("JARVIS_WAKE_DEBUG", "").strip().lower() in ("true", "1", "yes"),
+        # The name heard in two stages when Vosk misses it (backend/wakeword/cascade.py): the own model,
+        # then Whisper on the GPU to confirm. Needs wakeword/models/jarvis.pt and ~0.7 GB of VRAM.
+        wake_cascade=os.environ.get("JARVIS_WAKE_CASCADE", "").strip().lower() in ("true", "1", "yes"),
+        # ...and keep what it flagged, with the verdict, to retrain the own model on (wakeword/data/_field).
+        wake_collect=os.environ.get("JARVIS_WAKE_COLLECT", "").strip().lower() in ("true", "1", "yes"),
         dataset_dir=os.environ.get("JARVIS_DATASET_DIR", "dataset"),
         voice_mode=os.environ.get("VOICE_MODE", "wake").strip().lower(),
         wake_words=os.environ.get("WAKE_WORDS", "джарвис,джервис"),
