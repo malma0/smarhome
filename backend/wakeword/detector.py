@@ -57,11 +57,11 @@ def windows(embedding: np.ndarray) -> np.ndarray:
 def build_model():
     import torch.nn as nn
 
-    # small on purpose: a 1536-128-64 net learned the residents' 100 not-the-name takes by heart and
-    # woke on half of the held-out speech. LayerNorm first: without it the embeddings' scale killed
-    # every ReLU of the smaller net and it said 0.611 to everything.
-    return nn.Sequential(nn.Flatten(), nn.LayerNorm(WINDOW_FRAMES * 96), nn.Linear(WINDOW_FRAMES * 96, 64),
-                         nn.ReLU(), nn.Dropout(0.5), nn.Linear(64, 1))
+    # LayerNorm first: without it the embeddings' scale killed every ReLU of a small net and it said 0.611
+    # to everything. The size is for 2000 hours of other audio as negatives (train.py) - on the residents'
+    # few hundred takes alone any net learned them by heart (437 false wakes an hour on new audio).
+    return nn.Sequential(nn.Flatten(), nn.LayerNorm(WINDOW_FRAMES * 96), nn.Linear(WINDOW_FRAMES * 96, 128),
+                         nn.ReLU(), nn.Dropout(0.3), nn.Linear(128, 64), nn.ReLU(), nn.Linear(64, 1))
 
 
 class WakeModel:

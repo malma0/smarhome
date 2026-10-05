@@ -140,30 +140,53 @@ def featurize(train: list[dict], copies: int, rng: np.random.Generator) -> tuple
     return np.stack(xs).astype(np.float32), np.array(ys, dtype=np.float32)
 
 
-def fit(x: np.ndarray, y: np.ndarray, epochs: int = 40):
+ACAV = HERE / "negatives" / "openwakeword_features_ACAV100M_2000_hrs_16bit.npy"
+VALIDATION = HERE / "negatives" / "validation_set_features.npy"
+ACAV_PER_EPOCH = 200_000  # fresh other-audio windows each epoch, out of 5.6 million
+TARGET_FALSE_PER_HOUR = 0.5
+REFRACTORY_FRAMES = 25  # 2 s: firing on consecutive windows is one wake
+
+
+def acav_sample(acav: np.ndarray, n: int, rng: np.random.Generator, block: int = 2000) -> np.ndarray:
+    """n windows of the 2000 hours, in random contiguous blocks (one disk read each)."""
+    starts = rng.integers(0, acav.shape[0] - block, n // block)
+    return np.concatenate([np.asarray(acav[s:s + block], dtype=np.float32) for s in starts])
+
+
+def fit(x: np.ndarray, y: np.ndarray, acav: np.ndarray | None, epochs: int = 12):
+    """The residents' windows every epoch, plus a fresh sample of other audio as negatives."""
     import torch
 
     torch.manual_seed(SEED)
-    net = detector.build_model()
-    pos_weight = torch.tensor([(y == 0).sum() / max(1, (y == 1).sum())])
-    loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    rng = np.random.default_rng(SEED)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    net = detector.build_model().to(device)
     opt = torch.optim.Adam(net.parameters(), lr=1e-3, weight_decay=1e-4)
-    X, Y = torch.from_numpy(x), torch.from_numpy(y)
     losses = []
     for _ in range(epochs):
+        if acav is not None:
+            other = acav_sample(acav, ACAV_PER_EPOCH, rng)
+            X = np.concatenate([x, other])
+            Y = np.concatenate([y, np.zeros(len(other), dtype=np.float32)])
+        else:
+            X, Y = x, y
+        pos_weight = torch.tensor([min(200.0, (Y == 0).sum() / max(1, (Y == 1).sum()))], device=device)
+        loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        Xt, Yt = torch.from_numpy(X).to(device), torch.from_numpy(Y).to(device)
         net.train()
-        perm = torch.randperm(len(X))
+        perm = torch.randperm(len(Xt), device=device)
         total = 0.0
-        for i in range(0, len(X), 128):
-            idx = perm[i:i + 128]
+        for i in range(0, len(Xt), 1024):
+            idx = perm[i:i + 1024]
             opt.zero_grad()
-            loss = loss_fn(net(X[idx])[:, 0], Y[idx])
+            loss = loss_fn(net(Xt[idx])[:, 0], Yt[idx])
             loss.backward()
             opt.step()
             total += float(loss) * len(idx)
-        losses.append(total / len(X))
+        losses.append(total / len(Xt))
+        print(f"  epoch {len(losses)}: loss {losses[-1]:.4f}", flush=True)
     net.eval()
-    return net, losses
+    return net.cpu(), losses
 
 
 def take_scores(net, test: list[dict]) -> list[float]:
@@ -175,6 +198,29 @@ def take_scores(net, test: list[dict]) -> list[float]:
             w = torch.from_numpy(detector.windows(detector.embed(load(take["path"]))).astype(np.float32))
             out.append(float(torch.sigmoid(net(w)).max()))
     return out
+
+
+def stream_scores(net, features: np.ndarray) -> np.ndarray:
+    """The model over a long stream of embedding frames, one window per 80 ms - as Jarvis would run it."""
+    import torch
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    net = net.to(device)
+    out = []
+    with torch.no_grad():
+        for start in range(0, features.shape[0] - WINDOW_FRAMES, 50_000):
+            chunk = np.asarray(features[start:start + 50_000 + WINDOW_FRAMES - 1], dtype=np.float32)
+            w = np.ascontiguousarray(np.lib.stride_tricks.sliding_window_view(chunk, (WINDOW_FRAMES, 96))[:, 0])
+            out.append(torch.sigmoid(net(torch.from_numpy(w).to(device))).cpu().numpy()[:, 0])
+    net.cpu()
+    return np.concatenate(out)
+
+
+def wakes(scores: np.ndarray, threshold: float) -> int:
+    above = np.where(scores >= threshold)[0]
+    if not len(above):
+        return 0
+    return int(1 + (np.diff(above) > REFRACTORY_FRAMES).sum())
 
 
 def vosk_heard(test: list[dict]) -> list[bool]:
@@ -202,20 +248,24 @@ def report(test: list[dict], heard: list[bool]) -> dict:
     return out
 
 
-MAX_FALSE_WAKE_RATE = 0.02
-
-
-def pick_threshold(test: list[dict], scores: list[float]) -> float:
-    """The highest recall that wakes on at most 2% of the held-out not-the-name takes; the strictest
-    threshold if none does. (Picked on the held-out takes it's then scored on - optimistic; the
-    false-wakes-per-hour check on new audio is the honest one.)"""
-    best = None
-    for th in np.arange(0.05, 0.991, 0.01):
+def curve(test: list[dict], scores: list[float], stream: np.ndarray, hours: float) -> list[dict]:
+    """Threshold -> recall on the held-out names, false wakes per hour of other audio."""
+    rows = []
+    for th in [0.5, 0.7, 0.8, 0.9, 0.95, 0.97, 0.98, 0.99, 0.995, 0.998, 0.999]:
         r = report(test, [s >= th for s in scores])
-        key = (r["false_wake_rate"] <= MAX_FALSE_WAKE_RATE, r["recall"], -r["false_wake_rate"])
-        if best is None or key > best[0]:
-            best = (key, float(round(th, 2)))
-    return best[1]
+        rows.append({"threshold": th, "recall": r["recall"], "false_per_hour": round(wakes(stream, th) / hours, 2),
+                     "false_wake_rate_takes": r["false_wake_rate"]})
+    return rows
+
+
+def pick_threshold(rows: list[dict]) -> float:
+    """The best recall at no more than TARGET_FALSE_PER_HOUR; the quietest threshold if none gets there.
+    (Chosen on the 11-hour validation set it's then scored on, as openWakeWord does - the live shadow
+    run is the independent check.)"""
+    ok = [r for r in rows if r["false_per_hour"] <= TARGET_FALSE_PER_HOUR]
+    if ok:
+        return max(ok, key=lambda r: (r["recall"], -r["threshold"]))["threshold"]
+    return min(rows, key=lambda r: (r["false_per_hour"], -r["recall"]))["threshold"]
 
 
 def main() -> None:
@@ -226,29 +276,47 @@ def main() -> None:
     all_takes = takes()
     train, test = split(all_takes)
     x, y = featurize(train, copies=6, rng=rng)
-    print(f"{len(all_takes)} takes ({len(train)} to learn from, {len(test)} held out); "
-          f"{int(y.sum())} name windows, {int((y == 0).sum())} others")
-    net, losses = fit(x, y)
+    acav = np.load(ACAV, mmap_mode="r") if ACAV.exists() else None
+    other = f"{acav.shape[0]} windows" if acav is not None else "none"
+    print(f"{len(all_takes)} takes ({len(train)} to learn from, {len(test)} held out); {int(y.sum())} name windows, "
+          f"{int((y == 0).sum())} others; other audio: {other}")
+    net, losses = fit(x, y, acav)
     scores = take_scores(net, test)
-    threshold = pick_threshold(test, scores)
+    validation = np.load(VALIDATION, mmap_mode="r")
+    hours = validation.shape[0] * detector.FRAME_SECONDS / 3600
+    stream = stream_scores(net, validation)
+    rows = curve(test, scores, stream, hours)
+    threshold = pick_threshold(rows)
     ours = report(test, [s >= threshold for s in scores])
-    vosk = report(test, vosk_heard(test))
-    by_who = {who: {"ours": report([t for t in test if t["who"] == who],
-                                   [s >= threshold for s, t in zip(scores, test) if t["who"] == who]),
-                    "vosk": report([t for t in test if t["who"] == who],
-                                   [h for h, t in zip(vosk_heard([t for t in test if t["who"] == who]),
-                                                      [t for t in test if t["who"] == who])])}
-              for who in sorted({t["who"] for t in test if not t["who"].startswith("_")})}
+    ours["false_per_hour"] = round(wakes(stream, threshold) / hours, 2)
+    vosk_flags = vosk_heard(test)
+    vosk = report(test, vosk_flags)
+    both = report(test, [(s >= threshold) or v for s, v in zip(scores, vosk_flags)])
+    by_who = {}
+    for who in sorted({t["who"] for t in test if not t["who"].startswith("_")}):
+        mine = [i for i, t in enumerate(test) if t["who"] == who]
+        sub = [test[i] for i in mine]
+        by_who[who] = {"ours": report(sub, [scores[i] >= threshold for i in mine]),
+                       "vosk": report(sub, [vosk_flags[i] for i in mine])}
     result = {"when": datetime.now().isoformat(timespec="seconds"), "threshold": threshold,
               "takes": {"all": len(all_takes), "train": len(train), "held_out": len(test)},
-              "windows": {"name": int(y.sum()), "other": int((y == 0).sum())},
-              "ours": ours, "vosk": vosk, "by_person": by_who, "train_seconds": round(time.time() - started, 1)}
+              "windows": {"name": int(y.sum()), "other": int((y == 0).sum()),
+                          "other_audio_per_epoch": ACAV_PER_EPOCH if acav is not None else 0},
+              "validation_hours": round(hours, 1), "curve": rows,
+              "ours": ours, "vosk": vosk, "vosk_or_ours": both, "by_person": by_who,
+              "train_seconds": round(time.time() - started, 1)}
     detector.MODEL_PATH.parent.mkdir(exist_ok=True)
     torch.save({"state": net.state_dict(), "threshold": threshold, "info": result}, detector.MODEL_PATH)
     RESULTS.mkdir(exist_ok=True)
     path = RESULTS / f"wakeword_{result['when'][:10]}.json"
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"threshold": threshold, "ours": ours, "vosk": vosk}, ensure_ascii=False, indent=1))
+    print(f"threshold {threshold}")
+    for r in rows:
+        print(f"  {r['threshold']:6}: recall {r['recall']}, {r['false_per_hour']} false/hour")
+    for name, side in (("ours", ours), ("vosk", vosk), ("vosk_or_ours", both)):
+        extra = f", {side['false_per_hour']} false/hour" if "false_per_hour" in side else ""
+        print(f"{name:13} recall {side['recall']}, false on held-out takes {side['false_wakes']} "
+              f"({side['false_wake_rate']}){extra}")
     log_mlflow(result, losses, path)
 
 
@@ -265,13 +333,17 @@ def log_mlflow(result: dict, losses: list[float], path: Path) -> None:
     mlflow.set_experiment("jarvis-wakeword")
     with mlflow.start_run(run_name=f"wakeword-{result['when'][:16]}"):
         mlflow.log_params({"features": "openWakeWord melspectrogram + speech embedding", "window_frames": WINDOW_FRAMES,
-                           "model": "MLP 1536-128-64-1", "augment_copies": 6, "threshold": result["threshold"],
+                           "model": "LayerNorm + MLP 1536-128-64-1", "augment_copies": 6,
+                           "other_audio_per_epoch": result["windows"]["other_audio_per_epoch"],
+                           "threshold": result["threshold"], "validation_hours": result["validation_hours"],
                            **{f"takes_{k}": v for k, v in result["takes"].items()}})
         for step, loss in enumerate(losses):
             mlflow.log_metric("train_loss", loss, step=step)
-        for who, side in (("ours", result["ours"]), ("vosk", result["vosk"])):
-            mlflow.log_metrics({f"{who}.recall": side["recall"] or 0.0, f"{who}.false_wake_rate": side["false_wake_rate"] or 0.0,
-                                **{f"{who}.{part}": v["rate"] for part, v in side.items() if isinstance(v, dict)}})
+        for name, side in (("ours", result["ours"]), ("vosk", result["vosk"]), ("vosk_or_ours", result["vosk_or_ours"])):
+            mlflow.log_metrics({f"{name}.recall": side["recall"] or 0.0,
+                                f"{name}.false_wake_rate": side["false_wake_rate"] or 0.0,
+                                **{f"{name}.{part}": v["rate"] for part, v in side.items() if isinstance(v, dict)}})
+        mlflow.log_metric("ours.false_per_hour", result["ours"]["false_per_hour"])
         mlflow.log_artifact(str(path))
 
 

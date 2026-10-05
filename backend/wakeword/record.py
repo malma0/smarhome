@@ -24,6 +24,7 @@ import numpy as np
 DATA = Path(__file__).resolve().parent / "data"
 RATE = 16000
 TAKE_SECONDS = 2.5
+PRE_BEEP_SECONDS = 0.5  # recording starts before the beep: Матвей's first takes began on the beep, the name cut short
 
 NAME_VARIANTS = ["Джарвис", "Джарвис", "Джарвис", "Джарвис!", "Джарвис?", "Эй, Джарвис", "Джарвис, слушай"]
 # what the small Vosk model heard instead of the name (wake_debug.log), and what the docs say it
@@ -56,7 +57,11 @@ def beep() -> None:
 
 
 def record_take(sd, device) -> np.ndarray:
-    audio = sd.rec(int(TAKE_SECONDS * RATE), samplerate=RATE, channels=1, dtype="int16", device=device)
+    """Recording already runs when the beep sounds - a word started on the beep is kept whole."""
+    audio = sd.rec(int((PRE_BEEP_SECONDS + TAKE_SECONDS) * RATE), samplerate=RATE, channels=1, dtype="int16",
+                   device=device)
+    time.sleep(PRE_BEEP_SECONDS)
+    beep()
     sd.wait()
     return audio[:, 0]
 
@@ -88,8 +93,7 @@ def run_part(sd, device, who: str, part: str) -> int:
     quiet_takes = 0
     for n, word in enumerate(prompts, 1):
         print(f"\n[{n}/{count}]   >>>  {word}  <<<", flush=True)
-        time.sleep(0.8)
-        beep()
+        time.sleep(0.3)
         audio = record_take(sd, device)
         save(audio, DATA / who / part)
         loud = level(audio)
