@@ -45,6 +45,14 @@ class NameVerifier:
                                        fp16=self.device == "cuda", initial_prompt=HINT)
         return result["text"].strip()
 
+    def transcribe_phrase(self, audio: np.ndarray, prompt: str = "") -> str:
+        """A whole phrase, for when the cloud Whisper can't be reached - the house still hears commands."""
+        x = audio.astype(np.float32) / 32768
+        result = self.model.transcribe(x, language="ru", task="transcribe", temperature=0.0,
+                                       condition_on_previous_text=False, without_timestamps=True,
+                                       fp16=self.device == "cuda", initial_prompt=prompt or HINT)
+        return result["text"].strip()
+
     def check(self, audio: np.ndarray) -> tuple[bool, str, float]:
         started = time.perf_counter()
         text = self.transcribe(audio)

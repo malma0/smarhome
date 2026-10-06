@@ -1375,3 +1375,22 @@ def test_still_talking_before_the_answer_hears_the_phrase_out(memory, tmp_path, 
         assert heard == [len(first), len(first) + gap + len(rest)]  # the whole phrase, answered once
     else:
         assert heard == [len(first), len(rest)]  # answered; the next phrase is a phrase of its own
+
+
+def test_when_groq_cant_be_reached_the_phrase_is_heard_on_this_pc(memory, tmp_path, monkeypatch):
+    """Groq answered 403 "check your network settings" (the proxy's country) and every phrase came out
+    "не разобрал". With the local Whisper loaded, the command still gets through."""
+    import voice_app
+
+    _quiet_settings(monkeypatch)
+    monkeypatch.setattr(voice_app, "contains_speech", lambda frames, sr: True)
+    monkeypatch.setattr(voice_app, "transcribe", AsyncMock(side_effect=RuntimeError("Client error '403 Forbidden'")))
+    session = _session(memory, tmp_path)
+    session.ui = ui = _RecordingUI()
+    heard = []
+    session.local_stt = lambda audio, prompt: heard.append(len(audio)) or "включи свет на кухне"
+
+    asyncio.run(voice_app.handle_phrase(session, [np.ones((16000, 1), dtype=np.int16)]))
+
+    assert heard == [16000]
+    assert any(e[0] == "user" and "включи свет на кухне" in str(e) for e in ui.events)

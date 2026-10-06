@@ -69,6 +69,12 @@ class Cascade:
             self._keep(audio, "name" if heard else "not_name")
         return heard, text, note
 
+    def transcribe(self, audio: np.ndarray, prompt: str = "") -> str:
+        """The loaded Whisper as a local speech recognizer - Jarvis's fallback when Groq can't be reached."""
+        if not self.ready:
+            raise RuntimeError("the local Whisper isn't loaded")
+        return self._verifier.transcribe_phrase(audio, prompt)
+
     @staticmethod
     def _keep(audio: np.ndarray, verdict: str) -> None:
         folder = FIELD / verdict

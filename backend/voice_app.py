@@ -570,6 +570,8 @@ class VoiceSession:
     answered_locally: bool = False  # the last answer came from the own home model
     voice: str = "unknown"  # the last phrase's speaker for the guard - see voice_trust
     recognized_at: float = -1e9  # when a resident's voice was last matched (monotonic)
+    # Speech recognition on this PC (the wake-word cascade's Whisper) for when Groq fails: (audio, prompt) -> text
+    local_stt: Any = None
 
 
 async def build_session(ui: VoiceUI, resident_id: str = "default") -> VoiceSession | None:
@@ -829,7 +831,17 @@ async def handle_phrase(session: VoiceSession, frames: list[np.ndarray], prompt_
     try:
         text = await transcribe(wav_bytes, settings.groq_api_key, settings.groq_base_url, prompt=prompt)
     except Exception as exc:  # noqa: BLE001 - a failed request shouldn't kill the loop
-        ui.info(f"Ошибка распознавания: {exc}")
+        # Groq blocked the proxy's country (403 "check your network settings") and every phrase was
+        # "не разобрал" - with the Whisper loaded here, the house still hears its commands.
+        if session.local_stt is not None:
+            try:
+                audio = np.concatenate(frames).reshape(-1)
+                text = await asyncio.to_thread(session.local_stt, audio, LOCAL_STT_PROMPT)
+                ui.info(f"(облачное распознавание недоступно - распознала на компьютере: {str(exc)[:80]})")
+            except Exception as local_exc:  # noqa: BLE001 - both down: say so, as before
+                ui.info(f"Ошибка распознавания: {exc}; на компьютере тоже не вышло: {local_exc}")
+        else:
+            ui.info(f"Ошибка распознавания: {exc}")
     whisper_seconds = time.monotonic() - started
     wake_debug(f"  whisper={text!r} ({whisper_seconds:.1f}s)")
 
@@ -941,6 +953,11 @@ def timing_note(t: dict) -> str:
 
 
 NOISE_MAX_SPEECH_SECONDS = 0.6
+# The hint for the local Whisper (the fallback when Groq can't be reached): the house's words. The cloud
+# one's app names (YouTube, Майнкрафт...) pulled whisper-small off - "Джарвис, YouTube, светлая кухня";
+# with these it wrote 23 of 27 real commands exactly as Groq had.
+LOCAL_STT_PROMPT = ("Джарвис, включи свет на кухне, в спальне, в зале, в кабинете, в коридоре, в прихожей. "
+                    "Розетка, шторы, кондиционер, вентиляция, температура.")
 # Still talking right after a phrase that sounded finished ("выключи свет в коридоре... и в прихожей"):
 # while the answer isn't there yet, at most this long, the answer is dropped and the phrase heard whole.
 CONTINUE_SECONDS = 3.0
@@ -1071,6 +1088,7 @@ async def run_hands_free(
 
         cascade = Cascade(collect=settings.wake_collect)
         threading.Thread(target=cascade.load, daemon=True).start()  # Whisper takes a few seconds to load
+        session.local_stt = cascade.transcribe  # and it's a speech recognizer for when Groq can't be reached
 
     listener = HandsFreeListener(
         SAMPLE_RATE,
